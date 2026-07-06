@@ -1,0 +1,23 @@
+{
+  "name": "study-room-frontend",
+  "version": "1.0.0",
+  "description": "智慧自习室 AI 管家 前端看板 (Vue 3 + Element Plus)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0",
+    "pinia": "^2.1.0",
+    "element-plus": "^2.7.0",
+    "axios": "^1.6.0",
+    "flv.js": "^1.6.2"
+  },
+  "devDependencies": {
+    "vite": "^5.2.0",
+    "@vitejs/plugin-vue": "^5.0.0"
+  }
+}
