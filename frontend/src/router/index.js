@@ -7,7 +7,9 @@ const routes = [
   // 防区配置：Canvas 画区 (§5.1)
   { path: '/regions', component: () => import('../views/RegionConfig.vue') },
   // 自习伴侣：状态宣告 (§4)
-  { path: '/companion', component: () => import('../views/SeatCompanion.vue') }
+  { path: '/companion', component: () => import('../views/SeatCompanion.vue') },
+  // 实时视频流
+  { path: '/stream', component: () => import('../views/VideoStreamViewer.vue') }
 ]
 
 export default createRouter({ history: createWebHistory(), routes })

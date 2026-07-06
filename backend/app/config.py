@@ -5,6 +5,8 @@ import os
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
+    RTMP_SERVER = os.getenv("RTMP_SERVER", "49.233.71.82")
+    RTMP_PORT = int(os.getenv("RTMP_PORT", 9090))
 
     # 疲劳检测 (§4.3)
     EAR_THRESH = float(os.getenv("EAR_THRESH", 0.2))  # 闭眼阈值
