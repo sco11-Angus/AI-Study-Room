@@ -1,1 +1,28 @@
 *.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+*.db
+
+# 模型权重与抓拍产物（大文件，不入库）
+backend/model_weights/*.pt
+backend/model_weights/*.dat
+backend/snapshots/*.jpg
+backend/snapshots/*.png
+
+# Node / 前端
+node_modules/
+frontend/dist/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 环境变量（含钉钉 Webhook 等密钥，§10.3）
+.env

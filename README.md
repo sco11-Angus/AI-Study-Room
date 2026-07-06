@@ -71,15 +71,48 @@
 | `claude-progress.md` | Codex/Claude 工作记录 |
 | `init.sh` | 标准 smoke test 入口 |
 
-## 当前仓库状态
+## 目录结构
 
-当前仓库以文档和设计材料为主，尚未包含完整前后端工程代码。后续实现建议按以下顺序推进：
+```
+App/
+├── backend/            # Flask 业务/算法后端（云）
+│   ├── app/
+│   │   ├── api/        # API 层（§9 OpenAPI/Swagger）
+│   │   ├── models/     # 数据模型（§8）
+│   │   ├── stream/     # 流处理与跳帧调度（§3）
+│   │   ├── detectors/  # 疲劳/入侵/烟火/人脸 检测算法（§4-7）
+│   │   └── services/   # 告警状态机、几何判定、钉钉上报
+│   ├── model_weights/  # YOLO/Dlib 权重
+│   ├── snapshots/      # 告警抓拍图
+│   ├── tests/
+│   ├── requirements.txt
+│   └── run.py
+├── frontend/           # Vue 3 + Element Plus（网）
+│   └── src/
+│       ├── api/
+│       ├── views/      # Dashboard / RegionConfig / SeatCompanion
+│       ├── components/ # VideoPlayer / CanvasDraw / AlarmPanel
+│       ├── store/
+│       └── router/
+├── streaming/          # Nginx-RTMP 配置（流）
+├── deploy/             # 部署编排（§11）
+├── specs/              # OpenSpec 规范驱动（§10.3）
+├── docs/               # 六人任务书与协作顺序
+└── 系统设计说明书.md
+```
 
-1. 明确 `spec.md`，固化接口边界和验收规则。
-2. 搭建后端 Flask API 与 OpenAPI 文档。
-3. 搭建 Vue 3 + Element Plus 管理端。
-4. 接入视频流播放与 Canvas 画区。
-5. 分阶段集成 YOLOv8n、Dlib、烟火检测和钉钉告警。
+## 快速开始
+
+```bash
+# 后端
+cd backend && pip install -r requirements.txt && python run.py
+
+# 前端
+cd frontend && npm install && npm run dev
+
+# 流媒体
+docker compose -f deploy/docker-compose.yml up -d
+```
 
 ## 验证
 
