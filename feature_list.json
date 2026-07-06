@@ -19,6 +19,24 @@
         "Pushed local markdown documentation and project metadata to origin/main."
       ],
       "blockers": []
+    },
+    {
+      "id": "readme-doc",
+      "name": "Create project README",
+      "priority": 2,
+      "status": "completed",
+      "description": "Create a repository README that summarizes the project purpose, architecture, feature modules, document structure, and validation entry point.",
+      "required_validation": [
+        "PowerShell-equivalent smoke test",
+        "git status --short",
+        "git push"
+      ],
+      "evidence": [
+        "Created README.md based on PRD.md and 系统设计说明书.md.",
+        "Smoke test passed after README creation.",
+        "README update was pushed to origin/main."
+      ],
+      "blockers": []
     }
   ]
 }

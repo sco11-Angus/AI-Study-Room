@@ -23,3 +23,19 @@
 - Result:
   - Markdown documentation and initialization metadata were pushed to `origin/main`.
   - Remote pre-existing `系统设计说明书.md` was preserved.
+
+## Session 2026-07-06 README
+
+- Goal: create and push a complete `README.md`.
+- Baseline:
+  - `pwd` confirmed `E:\软件\小学期实训`.
+  - `feature_list.json` showed project initialization already completed.
+  - PowerShell-equivalent smoke test passed before editing.
+- Actions:
+  - Created `README.md` from `PRD.md` and `系统设计说明书.md`.
+  - Documented project positioning, core modules, architecture, performance goals, repository documents, validation entry, and GitHub URL.
+  - Updated `feature_list.json` with the completed `readme-doc` feature.
+- Validation:
+  - PowerShell-equivalent smoke test passed after README creation.
+- Remaining risks:
+  - `bash ./init.sh` still cannot run on this Windows host because no WSL distribution is installed.
