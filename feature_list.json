@@ -4,7 +4,7 @@
       "id": "project-init-docs",
       "name": "Initialize repository and publish markdown docs",
       "priority": 1,
-      "status": "in_progress",
+      "status": "completed",
       "description": "Initialize the local project as a Git repository and push the markdown project documents to GitHub.",
       "required_validation": [
         "./init.sh",
@@ -13,7 +13,10 @@
       ],
       "evidence": [
         "Created init.sh as the standard smoke-test entry point.",
-        "Created feature_list.json as the feature status source of truth."
+        "Created feature_list.json as the feature status source of truth.",
+        "PowerShell-equivalent smoke test passed because this Windows host only exposes the WSL bash shim and has no installed WSL distribution.",
+        "Merged remote main history without file conflicts.",
+        "Pushed local markdown documentation and project metadata to origin/main."
       ],
       "blockers": []
     }
