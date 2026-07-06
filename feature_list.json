@@ -1,0 +1,21 @@
+{
+  "features": [
+    {
+      "id": "project-init-docs",
+      "name": "Initialize repository and publish markdown docs",
+      "priority": 1,
+      "status": "in_progress",
+      "description": "Initialize the local project as a Git repository and push the markdown project documents to GitHub.",
+      "required_validation": [
+        "./init.sh",
+        "git status --short",
+        "git push -u origin main"
+      ],
+      "evidence": [
+        "Created init.sh as the standard smoke-test entry point.",
+        "Created feature_list.json as the feature status source of truth."
+      ],
+      "blockers": []
+    }
+  ]
+}
