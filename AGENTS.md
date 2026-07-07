@@ -6,7 +6,7 @@
 
 1. 用 `pwd` 确认当前目录。
 
-2. 读取 `progress.md`，了解最新已验证状态和下一步。
+2. 读取 `openspec/progress/progress.md`，了解最新已验证状态和下一步。
 
 3. 读取 `feature_list.json`，选择优先级最高的未完成功能。
 
@@ -34,7 +34,7 @@
 
 - `feature_list.json`：功能状态的唯一事实来源
 
-- `progress.md`：会话进度和当前已验证状态
+- `openspec/progress/progress.md`：会话进度和当前已验证状态
 
 - `init.sh`：统一的启动与验证入口
 
@@ -48,7 +48,7 @@
 
 - 要求的验证真的跑过
 
-- 证据记录在 `feature_list.json` 或 `claude-progress.md`
+- 证据记录在 `feature_list.json` 或 `openspec/progress/claude-progress.md`
 
 - 仓库仍然能按标准启动路径重新开始工作
 
@@ -56,7 +56,7 @@
 
 结束会话前：
 
-1. 更新 `claude-progress.md`
+1. 更新 `openspec/progress/claude-progress.md`
 
 2. 更新 `feature_list.json`
 

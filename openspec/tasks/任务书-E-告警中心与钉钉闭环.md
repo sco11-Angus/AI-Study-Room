@@ -3,7 +3,7 @@
 > 角色定位：告警枢纽。**第一天**牵头冻结「统一告警事件结构」，B/C/D 触发告警都往此结构塞，F 据此渲染。
 > 关联设计：系统设计说明书 §7、§10.2。
 > 涉及文件：`backend/app/services/alarm.py`、`backend/app/services/dingtalk.py`、`backend/app/api/ws.py`、`backend/app/api/alarms.py`、`backend/app/detectors/base.py`(与 A 共同定 AlarmEvent)。
-> 依赖：A 抓拍帧、C 的 FaceMatcher、D 的 alarm_event/notification_log 表。
+> 依赖：A 抓拍帧、B 的 FaceMatcher、C 的 alarm_event/notification_log/guard 表。
 
 ---
 
@@ -15,14 +15,14 @@
 ```python
 @dataclass
 class AlarmEvent:
-    type: str          # intrusion | fire_smoke | occupy | fatigue
+    type: str          # intrusion | fire_smoke | occupy | fatigue | fight
     region_id: int
     camera_id: int
     ts: float
-    level: int = 1     # 0=弱提醒(疲劳,私有) 1=普通 2+=升级后
+    level: int = 1     # 0=弱提醒(疲劳,私有) 1=普通 2=高优先(打架)/升级后
     snapshot_url: str = ""   # 由告警服务回填
     face_match: str = ""     # 由告警服务回填
-    extra: dict = None       # 各检测器附加信息
+    extra: dict = None       # 各检测器附加信息(如打架 vis_score/aud_score/fuse)
 ```
 - **交付即广播**：B/C/D 按此产出，F 按此渲染。之后不得随意改字段。
 
@@ -30,7 +30,7 @@ class AlarmEvent:
 完善 `services/alarm.py` 的 `raise_alarm(event, frame)`：
 1. **去重**：`(region_id, type)` 冷却窗口（默认 30s）内合并，`_dedup` 已有骨架。
 2. **抓拍**：当前帧存 `snapshots/`，回填 `snapshot_url`。
-3. **人脸**（仅 intrusion/occupy）：裁剪面部 → 调 C 的 `FaceMatcher.match()` → 回填 `face_match`。
+3. **人脸**（仅 intrusion/occupy）：裁剪面部 → 调 B 的 `FaceMatcher.match()` → 回填 `face_match`。
 4. **落库**：写 `alarm_event` 表（status=pending）。
 5. **分发**：level=0(疲劳弱提醒) 只推私有端；level≥1 推大屏 WebSocket + 触发钉钉。
 
@@ -83,8 +83,8 @@ class AlarmEvent:
 | 方向 | 对象 | 约定 |
 | --- | --- | --- |
 | 上游 | A | 抓拍帧、`raise_alarm(event, frame)` 入口 |
-| 依赖 | B/C/D | 遵循 `AlarmEvent` 产出告警 |
-| 依赖 | C | `FaceMatcher.match(feature)` |
-| 依赖 | D | `alarm_event`、`notification_log` 表 |
+| 依赖 | B/C/D | 遵循 `AlarmEvent` 产出告警（intrusion/fatigue、fire_smoke、fight） |
+| 依赖 | B | `FaceMatcher.match(feature)` |
+| 依赖 | C | `alarm_event`、`notification_log`、`guard` 表 |
 | 下游 | F | WebSocket 推送 JSON、确认接口 |
 | 外部 | 钉钉 | 群机器人 Webhook（密钥走 `.env`） |

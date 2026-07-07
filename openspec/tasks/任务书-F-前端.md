@@ -1,9 +1,9 @@
 # F 任务书 — 前端全包（Vue 3 + Element Plus）
 
-> 角色定位：前端一人统包三个页面与全部组件。等 A/D/E 契约冻结后写联调细节，前期用 mock 搭骨架。
+> 角色定位：前端一人统包三个页面与全部组件。等 A/C/E 契约冻结后写联调细节，前期用 mock 搭骨架。
 > 关联设计：系统设计说明书 §4、§5.1、§7.3。
 > 涉及文件：`frontend/src/views/*`、`frontend/src/components/*`、`frontend/src/api/index.js`、`frontend/src/store/alarm.js`、`frontend/src/router/index.js`。
-> 依赖：A 的 HTTP-FLV 播放地址、D 的接口+返回结构、E 的 AlarmEvent+WebSocket。
+> 依赖：A 的 HTTP-FLV 播放地址、C 的接口+返回结构、E 的 AlarmEvent+WebSocket。
 
 ---
 
@@ -71,8 +71,8 @@
 | 方向 | 对象 | 约定 |
 | --- | --- | --- |
 | 依赖 | A | HTTP-FLV 播放地址格式 |
-| 依赖 | D | 接口路径、统一返回结构、Swagger |
+| 依赖 | C | 接口路径、统一返回结构、Swagger |
 | 依赖 | E | `AlarmEvent` JSON、`/ws/alarms` 推送格式 |
 | 对接 | B | 画区坐标格式（归一化 or 像素，定死一种） |
 
-> 提示：前期用 mock JSON 搭骨架，A/D/E 契约冻结后替换真实接口，避免返工。
+> 提示：前期用 mock JSON 搭骨架，A/C/E 契约冻结后替换真实接口，避免返工。
