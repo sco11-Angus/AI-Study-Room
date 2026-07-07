@@ -4,7 +4,7 @@ services:
   nginx-rtmp:
     image: tiangolo/nginx-rtmp
     ports:
-      - "1935:1935"   # RTMP 推拉流
+      - "9090:9090"   # RTMP 推拉流
       - "8080:8080"   # HTTP-FLV / 前端静态 / 流状态
     volumes:
       - ../streaming/nginx.conf:/etc/nginx/nginx.conf:ro
@@ -19,7 +19,7 @@ services:
     environment:
       - SKIP_N=5
       - RTMP_SERVER=nginx-rtmp
-      - RTMP_PORT=1935
+      - RTMP_PORT=9090
       - FIRE_WINDOW=30
       - FIRE_CONF=0.45
       - ESCALATE_TIMEOUT=180
