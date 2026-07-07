@@ -17,23 +17,24 @@ logger = logging.getLogger(__name__)
 
 def generate_frames(stream_id: str):
     """生成器：从 RTMP 拉流，跳帧编码后 yield MJPEG 帧，断流自动重连。"""
-    stream_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_id} live=1"
+    stream_url = (
+        f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_id}"
+        f"?live=1&buffer_size=1024"  # 最小缓冲，降低延迟
+    )
     logger.info(f"[video_feed] 开始拉流: {stream_url}")
 
     cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
     if not cap.isOpened():
-        logger.error(f"[video_feed] 无法打开流: {stream_url}，请检查推流是否在运行")
-        yield (
-            b"--frame\r\n"
-            b"Content-Type: image/jpeg\r\n\r\n" + b"\r\n"
-        )
+        logger.error(f"[video_feed] 无法打开流: {stream_url}")
+        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\r\n"
         return
 
-    # 降低分辨率减少延迟
+    # 低延迟参数
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 480)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    frame_skip = 5   # 跳帧数
+    frame_skip = 2   # 减少跳帧，降低延迟
     frame_count = 0
     logger.info(f"[video_feed] 拉流成功，开始输出帧 stream_id={stream_id}")
 
