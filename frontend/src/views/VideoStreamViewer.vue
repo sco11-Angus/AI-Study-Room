@@ -3,52 +3,143 @@
     <h2>实时视频流</h2>
 
     <div class="controls">
-      <label>流名称：</label>
+      <label>摄像头 ID：</label>
       <input
-        v-model="selectedStream"
-        type="text"
-        placeholder="输入推流名称，如 test"
+        v-model.number="cameraId"
+        type="number"
+        min="0"
+        placeholder="摄像头 ID，如 0"
         class="stream-input"
       />
-      <button @click="refreshStream" class="btn-refresh">刷新</button>
-      <span class="hint" v-if="selectedStream">当前播放：{{ selectedStream }}</span>
+      <button @click="reconnect" class="btn-refresh">重连</button>
+      <span class="hint" v-if="statusText">{{ statusText }}</span>
     </div>
 
     <div class="video-container">
-      <img
-        :src="videoFeedUrl"
-        alt="Video Stream"
-        class="video-feed"
-        @error="handleImageError"
-      />
-      <div v-if="error" class="error-overlay">
-        {{ error }}
+      <canvas ref="canvasEl" class="video-canvas" width="640" height="360" />
+      <div v-if="!streaming" class="overlay">
+        <p>等待推流...</p>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, watch } from "vue";
 
-const selectedStream = ref("test");
-const error = ref("");
+const cameraId = ref(0);
+const canvasEl = ref(null);
+const statusText = ref("");
+const streaming = ref(false);
 
-const videoFeedBaseUrl = "http://localhost:5000/video_feed/";
-const streamKey = ref(0); // 每次刷新改变 key，强制 <img> 重新加载
+let ws = null;
+let reconnectTimer = null;
 
-const videoFeedUrl = computed(() => {
-  return `${videoFeedBaseUrl}${selectedStream.value}?t=${streamKey.value}`;
+const WS_BASE = "ws://localhost:5000";
+
+const connect = () => {
+  if (ws) {
+    ws.close();
+    ws = null;
+  }
+
+  const url = `${WS_BASE}/ws/video_feed/${cameraId.value}`;
+  statusText.value = "连接中...";
+  streaming.value = false;
+
+  try {
+    ws = new WebSocket(url);
+    ws.binaryType = "blob";
+  } catch (e) {
+    statusText.value = "WebSocket 不支持";
+    return;
+  }
+
+  ws.onopen = () => {
+    statusText.value = "已连接";
+  };
+
+  ws.onmessage = (e) => {
+    // JSON 状态消息
+    if (typeof e.data === "string") {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.status === "offline") {
+          statusText.value = "等待推流...";
+          streaming.value = false;
+        } else if (msg.status === "waiting") {
+          statusText.value = "缓冲中...";
+        } else if (msg.status === "no_camera" || msg.status === "no_scheduler") {
+          statusText.value = "摄像头未就绪";
+        }
+      } catch (_) {}
+      return;
+    }
+
+    // 二进制 JPEG 帧 → 渲染到 canvas
+    if (e.data instanceof Blob) {
+      renderFrame(e.data);
+    }
+  };
+
+  ws.onclose = () => {
+    statusText.value = "已断开，3s 后重连...";
+    streaming.value = false;
+    scheduleReconnect();
+  };
+
+  ws.onerror = () => {
+    // onclose 会紧随其后触发
+  };
+};
+
+const renderFrame = (blob) => {
+  const canvas = canvasEl.value;
+  if (!canvas) return;
+
+  const ctx = canvas.getContext("2d");
+  const img = new Image();
+  const url = URL.createObjectURL(blob);
+
+  img.onload = () => {
+    // 自适应 canvas 尺寸
+    if (canvas.width !== img.width || canvas.height !== img.height) {
+      canvas.width = img.width;
+      canvas.height = img.height;
+    }
+    ctx.drawImage(img, 0, 0);
+    URL.revokeObjectURL(url);
+    streaming.value = true;
+    statusText.value = "";
+  };
+
+  img.onerror = () => {
+    URL.revokeObjectURL(url);
+  };
+
+  img.src = url;
+};
+
+const scheduleReconnect = () => {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(connect, 3000);
+};
+
+const reconnect = () => {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  connect();
+};
+
+watch(cameraId, () => {
+  reconnect();
 });
 
-const refreshStream = () => {
-  error.value = "";
-  streamKey.value++;
-};
+onMounted(connect);
 
-const handleImageError = () => {
-  error.value = `流 "${selectedStream.value}" 暂不可用，请确认 RTMP 推流已启动。`;
-};
+onUnmounted(() => {
+  if (reconnectTimer) clearTimeout(reconnectTimer);
+  if (ws) ws.close();
+});
 </script>
 
 <style scoped>
@@ -80,14 +171,7 @@ h2 {
   border: 1px solid #dcdfe6;
   border-radius: 4px;
   font-size: 14px;
-  width: 160px;
-}
-
-.controls select {
-  padding: 6px 12px;
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  font-size: 14px;
+  width: 80px;
 }
 
 .btn-refresh {
@@ -120,21 +204,19 @@ h2 {
   justify-content: center;
 }
 
-.video-feed {
+.video-canvas {
   width: 100%;
-  max-width: 960px;
   display: block;
 }
 
-.error-overlay {
+.overlay {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: #f56c6c;
-  background: rgba(0, 0, 0, 0.7);
-  padding: 12px 24px;
-  border-radius: 6px;
-  font-size: 14px;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  color: #ccc;
+  font-size: 18px;
 }
 </style>

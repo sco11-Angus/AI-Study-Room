@@ -6,9 +6,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // 后端 API 与 WebSocket (§9)
-      '/api': { target: 'http://localhost:5000', changeOrigin: true },
-      '/ws': { target: 'ws://localhost:5000', ws: true }
+      // 后端 API 与视频流（MJPEG 长连接直连，不走代理）
+      '/api': { target: 'http://localhost:5000', changeOrigin: true }
     }
   }
 })
