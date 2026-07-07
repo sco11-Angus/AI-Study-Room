@@ -1,7 +1,7 @@
 # C 任务书 — 烟火检测 + 数据层 + 接口框架
 
 > 角色定位：横向支撑主力。承担模块三（烟火检测）+ 全系统数据层 + 接口框架。**数据表第一周必须交付**，B/D/E 都等它。
-> 关联设计：系统设计说明书 §6、§8、§9、§10.3；数据库设计见 `docs/数据库设计.md`。
+> 关联设计：系统设计说明书 §6、§8、§9、§10.3；数据库设计见 `../specs/数据库设计.md`。
 > 涉及文件：`backend/app/models/entities.py`、`backend/app/models/db.py`(新建)、`backend/app/models/seed.py`(新建)、`backend/app/detectors/fire_smoke.py`、`backend/app/__init__.py`、各 `api/*.py`。
 > 依赖：A1 Detector 接口。
 
@@ -11,7 +11,7 @@
 
 ### 任务 C1：数据层（第一周最高优先级，全员依赖）
 - 新建 `backend/app/models/db.py`：SQLAlchemy `engine` + `SessionLocal` + `init_db()` 建表。
-- 按 `docs/数据库设计.md` 校对/补全 `models/entities.py` 的 **8 张表**：`camera` / `region` / `app_user` / `seat_status` / `alarm_event` / `member` / `guard` / `notification_log`。
+- 按 `../specs/数据库设计.md` 校对/补全 `models/entities.py` 的 **8 张表**：`camera` / `region` / `app_user` / `seat_status` / `alarm_event` / `member` / `guard` / `notification_log`。
   - 注意补 `app_user`、`guard` 两张表，`alarm_event` 补 `camera_id` 字段（数据库设计已列明）。
 - 在 `create_app()` 中初始化 DB，提供会话依赖供各 API 使用。
 - 新建 `seed.py`：插入 1 测试摄像头、若干防区、1 app_user、1 primary guard，便于联调。
@@ -43,7 +43,7 @@
 
 ## 三、验收标准（逐条可测）
 
-- [ ] `python -c "from app.models.db import init_db; init_db()"` 建出 8 张表，结构与 `docs/数据库设计.md` 一致。
+- [ ] `python -c "from app.models.db import init_db; init_db()"` 建出 8 张表，结构与 `../specs/数据库设计.md` 一致。
 - [ ] `seed.py` 跑完有可用测试数据。
 - [ ] `/apidocs` 打开，所有接口可见、可试调。
 - [ ] 所有接口返回 `{code,message,data}` 格式统一。

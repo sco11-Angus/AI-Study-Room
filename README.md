@@ -63,12 +63,16 @@
 
 | 文件 | 说明 |
 | --- | --- |
-| `PRD.md` | 产品需求文档 |
-| `系统设计说明书.md` | 系统设计说明书 |
+| `openspec/project.md` | 项目上下文与规范驱动索引 |
+| `openspec/specs/spec.md` | OpenSpec 能力边界定义 |
+| `openspec/specs/PRD.md` | 产品需求文档 |
+| `openspec/specs/系统设计说明书.md` | 系统设计说明书 |
+| `openspec/specs/数据库设计.md` | 数据库设计 |
+| `openspec/tasks/` | 六人任务书与协作顺序 |
+| `openspec/progress/progress.md` | 会话进度记录 |
+| `openspec/progress/claude-progress.md` | Codex/Claude 工作记录 |
 | `AGENTS.md` | 协作与开工流程说明 |
 | `feature_list.json` | 功能状态事实来源 |
-| `progress.md` | 会话进度记录 |
-| `claude-progress.md` | Codex/Claude 工作记录 |
 | `init.sh` | 标准 smoke test 入口 |
 
 ## 目录结构
@@ -96,9 +100,13 @@ App/
 │       └── router/
 ├── streaming/          # Nginx-RTMP 配置（流）
 ├── deploy/             # 部署编排（§11）
-├── specs/              # OpenSpec 规范驱动（§10.3）
-├── docs/               # 六人任务书与协作顺序
-└── 系统设计说明书.md
+└── openspec/           # 规范驱动开发（§10.3）
+    ├── project.md      # 项目上下文
+    ├── config.yaml     # OpenSpec 配置
+    ├── specs/          # 真理源规范：spec / PRD / 系统设计说明书 / 数据库设计
+    ├── changes/        # 变更提案与归档
+    ├── tasks/          # 六人任务书与协作顺序
+    └── progress/       # 会话进度记录
 ```
 
 ## 快速开始
