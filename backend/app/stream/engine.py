@@ -98,7 +98,8 @@ class InferenceEngine:
                     svc.raise_alarm(
                         region_id=evt.region_id,
                         type_=evt.type,
-                        frame=evt.snapshot or frame.image,
+                        frame=evt.snapshot if evt.snapshot is not None else frame.image,
+                        extra=evt.extra,
                     )
                 except Exception:
                     logger.exception(f"[engine] 告警推送失败: {evt}")
