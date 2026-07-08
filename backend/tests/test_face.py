@@ -129,6 +129,35 @@ class _FakeRect:
     def bottom(self): return self._b
 
 
+class _MockPoint:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+class _MockLandmarks:
+    """模拟 dlib 68 点 landmarks（睁眼状态）。"""
+    def __init__(self):
+        pts = []
+        for i in range(68):
+            x = 100 + (i % 10) * 15
+            y = 120 + (i // 10) * 25
+            # 左眼 36-41, 右眼 42-47（睁眼坐标）
+            if i in (37, 38):
+                y -= 8
+            if i in (40, 41):
+                y += 8
+            if i in (43, 44):
+                y -= 8
+            if i in (46, 47):
+                y += 8
+            pts.append(_MockPoint(x, y))
+        self._points = pts
+
+    def part(self, idx):
+        return self._points[idx]
+
+
 class TestFaceDetectorE2E:
     """FaceDetector.detect() 端到端测试（mock dlib 模型，不加载真实权重）。"""
 
@@ -182,6 +211,10 @@ class TestFaceDetectorE2E:
         monkeypatch.setattr(matcher, "detect_faces", lambda img: self._mock_detect_faces(img))
         monkeypatch.setattr(matcher, "encode",
                             lambda face_img: self._mock_encode(face_img))
+        monkeypatch.setattr(matcher, "encode_from_rect",
+                            lambda img, rect: _make_feature(1))
+        monkeypatch.setattr(matcher, "shape_from_rect",
+                            lambda img, rect: _MockLandmarks())
         monkeypatch.setattr(matcher, "match",
                             lambda feature: self._mock_match(feature))
         monkeypatch.setattr(matcher, "get_member_name", lambda mid: None)

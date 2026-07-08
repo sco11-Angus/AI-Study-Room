@@ -1,7 +1,7 @@
 """数据库会话管理（SQLAlchemy）。"""
 import os
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, scoped_session
 
 from ..config import Config
@@ -18,7 +18,7 @@ def init_db():
     """验证数据库连接（表已通过init.sql创建）。"""
     try:
         with _engine.connect() as conn:
-            conn.execute("SELECT 1")
+            conn.execute(text("SELECT 1"))
         print("数据库连接成功")
     except Exception as e:
         print(f"数据库连接失败: {e}")
