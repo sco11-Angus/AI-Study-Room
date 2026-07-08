@@ -1,5 +1,10 @@
 """应用配置 — 关键参数汇总（系统设计说明书 §12）。"""
 import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(env_path)
 
 
 class Config:
@@ -40,7 +45,15 @@ class Config:
     DINGTALK_WEBHOOK = os.getenv("DINGTALK_WEBHOOK", "")
 
     # 数据库 (§8)
-    DATABASE_URI = os.getenv("DATABASE_URI", "sqlite:///study_room.db")
+    DB_HOST = os.getenv("DB_HOST", "localhost")
+    DB_PORT = os.getenv("DB_PORT", "3306")
+    DB_USER = os.getenv("DB_USER", "root")
+    DB_PASSWORD = os.getenv("DB_PASSWORD", "")
+    DB_NAME = os.getenv("DB_NAME", "study_room")
+    DATABASE_URI = os.getenv(
+        "DATABASE_URI",
+        f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+    )
 
     # 模型权重 / 抓拍
     MODEL_DIR = os.getenv("MODEL_DIR", "model_weights")

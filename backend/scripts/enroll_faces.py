@@ -16,6 +16,7 @@ import os
 import sys
 
 import cv2
+import numpy as np
 
 # 确保 backend 包可导入
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -56,7 +57,8 @@ def enroll_photos(photo_dir: str, dry_run: bool = False):
             continue
 
         path = os.path.join(photo_dir, filename)
-        img = cv2.imread(path)
+        # cv2.imread 不支持中文路径
+        img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             print(f"[enroll] 跳过（无法读取）: {filename}")
             continue

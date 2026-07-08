@@ -1,5 +1,5 @@
 """Flask 应用工厂 — 集成 Swagger/OpenAPI 文档 + WebSocket (§9, §10.3)。"""
-from flask import Flask
+from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_sock import Sock
 from flasgger import Swagger
@@ -13,7 +13,9 @@ def create_app(config: type[Config] = Config) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config)
 
-    CORS(app)
+    # CORS 白名单（前端 5173）
+    CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
+    
     sock.init_app(app)
     Swagger(app, template={"info": {"title": "智慧自习室 AI 管家 API", "version": "1.0.0"}})
 
@@ -31,5 +33,16 @@ def create_app(config: type[Config] = Config) -> Flask:
 
     # WebSocket 路由通过 sock.route 注册（非 blueprint）
     video_feed.register_ws_routes(sock)
+    ws.register_ws_routes(sock)
+
+    # 全局异常处理器
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        """未捕获异常统一返回 {code:500,...}，不泄漏堆栈。"""
+        return jsonify({
+            "code": 500,
+            "message": "Internal Server Error",
+            "data": None
+        }), 500
 
     return app
