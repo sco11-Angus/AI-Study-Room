@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS seat_status (
 CREATE TABLE IF NOT EXISTS alarm_event (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '告警ID',
     region_id INT NOT NULL COMMENT '触发防区/座位，外键region.id',
-    camera_id INT NOT NULL COMMENT '触发摄像头(便于查询)，外键camera.id',
+    1camera_id INT NOT NULL COMMENT '触发摄像头(便于查询)，外键camera.id',
     type TEXT NOT NULL COMMENT 'intrusion/fire_smoke/occupy/fatigue/fight',
     snapshot_url TEXT NOT NULL COMMENT '抓拍图路径',
     face_match TEXT NOT NULL COMMENT '会员匹配结果：member:<id>/stranger',
@@ -89,7 +89,7 @@ CREATE TABLE IF NOT EXISTS alarm_event (
     FOREIGN KEY (camera_id) REFERENCES camera(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='告警事件表';
 -- 文档指定索引
-CREATE INDEX idx_alarm_status ON alarm_event(status(20));;
+CREATE INDEX idx_alarm_status ON alarm_event(status(20));
 CREATE INDEX idx_alarm_created ON alarm_event(created_at);
 CREATE INDEX idx_alarm_region_type ON alarm_event(region_id, type);
 

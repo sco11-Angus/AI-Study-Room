@@ -33,7 +33,7 @@ class AlarmEvent:
 3. **人脸**（仅 intrusion/occupy）：裁剪面部 → 调 B 的 `FaceMatcher.match()` → 回填 `face_match`。
 4. **落库**：写 `alarm_event` 表（status=pending）。
 5. **分发**：level=0(疲劳弱提醒) 只推私有端；level≥1 推大屏 WebSocket + 触发钉钉。
-
+1
 ### 任务 E3：WebSocket 看板推送（§7.3）
 - `api/ws.py` 用 flask-sock 实现 `/ws/alarms`，在 `create_app` 初始化 `Sock(app)`。
 - 维护订阅连接列表，`raise_alarm` 分发时向所有连接 `send` 告警 JSON。
