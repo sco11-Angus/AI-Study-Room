@@ -1,6 +1,23 @@
 import axios from 'axios'
+import { ElMessage } from 'element-plus'
 
 const http = axios.create({ baseURL: '/api', timeout: 8000 })
+
+// 响应拦截器：统一解包 {code, message, data}
+http.interceptors.response.use(
+  (response) => {
+    const { code, message, data } = response.data
+    if (code !== 0) {
+      ElMessage.error(message || '请求失败')
+      return Promise.reject(new Error(message))
+    }
+    return data
+  },
+  (error) => {
+    ElMessage.error(error.message || '网络错误')
+    return Promise.reject(error)
+  }
+)
 
 // §9 接口封装
 export const getCameras = () => http.get('/cameras')
