@@ -2,7 +2,7 @@
 
 运行方式（在 backend 目录下）：
     $env:PYTHONPATH="."
-    ..\venv\Scripts\python.exe tests\smoke_test.py
+    ..\\venv\\Scripts\\python.exe tests\\smoke_test.py
 """
 import os
 import sys
@@ -98,7 +98,12 @@ from app.config import Config
 
 print(f"  SKIP_N={Config.SKIP_N}")
 print(f"  RTMP={Config.RTMP_SERVER}:{Config.RTMP_PORT}")
-print(f"  DATABASE_URI={Config.DATABASE_URI}")
+db_uri = Config.DATABASE_URI
+if "://" in db_uri and "@" in db_uri:
+    scheme, rest = db_uri.split("://", 1)
+    _, host_part = rest.rsplit("@", 1)
+    db_uri = f"{scheme}://***:***@{host_part}"
+print(f"  DATABASE_URI={db_uri}")
 
 print()
 print("=" * 50)

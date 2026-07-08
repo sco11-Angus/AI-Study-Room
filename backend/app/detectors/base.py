@@ -24,17 +24,36 @@ class Frame:
 
 @dataclass
 class AlarmEvent:
-    """告警事件 — 检测器产出，由推理引擎透传给 E 的 AlarmService。
+    """统一告警事件 — 检测器产出，由推理引擎透传给 E 的 AlarmService。
 
     E（告警中心）负责入库、抓拍、推送等闭环动作。
     """
 
+    type: str                          # intrusion / fire_smoke / occupy / fatigue / fight
     region_id: int                     # 关联防区 ID
-    type: str                          # 告警类型：intrusion / fire_smoke / fatigue
-    confidence: float = 0.0            # 置信度（可选）
-    snapshot: np.ndarray | None = None # 抓拍帧（可选，传入 AlarmService）
-    face_crop: np.ndarray | None = None# 裁剪面部（可选）
-    extra: dict[str, Any] = field(default_factory=dict)  # 扩展字段
+    camera_id: int = 0                 # 摄像头 ID
+    ts: float = 0.0                    # 告警时间戳（time.time()）
+    level: int = 1                     # 0=弱提醒 1=普通 2+=高优先/升级
+    snapshot_url: str = ""             # 告警服务抓拍后回填
+    face_match: str = ""               # 告警服务人脸匹配后回填
+    extra: dict[str, Any] = field(default_factory=dict)  # 检测器附加信息
+    confidence: float = 0.0            # 兼容旧检测器：置信度（可选）
+    snapshot: np.ndarray | None = None # 兼容旧检测器：抓拍帧（可选）
+    face_crop: np.ndarray | None = None# 兼容旧检测器：裁剪面部（可选）
+
+    def to_dict(self) -> dict[str, Any]:
+        """序列化为前端和钉钉共用的告警 JSON。"""
+        return {
+            "type": self.type,
+            "region_id": self.region_id,
+            "camera_id": self.camera_id,
+            "ts": self.ts,
+            "level": self.level,
+            "snapshot_url": self.snapshot_url,
+            "face_match": self.face_match,
+            "extra": self.extra or {},
+            "confidence": self.confidence,
+        }
 
 
 class Detector(ABC):
