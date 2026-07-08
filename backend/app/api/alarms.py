@@ -17,7 +17,14 @@ def list_alarms():
     parameters:
       - {name: status, in: query, type: string, enum: [pending, notified, confirmed, escalated]}
     responses:
-      200: {description: 告警列表}
+      200:
+        description: 告警列表
+        schema:
+          type: object
+          properties:
+            code: {type: integer, example: 0}
+            message: {type: string, example: success}
+            data: {type: array, items: {$ref: '#/definitions/AlarmEvent'}}
     """
     status = request.args.get("status")
     from ..models.database import SessionLocal
@@ -39,8 +46,17 @@ def confirm_alarm(alarm_id: int):
     """安全员确认处理（钉钉卡片回调）— 停止升级计时 (§7.4)
     ---
     tags: [Alarm]
+    parameters:
+      - {name: alarm_id, in: path, type: integer, required: true}
     responses:
-      200: {description: 已确认}
+      200:
+        description: 已确认
+        schema:
+          type: object
+          properties:
+            code: {type: integer, example: 0}
+            message: {type: string, example: success}
+            data: {type: object}
     """
     from ..services.dingtalk import get_notifier
 

@@ -101,6 +101,7 @@ class InferenceEngine:
                         evt.ts = frame.ts
                     if "level" in evt.extra and evt.level == 1:
                         evt.level = int(evt.extra["level"])
+
                     snapshot = evt.snapshot if evt.snapshot is not None else frame.image
                     svc.raise_alarm(evt, frame=snapshot)
                 except Exception:

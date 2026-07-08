@@ -57,11 +57,26 @@ class AlarmService:
         frame=None,
         region_id: int | None = None,
         type_: str | None = None,
+        extra: dict | None = None,
     ) -> dict | None:
         """触发告警闭环。
 
         新代码应传入 AlarmEvent；region_id/type_ 参数保留给旧调用点兼容。
+        face_recognition 只走轻量推送通道，不入库、不触发钉钉。
         """
+        if type_ == "face_recognition":
+            from ..api.ws import set_face_result
+            if extra:
+                msg = {"type": "stranger"}
+                if extra.get("face_match", "").startswith("member:"):
+                    msg = {
+                        "type": "member",
+                        "member_id": extra.get("member_id"),
+                        "name": extra.get("name", "未知"),
+                    }
+                set_face_result(msg)
+            return None
+
         event = self._normalize_event(event, region_id, type_)
         if not self._dedup(event.region_id, event.type):
             logger.info("[alarm] 告警去重 region=%s type=%s", event.region_id, event.type)
@@ -83,159 +98,3 @@ class AlarmService:
             logger.info("[alarm] level=0 弱提醒仅保留私有端/查询记录 alarm_id=%s", record.id)
 
         return payload
-
-    def _normalize_event(
-        self,
-        event: AlarmEvent | None,
-        region_id: int | None,
-        type_: str | None,
-    ) -> AlarmEvent:
-        if event is None:
-            if region_id is None or type_ is None:
-                raise ValueError("raise_alarm requires either AlarmEvent or region_id/type_")
-            event = AlarmEvent(type=type_, region_id=region_id)
-
-        if not event.ts:
-            event.ts = time.time()
-        if not event.camera_id:
-            event.camera_id = int(event.extra.get("camera_id", 0) or 0)
-        if "level" in event.extra and event.level == 1:
-            event.level = int(event.extra["level"])
-        return event
-
-    def _save_snapshot(self, event: AlarmEvent, frame) -> str:
-        if frame is None:
-            return ""
-
-        os.makedirs(self.snapshot_dir, exist_ok=True)
-        filename = f"alarm_{event.region_id}_{event.type}_{int(event.ts * 1000)}.jpg"
-        path = os.path.join(self.snapshot_dir, filename)
-
-        try:
-            if isinstance(frame, (bytes, bytearray)):
-                with open(path, "wb") as fh:
-                    fh.write(frame)
-            elif isinstance(frame, np.ndarray):
-                import cv2
-                ok = cv2.imwrite(path, frame)
-                if not ok:
-                    raise RuntimeError("cv2.imwrite returned False")
-            else:
-                logger.warning("[alarm] 不支持的抓拍帧类型: %s", type(frame).__name__)
-                return ""
-        except Exception:
-            logger.exception("[alarm] 抓拍保存失败")
-            return ""
-
-        return f"/api/alarms/snapshots/{filename}"
-
-    def _match_face(self, event: AlarmEvent, frame) -> str:
-        if event.type not in {"intrusion", "occupy"}:
-            return event.face_match or ""
-
-        face_img = event.face_crop if event.face_crop is not None else frame
-        if face_img is None:
-            return "stranger"
-
-        try:
-            from ..detectors.face import FaceMatcher
-
-            matcher = FaceMatcher()
-            feature = matcher.encode(face_img)
-            if feature is None:
-                return "stranger"
-            return matcher.match(feature)
-        except Exception:
-            logger.exception("[alarm] 人脸匹配失败")
-            return "stranger"
-
-    def _persist(self, event: AlarmEvent):
-        from ..models.database import SessionLocal
-        from ..models.entities import AlarmEvent as AlarmRecord
-
-        created_at = datetime.fromtimestamp(event.ts, timezone.utc).replace(tzinfo=None)
-        session = SessionLocal()
-        try:
-            record = AlarmRecord(
-                region_id=event.region_id,
-                camera_id=event.camera_id or None,
-                type=event.type,
-                snapshot_url=event.snapshot_url,
-                face_match=event.face_match,
-                level=event.level,
-                status="pending",
-                extra=json.dumps(event.extra or {}, ensure_ascii=False),
-                created_at=created_at,
-            )
-            session.add(record)
-            session.commit()
-            session.refresh(record)
-            return record
-        except Exception:
-            session.rollback()
-            logger.exception("[alarm] 告警落库失败")
-            raise
-        finally:
-            session.close()
-
-    def _broadcast(self, payload: dict) -> None:
-        broadcaster = self._broadcaster
-        if broadcaster is None:
-            from ..api.ws import broadcast_alarm
-            broadcaster = broadcast_alarm
-        try:
-            broadcaster(payload)
-        except Exception:
-            logger.exception("[alarm] WebSocket 告警广播失败")
-
-    def _notify(self, alarm_id: int) -> None:
-        notifier = self._notifier
-        if notifier is None:
-            from .dingtalk import get_notifier
-            notifier = get_notifier()
-        try:
-            notifier.notify(alarm_id)
-        except Exception:
-            logger.exception("[alarm] 钉钉通知失败")
-
-    @staticmethod
-    def _serialize_record(record) -> dict:
-        extra = {}
-        if record.extra:
-            try:
-                extra = json.loads(record.extra)
-            except json.JSONDecodeError:
-                extra = {}
-        return {
-            "id": record.id,
-            "type": record.type,
-            "region_id": record.region_id,
-            "camera_id": record.camera_id,
-            "ts": AlarmService._to_epoch(record.created_at),
-            "level": record.level,
-            "snapshot_url": record.snapshot_url or "",
-            "face_match": record.face_match or "",
-            "status": record.status,
-            "extra": extra,
-            "created_at": record.created_at.isoformat() if record.created_at else None,
-            "confirmed_at": record.confirmed_at.isoformat() if record.confirmed_at else None,
-        }
-
-    @staticmethod
-    def _to_epoch(dt: datetime | None) -> float | None:
-        if dt is None:
-            return None
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.timestamp()
-
-
-_default_service: AlarmService | None = None
-
-
-def get_alarm_service() -> AlarmService:
-    """返回进程内告警服务单例，保证去重窗口跨帧生效。"""
-    global _default_service
-    if _default_service is None:
-        _default_service = AlarmService()
-    return _default_service

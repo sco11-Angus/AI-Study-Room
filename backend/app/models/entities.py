@@ -11,28 +11,49 @@ class Camera(Base):
     __tablename__ = "camera"
     id = Column(Integer, primary_key=True)
     name = Column(String(128))
-    stream_url = Column(String(256))       # RTMP 拉流地址
-    resolution = Column(String(32))        # 原始分辨率，用于坐标映射
-    status = Column(Enum("online", "offline", name="camera_status"))
+    stream_url = Column(String(256))
+    resolution = Column(String(32))
+    status = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AppUser(Base):
+    __tablename__ = "app_user"
+    id = Column(Integer, primary_key=True)
+    nickname = Column(Text)
+    device_token = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Guard(Base):
+    __tablename__ = "guard"
+    id = Column(Integer, primary_key=True)
+    name = Column(Text)
+    dingtalk_id = Column(Text)
+    role = Column(Text)
+    priority = Column(Integer, default=0)
 
 
 class Region(Base):
     __tablename__ = "region"
     id = Column(Integer, primary_key=True)
     camera_id = Column(Integer, ForeignKey("camera.id"))
+    user_id = Column(Integer, ForeignKey("app_user.id"))
     name = Column(String(128))
-    type = Column(Enum("danger_zone", "seat", name="region_type"))
-    polygon = Column(Text)                 # JSON 顶点数组(原始分辨率)
-    x_distance = Column(Integer)           # 安全距离阈值(像素)
-    y_stay_time = Column(Integer)          # 允许停留时间(秒)
+    type = Column(Text)
+    polygon = Column(Text)
+    x_distance = Column(Integer)
+    y_stay_time = Column(Integer)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class SeatStatus(Base):
     __tablename__ = "seat_status"
     id = Column(Integer, primary_key=True)
-    user_id = Column(Integer)
+    user_id = Column(Integer, ForeignKey("app_user.id"))
     region_id = Column(Integer, ForeignKey("region.id"))
-    status = Column(Enum("idle", "studying", "resting", name="seat_state"))
+    guard_id = Column(Integer, ForeignKey("guard.id"))
+    status = Column(Text)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
@@ -60,8 +81,9 @@ class AlarmEvent(Base):
 class Member(Base):
     __tablename__ = "member"
     member_id = Column(Integer, primary_key=True)
-    name = Column(String(128))
-    feature = Column(Text)                 # 128 维人脸特征向量(JSON)
+    name = Column(Text)
+    feature = Column(Text)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Guard(Base):

@@ -1,48 +1,40 @@
 """WebSocket 告警实时推送 — 看板订阅 (§7.3, §9.1)。"""
 import json
 import logging
+import json
+import os
+
+from flask import Blueprint, jsonify, request, send_from_directory
+
+from ..config import Config
+
+bp = Blueprint("ws", __name__)
+logger = logging.getLogger(__name__)
+
+"""WebSocket 实时推送接口。"""
+import json
+import logging
+import queue
 import threading
 
-from flask import Blueprint
+from flask import Blueprint, jsonify
 from flask_sock import Sock
 from simple_websocket import ConnectionClosed
 
 bp = Blueprint("ws", __name__)
 logger = logging.getLogger(__name__)
 
-_subscribers: set = set()
-_lock = threading.Lock()
+# ---- 任务 E：告警 WebSocket ----
 
-
-def register_ws_routes(sock: Sock) -> None:
-    """注册告警 WebSocket 路由（由 create_app 调用）。"""
-
-    @sock.route("/ws/alarms")
-    def alarms_ws(ws):
-        """看板订阅告警事件：格子 绿->红闪烁 + 蜂鸣。"""
-        with _lock:
-            _subscribers.add(ws)
-        logger.info("[alarm_ws] 客户端已连接")
-
-        try:
-            while True:
-                # simple-websocket 需要持续接收以感知断开；前端无需发业务消息。
-                ws.receive()
-        except ConnectionClosed:
-            pass
-        except Exception:
-            logger.exception("[alarm_ws] WebSocket 异常")
-        finally:
-            with _lock:
-                _subscribers.discard(ws)
-            logger.info("[alarm_ws] 客户端断开")
+_alarm_subscribers: set = set()
+_alarm_lock = threading.Lock()
 
 
 def broadcast_alarm(payload: dict) -> int:
     """向所有告警看板连接推送 JSON，返回成功发送数。"""
     data = json.dumps(payload, ensure_ascii=False)
-    with _lock:
-        subscribers = list(_subscribers)
+    with _alarm_lock:
+        subscribers = list(_alarm_subscribers)
 
     sent = 0
     dead = []
@@ -57,7 +49,80 @@ def broadcast_alarm(payload: dict) -> int:
             dead.append(ws)
 
     if dead:
-        with _lock:
+        with _alarm_lock:
             for ws in dead:
-                _subscribers.discard(ws)
+                _alarm_subscribers.discard(ws)
     return sent
+
+
+# ---- 人脸识别结果 ----
+
+face_result_queue = queue.Queue()
+latest_face_result = None
+_face_lock = threading.Lock()
+
+
+def set_face_result(result: dict) -> None:
+    """线程安全地更新最新人脸识别结果。"""
+    global latest_face_result
+    with _face_lock:
+        latest_face_result = result
+
+
+@bp.get("/api/face_result")
+def get_face_result():
+    """获取最新人脸识别结果（前端每 500ms 轮询）。"""
+    with _face_lock:
+        data = latest_face_result
+    return jsonify(code=0, message="ok", data=data)
+
+
+# ---- WebSocket 路由 ----
+
+def register_ws_routes(sock: Sock) -> None:
+    """注册 WebSocket 路由（由 create_app 调用）。"""
+
+    @sock.route("/ws/alarms")
+    def alarms_ws(ws):
+        """看板订阅告警事件：格子 绿->红闪烁 + 蜂鸣。"""
+        with _alarm_lock:
+            _alarm_subscribers.add(ws)
+        logger.info("[alarm_ws] 客户端已连接")
+
+        try:
+            while True:
+                ws.receive()
+        except ConnectionClosed:
+            pass
+        except Exception:
+            logger.exception("[alarm_ws] WebSocket 异常")
+        finally:
+            with _alarm_lock:
+                _alarm_subscribers.discard(ws)
+            logger.info("[alarm_ws] 客户端断开")
+
+    @sock.route("/ws/face_recognition")
+    def ws_face_recognition(ws):
+        logger.info("[face_ws] 客户端已连接 face_recognition")
+        try:
+            while True:
+                try:
+                    msg = face_result_queue.get(timeout=0.5)
+                    _safe_send(ws, json.dumps(msg, ensure_ascii=False))
+                except queue.Empty:
+                    continue
+        except ConnectionClosed:
+            pass
+        except Exception:
+            logger.exception("[face_ws] WebSocket 异常")
+        finally:
+            logger.info("[face_ws] 客户端断开 face_recognition")
+
+
+def _safe_send(ws, data):
+    try:
+        ws.send(data)
+    except ConnectionClosed:
+        raise
+    except Exception:
+        pass
