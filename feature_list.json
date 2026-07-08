@@ -37,6 +37,33 @@
         "README update was pushed to origin/main."
       ],
       "blockers": []
+    },
+    {
+      "id": "alarm-center-dingtalk-close-loop",
+      "name": "Task E alarm center and DingTalk close loop",
+      "priority": 5,
+      "status": "completed",
+      "description": "Implement the unified alarm event contract, alarm persistence/snapshot/dedup service, alarm WebSocket push, DingTalk primary/escalation workflow, and alarm query/confirm APIs.",
+      "required_validation": [
+        "python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py",
+        "python tests/smoke_test.py",
+        "PowerShell-equivalent init.sh smoke test",
+        "bash ./init.sh"
+      ],
+      "evidence": [
+        "Updated AlarmEvent with type, region_id, camera_id, ts, level, snapshot_url, face_match, extra, while preserving legacy confidence/snapshot compatibility.",
+        "Implemented AlarmService raise_alarm() with 30s region/type dedup, snapshot persistence, intrusion/occupy face matching fallback, alarm_event persistence, level=0 private-only handling, WebSocket broadcast, and DingTalk notification trigger.",
+        "Implemented /ws/alarms broadcast registration and /api/alarms query, confirm, and snapshot access endpoints.",
+        "Implemented DingTalkNotifier notify/confirm/escalate with notification_log primary/escalated records, status transitions, timer cancellation, and no-webhook local-safe behavior.",
+        "Extended ORM models for camera_id, fight alarm type, extra JSON, Guard, notification_log guard FK, and indexes.",
+        "Added backend/tests/test_alarm_center.py covering persistence/snapshot/notify, dedup, level=0 private-only behavior, DingTalk confirm/escalation logs, and alarm HTTP API.",
+        "pytest passed: 27 passed for intrusion, fight, fight integration, face, and alarm center tests.",
+        "backend/tests/smoke_test.py passed after restoring StreamScheduler ring_buffer maxlen to 5.",
+        "PowerShell-equivalent init smoke passed with 16 markdown docs."
+      ],
+      "blockers": [
+        "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed."
+      ]
     }
   ]
 }

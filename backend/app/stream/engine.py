@@ -91,15 +91,18 @@ class InferenceEngine:
         """线程池中执行：推理 -> 提告警。"""
         events = self.dispatch(frame)
         if events:
-            from ..services.alarm import AlarmService
-            svc = AlarmService()
+            from ..services.alarm import get_alarm_service
+            svc = get_alarm_service()
             for evt in events:
                 try:
-                    svc.raise_alarm(
-                        region_id=evt.region_id,
-                        type_=evt.type,
-                        frame=evt.snapshot or frame.image,
-                    )
+                    if not evt.camera_id:
+                        evt.camera_id = frame.camera_id
+                    if not evt.ts:
+                        evt.ts = frame.ts
+                    if "level" in evt.extra and evt.level == 1:
+                        evt.level = int(evt.extra["level"])
+                    snapshot = evt.snapshot if evt.snapshot is not None else frame.image
+                    svc.raise_alarm(evt, frame=snapshot)
                 except Exception:
                     logger.exception(f"[engine] 告警推送失败: {evt}")
 

@@ -44,7 +44,7 @@ class CameraStream:
     camera_id: int
     stream_name: str                    # RTMP 推流名称，如 "test"
     stream_url: str                     # 完整拉流地址（含 live=1）
-    ring_buffer: deque = field(default_factory=lambda: deque(maxlen=10))
+    ring_buffer: deque = field(default_factory=lambda: deque(maxlen=5))
     online: bool = False
     _frame_idx: int = 0
     _thread: threading.Thread | None = None

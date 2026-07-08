@@ -42,4 +42,7 @@ class Config:
 
     # 模型权重 / 抓拍
     MODEL_DIR = os.getenv("MODEL_DIR", "model_weights")
-    SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR", "snapshots")
+    SNAPSHOT_DIR = os.getenv(
+        "SNAPSHOT_DIR",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "snapshots")),
+    )
