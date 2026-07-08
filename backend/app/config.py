@@ -16,6 +16,8 @@ class Config:
     # 烟火检测 (§6.2)
     FIRE_WINDOW = int(os.getenv("FIRE_WINDOW", 30))   # 滑动窗口帧数
     FIRE_CONF = float(os.getenv("FIRE_CONF", 0.45))   # 平均置信度阈值
+    FIRE_SMOKE_WEIGHTS = os.getenv("FIRE_SMOKE_WEIGHTS", "fire_smoke.pt")
+    FIRE_SMOKE_REGION_ID = int(os.getenv("FIRE_SMOKE_REGION_ID", 0))
 
     # 音视频融合打架检测 (任务书 D)
     FIGHT_FUSE_THRESH = float(os.getenv("FIGHT_FUSE_THRESH", 0.6))  # 融合分告警阈值
