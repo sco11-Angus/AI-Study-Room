@@ -21,7 +21,7 @@ _IDLE_INTERVAL = 0.05
 # 等待新帧的超时（秒）
 _FRAME_TIMEOUT = 1.0
 # 超时后最多重试次数（避免短暂卡顿触发"缓冲中"）
-_MAX_RETRIES = 3
+_MAX_RETRIES = 2
 
 
 def register_ws_routes(sock: Sock) -> None:

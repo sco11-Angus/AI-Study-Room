@@ -23,8 +23,22 @@ class AlarmService:
         self._last_fired[key] = now
         return True
 
-    def raise_alarm(self, region_id: int, type_: str, frame):
+    def raise_alarm(self, region_id: int, type_: str, frame, extra: dict = None):
         """触发告警闭环。"""
+        if type_ == "face_recognition":
+            # 人脸识别走轻量推送通道（不触发钉钉，不入库告警）
+            from ..api.ws import set_face_result
+            if extra:
+                msg = {"type": "stranger"}
+                if extra.get("face_match", "").startswith("member:"):
+                    msg = {
+                        "type": "member",
+                        "member_id": extra.get("member_id"),
+                        "name": extra.get("name", "未知"),
+                    }
+                set_face_result(msg)
+            return
+
         if not self._dedup(region_id, type_):
             return
         # ① 抓拍落盘 + 裁剪面部 -> FaceMatcher.match

@@ -195,6 +195,9 @@ class StreamScheduler:
                         return
                     cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
                     cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+                    cs.online = cap.isOpened()
+                    if cs.online:
+                        logger.info(f"[scheduler] camera_id={cs.camera_id} 重连成功")
                     cs._frame_idx = 0
                     _consecutive_timeouts = 0
                 decode_dropped += 1
