@@ -7,8 +7,25 @@
     </div>
 
     <div class="dashboard">
-      <VideoPlayer :stream-url="streamUrl" />
-      <AlarmPanel :alarms="alarms" @confirm="onConfirm" />
+      <div class="video-section">
+        <div class="section-header">
+          <span class="header-icon">📹</span>
+          <span class="header-title">实时监控</span>
+        </div>
+        <div class="video-container">
+          <VideoPlayer :stream-url="streamUrl" />
+        </div>
+      </div>
+      
+      <div class="alarm-section">
+        <div class="section-header">
+          <span class="header-icon">🔔</span>
+          <span class="header-title">告警记录</span>
+        </div>
+        <div class="alarm-container">
+          <AlarmPanel :alarms="alarms" @confirm="onConfirm" />
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -54,19 +71,90 @@ const onConfirm = (id) => confirmAlarm(id)
 </script>
 
 <style scoped>
-.page { background: #1a1a2e; min-height: 100vh; }
+.page {
+  min-height: 100%;
+}
+
 .face-banner {
   text-align: center;
-  padding: 12px 0;
-  font-size: 20px;
-  font-weight: 700;
+  padding: 16px 0;
+  font-size: 18px;
+  font-weight: 600;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  animation: slideDown 0.5s ease;
 }
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .face-banner.member {
-  background: #67c23a;
+  background: linear-gradient(135deg, #95d475 0%, #67c23a 100%);
   color: #fff;
+  box-shadow: 0 4px 12px rgba(103, 194, 58, 0.3);
 }
+
 .face-banner.stranger {
-  background: #909399;
+  background: linear-gradient(135deg, #c0c4cc 0%, #909399 100%);
   color: #fff;
+  box-shadow: 0 4px 12px rgba(144, 147, 153, 0.3);
+}
+
+.dashboard {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  height: calc(100vh - 140px);
+}
+
+.video-section,
+.alarm-section {
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px rgba(212, 165, 116, 0.15);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px;
+  background: linear-gradient(135deg, #fff9f0 0%, #fff5e6 100%);
+  border-bottom: 1px solid #e8d5c4;
+}
+
+.header-icon {
+  font-size: 24px;
+}
+
+.header-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #5d4e37;
+}
+
+.video-container,
+.alarm-container {
+  flex: 1;
+  padding: 20px;
+  overflow: auto;
+}
+
+.video-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #faf8f5 0%, #f5f0e8 100%);
 }
 </style>
