@@ -96,28 +96,49 @@ const connect = () => {
 const renderFrame = (blob) => {
   const canvas = canvasEl.value;
   if (!canvas) return;
-
   const ctx = canvas.getContext("2d");
-  const img = new Image();
-  const url = URL.createObjectURL(blob);
 
-  img.onload = () => {
-    // 自适应 canvas 尺寸
-    if (canvas.width !== img.width || canvas.height !== img.height) {
-      canvas.width = img.width;
-      canvas.height = img.height;
+  const applyBitmap = (bitmap) => {
+    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
     }
-    ctx.drawImage(img, 0, 0);
-    URL.revokeObjectURL(url);
+    ctx.drawImage(bitmap, 0, 0);
     streaming.value = true;
     statusText.value = "";
   };
 
-  img.onerror = () => {
-    URL.revokeObjectURL(url);
+  const fallback = () => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+
+    img.onload = () => {
+      if (canvas.width !== img.width || canvas.height !== img.height) {
+        canvas.width = img.width;
+        canvas.height = img.height;
+      }
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(url);
+      streaming.value = true;
+      statusText.value = "";
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+    };
+
+    img.src = url;
   };
 
-  img.src = url;
+  try {
+    if (typeof createImageBitmap === "function") {
+      createImageBitmap(blob).then(applyBitmap, () => fallback());
+    } else {
+      fallback();
+    }
+  } catch {
+    fallback();
+  }
 };
 
 const scheduleReconnect = () => {
