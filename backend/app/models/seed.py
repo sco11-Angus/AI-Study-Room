@@ -1,7 +1,7 @@
 """插入测试数据，便于联调。"""
 from datetime import datetime
 from sqlalchemy.orm import Session
-from .db import SessionLocal, engine
+from .database import SessionLocal
 from .entities import Camera, AppUser, Guard, Region, Member
 
 
