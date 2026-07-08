@@ -46,6 +46,7 @@
       "description": "Implement the unified alarm event contract, alarm persistence/snapshot/dedup service, alarm WebSocket push, DingTalk primary/escalation workflow, and alarm query/confirm APIs.",
       "required_validation": [
         "python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py",
+        "python backend/scripts/verify_task_e_real_db.py",
         "python tests/smoke_test.py",
         "PowerShell-equivalent init.sh smoke test",
         "bash ./init.sh"
@@ -58,6 +59,10 @@
         "Extended ORM models for camera_id, fight alarm type, extra JSON, Guard, notification_log guard FK, and indexes.",
         "Added backend/tests/test_alarm_center.py covering persistence/snapshot/notify, dedup, level=0 private-only behavior, DingTalk confirm/escalation logs, and alarm HTTP API.",
         "pytest passed: 27 passed for intrusion, fight, fight integration, face, and alarm center tests.",
+        "Real MySQL verification passed against DATABASE_URI from .env: connected to study_room, seeded minimal camera/region/guards, wrote confirmed fight, escalated intrusion, private fatigue alarms, and verified DingTalk notification logs without exposing secrets.",
+        "Added backend/scripts/verify_task_e_real_db.py as the repeatable real-database verification entry point.",
+        "backend app config now loads .env automatically and supports both KEY= and PowerShell $env:KEY= syntax.",
+        "backend/requirements.txt includes PyMySQL for mysql+pymysql DATABASE_URI values.",
         "backend/tests/smoke_test.py passed after restoring StreamScheduler ring_buffer maxlen to 5.",
         "PowerShell-equivalent init smoke passed with 16 markdown docs."
       ],

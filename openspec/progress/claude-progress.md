@@ -74,3 +74,24 @@
   - Dlib model files are absent locally; intrusion/occupy face matching safely falls back to `stranger` until models are provided.
   - `bash ./init.sh` is still blocked on this Windows host by missing WSL distribution; shell-capable environments should run the corrected `init.sh`.
   - `git status --short` emits permission warnings for generated `.pytest_cache` directories, but they are not part of the intended commit.
+
+## Session 2026-07-08 Task E Real DB
+
+- Goal: verify task E against the user's real MySQL database configured in `.env`.
+- Baseline:
+  - `.env` contains a `DATABASE_URI` using `mysql+pymysql`.
+  - First connection attempt reached MySQL but failed with invalid credentials; after the user corrected `.env`, SQLAlchemy connected successfully to `study_room`.
+- Actions:
+  - Added `backend/scripts/verify_task_e_real_db.py` as a repeatable real-database verification script.
+  - The script loads `.env`, supports both `KEY=` and PowerShell `$env:KEY=` syntax, connects to the configured database, applies task-E-required nullable columns, seeds minimal camera/region/primary guard/leader guard rows, and verifies confirm/escalate/private-only alarm behavior.
+  - Updated `backend/app/config.py` to load the repo `.env` at startup.
+  - Updated `backend/requirements.txt` with `PyMySQL` for `mysql+pymysql://...` URIs.
+  - Updated `init.sql` to a task-E-compatible schema with nullable `alarm_event.confirmed_at` and `notification_log.ack_at`.
+  - Updated `backend/tests/smoke_test.py` to mask credentials when printing `DATABASE_URI`.
+- Validation:
+  - `python backend/scripts/verify_task_e_real_db.py` passed against real MySQL. Latest run wrote and verified alarm IDs: confirmed fight `7`, escalated intrusion `8`, private fatigue `9`.
+  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py` passed: 27 passed, 5 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed a masked database URI.
+- Notes:
+  - The script does not call a real DingTalk webhook; it uses empty webhook values and verifies local notification logs/status transitions.
+  - The user pasted an alternate SQL draft. For task E compatibility, any final SQL must keep `alarm_event.confirmed_at` and `notification_log.ack_at` nullable because those timestamps are only available after confirmation.
