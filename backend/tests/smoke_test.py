@@ -6,7 +6,6 @@
 """
 import os
 import sys
-import urllib.request
 
 # 自动添加 backend 目录到 path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,7 +36,7 @@ from app.stream.scheduler import StreamScheduler
 
 scheduler = StreamScheduler(engine)
 cs = scheduler.add_camera(camera_id=0, stream_name="test")
-assert cs.ring_buffer.maxlen == 3
+assert cs.ring_buffer.maxlen == 5
 assert "rtmp://" in cs.stream_url
 print(f"  A3: OK (scheduler created, url={cs.stream_url})")
 
@@ -69,35 +68,25 @@ print("=" * 50)
 from app import create_app
 
 app = create_app()
-routes = [r.rule for r in app.url_map.iter_rules() if "video_feed" in r.rule]
-assert len(routes) >= 1, f"Missing video_feed route, got {routes}"
-print(f"  Flask /video_feed/<stream_id> route: OK")
+routes = [r.rule for r in app.url_map.iter_rules() if "ws/video_feed" in r.rule]
+assert len(routes) >= 1, f"Missing ws/video_feed route, got {routes}"
+print(f"  Flask /ws/video_feed/<camera_id> WS route: OK")
 
-# ---- 4. video_feed 实际拉流 ----
+# ---- 4. scheduler 集成验证 ----
 print()
 print("=" * 50)
-print("4. /video_feed/test 拉流验证")
+print("4. 调度器集成验证")
 print("=" * 50)
 
-try:
-    req = urllib.request.Request("http://localhost:5000/video_feed/test")
-    resp = urllib.request.urlopen(req, timeout=8)
-    content_type = resp.getheader("Content-Type")
-    assert "multipart/x-mixed-replace" in content_type, f"Wrong Content-Type: {content_type}"
-    chunk = resp.read(2048)
-    resp.close()
-    has_frame = b"--frame" in chunk
-    has_jpeg = b"Content-Type: image/jpeg" in chunk
-    if has_frame and has_jpeg:
-        print(f"  PASS: 拉流成功! Content-Type={content_type}, chunk={len(chunk)}B, JPEG frame detected")
-    else:
-        print(f"  WARN: 连接成功但帧格式异常, has_frame={has_frame}, has_jpeg={has_jpeg}")
-        print(f"       (可能 RTMP 推流 test 未在运行)")
-except urllib.error.URLError as e:
-    print(f"  WARN: 无法连接后端: {e}")
-    print(f"       请确保 Flask 在另一个终端运行中")
-except Exception as e:
-    print(f"  WARN: {e}")
+from app.stream.scheduler import get_scheduler
+
+scheduler = get_scheduler()
+if scheduler:
+    cs0 = scheduler.get_camera(0)
+    print(f"  调度器已启动, camera_id=0 online={cs0.online if cs0 else 'N/A'}")
+else:
+    print(f"  WARN: 调度器未启动 (请确保通过 run.py 启动)")
+    print(f"        python run.py")
 
 # ---- 5. Config ----
 print()
