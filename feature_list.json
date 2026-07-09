@@ -65,6 +65,7 @@
         "backend/requirements.txt includes PyMySQL for mysql+pymysql DATABASE_URI values.",
         "backend/tests/smoke_test.py passed after restoring StreamScheduler ring_buffer maxlen to 5.",
         "PowerShell-equivalent init smoke passed with 16 markdown docs.",
+        
         "Real DingTalk text webhook connectivity was verified with errcode=0 after DINGTALK_WEBHOOK was added to .env.",
         "Added DingTalk signed webhook support via DINGTALK_SECRET and DINGTALK_LEADER_SECRET, plus public ActionCard confirm/snapshot URLs via PUBLIC_BASE_URL.",
         "Added GET /api/alarms/{id}/confirm for DingTalk ActionCard button confirmation while preserving the existing POST confirm API.",

@@ -69,9 +69,40 @@ def set_face_result(result: dict) -> None:
         latest_face_result = result
 
 
+def broadcast_face_result(result: dict) -> None:
+    """推送人脸识别结果到 WebSocket 广播队列（供前端实时订阅）。"""
+    set_face_result(result)
+    try:
+        face_result_queue.put_nowait(result)
+    except Exception:
+        pass
+
+
+# ---- REST API（直接写在 ws 模块里，零跨文件导入） ----
+
 @bp.get("/api/face_result")
 def get_face_result():
-    """获取最新人脸识别结果（前端每 500ms 轮询）。"""
+    """获取最新人脸识别结果
+    ---
+    tags:
+      - Face
+    summary: 查询最新人脸识别/活体检测结果（前端每 500ms 轮询）
+    responses:
+      200:
+        description: 人脸识别结果
+        schema:
+          properties:
+            code: {type: integer, example: 0}
+            message: {type: string, example: "ok"}
+            data:
+              type: object
+              properties:
+                type: {type: string, enum: [member, stranger, face_spoof], description: "结果类型"}
+                member_id: {type: integer, description: "会员 ID（仅 member 类型）"}
+                name: {type: string, description: "会员姓名（仅 member 类型）"}
+                confidence: {type: number, description: "置信度（仅 face_spoof 类型）"}
+                reasons: {type: array, items: {type: string}, description: "失败原因（仅 face_spoof 类型）"}
+    """
     with _face_lock:
         data = latest_face_result
     return jsonify(code=0, message="ok", data=data)

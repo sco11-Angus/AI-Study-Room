@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-env_path = Path(__file__).parent.parent.parent / ".env"
+env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
 
 
@@ -45,6 +45,8 @@ class Config:
     # 烟火检测 (§6.2)
     FIRE_WINDOW = int(os.getenv("FIRE_WINDOW", 30))   # 滑动窗口帧数
     FIRE_CONF = float(os.getenv("FIRE_CONF", 0.45))   # 平均置信度阈值
+    FIRE_SMOKE_WEIGHTS = os.getenv("FIRE_SMOKE_WEIGHTS", "fire_smoke.pt")
+    FIRE_SMOKE_REGION_ID = int(os.getenv("FIRE_SMOKE_REGION_ID", 0))
 
     # 音视频融合打架检测 (任务书 D)
     FIGHT_FUSE_THRESH = float(os.getenv("FIGHT_FUSE_THRESH", 0.6))  # 融合分告警阈值
@@ -78,7 +80,7 @@ class Config:
     DB_NAME = os.getenv("DB_NAME", "study_room")
     DATABASE_URI = os.getenv(
         "DATABASE_URI",
-        f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+        f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
     )
 
     # 模型权重 / 抓拍
@@ -87,3 +89,9 @@ class Config:
         "SNAPSHOT_DIR",
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "snapshots")),
     )
+
+    # 活体检测
+    LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "true").lower() == "true"
+    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.5))
+    LIVENESS_HISTORY_SIZE = int(os.getenv("LIVENESS_HISTORY_SIZE", 30))
+    LIVENESS_EAR_BLINK_THRESH = float(os.getenv("LIVENESS_EAR_BLINK_THRESH", 0.25))
