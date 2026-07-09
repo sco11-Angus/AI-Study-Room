@@ -6,27 +6,65 @@
   ③ 钉钉逐级上报(见 dingtalk.py)
 同防区同类型在冷却窗口内合并去重 (§10.2)。
 """
+from __future__ import annotations
+
+import json
+import logging
+import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Callable
+
+import numpy as np
+
+from ..config import Config
+from ..detectors.base import AlarmEvent
+
+logger = logging.getLogger(__name__)
 
 
 class AlarmService:
-    def __init__(self, cooldown: int = 30):
+    """告警中心主入口。
+
+    检测器产出的 AlarmEvent 到这里才真正变成可追踪、可通知、可确认的告警。
+    """
+
+    def __init__(
+        self,
+        cooldown: int = 30,
+        notifier=None,
+        broadcaster: Callable[[dict], int] | None = None,
+        snapshot_dir: str | None = None,
+    ):
         self.cooldown = cooldown
-        self._last_fired: dict = {}  # (region_id, type) -> ts
+        self._last_fired: dict[tuple[int, str], tuple[float, int | None]] = {}
+        self._notifier = notifier
+        self._broadcaster = broadcaster
+        self.snapshot_dir = snapshot_dir or Config.SNAPSHOT_DIR
 
     def _dedup(self, region_id: int, type_: str) -> bool:
         key = (region_id, type_)
         now = time.time()
-        if now - self._last_fired.get(key, 0) < self.cooldown:
+        last_ts, _ = self._last_fired.get(key, (0.0, None))
+        if now - last_ts < self.cooldown:
             return False
-        self._last_fired[key] = now
+        self._last_fired[key] = (now, None)
         return True
 
-    def raise_alarm(self, region_id: int, type_: str, frame, extra: dict = None):
-        """触发告警闭环。"""
+    def raise_alarm(
+        self,
+        event: AlarmEvent | None = None,
+        frame=None,
+        region_id: int | None = None,
+        type_: str | None = None,
+        extra: dict | None = None,
+    ) -> dict | None:
+        """触发告警闭环。
+
+        新代码应传入 AlarmEvent；region_id/type_ 参数保留给旧调用点兼容。
+        face_recognition 只走轻量推送通道，不入库、不触发钉钉。
+        """
         if type_ == "face_recognition":
-            # 人脸识别走轻量推送通道（不触发钉钉，不入库告警）
             from ..api.ws import set_face_result
             if extra:
                 msg = {"type": "stranger"}
@@ -37,11 +75,26 @@ class AlarmService:
                         "name": extra.get("name", "未知"),
                     }
                 set_face_result(msg)
-            return
+            return None
 
-        if not self._dedup(region_id, type_):
-            return
-        # ① 抓拍落盘 + 裁剪面部 -> FaceMatcher.match
-        # ② push_to_dashboard(...)  经 WebSocket
-        # ③ DingTalkNotifier.notify(alarm)  启动 3min 升级计时
-        ...
+        event = self._normalize_event(event, region_id, type_)
+        if not self._dedup(event.region_id, event.type):
+            logger.info("[alarm] 告警去重 region=%s type=%s", event.region_id, event.type)
+            return None
+
+        if frame is None:
+            frame = event.snapshot
+        event.snapshot_url = event.snapshot_url or self._save_snapshot(event, frame)
+        event.face_match = event.face_match or self._match_face(event, frame)
+
+        record = self._persist(event)
+        self._last_fired[(event.region_id, event.type)] = (time.time(), record.id)
+        payload = self._serialize_record(record)
+
+        if event.level >= 1:
+            self._broadcast(payload)
+            self._notify(record.id)
+        else:
+            logger.info("[alarm] level=0 弱提醒仅保留私有端/查询记录 alarm_id=%s", record.id)
+
+        return payload
