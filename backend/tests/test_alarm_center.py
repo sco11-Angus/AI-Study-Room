@@ -339,3 +339,150 @@ def test_alarm_api_lists_and_confirms(monkeypatch, db):
     missing_page = client.get("/api/alarms/404/confirm")
     assert missing_page.status_code == 404
     assert b"Alarm 404 not found" in missing_page.data
+
+
+def test_stream_capture_reads_frame_after_warmup(monkeypatch):
+    from app.services import stream_capture
+
+    state = {}
+
+    class FakeCapture:
+        def __init__(self, url, backend):
+            self.url = url
+            self.backend = backend
+            self.read_count = 0
+            self.released = False
+
+        def isOpened(self):
+            return True
+
+        def set(self, *_args):
+            return True
+
+        def read(self):
+            self.read_count += 1
+            return True, np.full((2, 2, 3), self.read_count, dtype=np.uint8)
+
+        def release(self):
+            self.released = True
+
+    def fake_video_capture(url, backend):
+        cap = FakeCapture(url, backend)
+        state["cap"] = cap
+        return cap
+
+    monkeypatch.setattr(stream_capture.cv2, "VideoCapture", fake_video_capture)
+
+    frame = stream_capture.capture_frame("rtmp://unit/test", timeout=1, warmup_frames=1)
+
+    assert frame[0, 0, 0] == 2
+    assert state["cap"].url == "rtmp://unit/test"
+    assert state["cap"].released is True
+
+
+def test_stream_capture_reports_open_failure(monkeypatch):
+    from app.services import stream_capture
+
+    class FakeClosedCapture:
+        def isOpened(self):
+            return False
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr(stream_capture.cv2, "VideoCapture", lambda *_args: FakeClosedCapture())
+
+    with pytest.raises(stream_capture.StreamCaptureError, match="failed to open stream"):
+        stream_capture.capture_frame("rtmp://unit/missing", timeout=1)
+
+
+def test_alarm_test_capture_endpoint_pulls_frame_and_raises_alarm(monkeypatch, db, snapshot_dir):
+    from app.api.alarms import bp
+    from app.models.entities import AlarmEvent, Camera, Region
+    from app.services.alarm import AlarmService
+
+    session = db()
+    try:
+        session.add_all([
+            Camera(
+                id=51,
+                name="Unit Camera",
+                stream_url="rtmp://unit/test",
+                resolution="1920*1080",
+                status="online",
+                created_at=datetime.utcnow(),
+            ),
+            Region(
+                id=52,
+                camera_id=51,
+                user_id=None,
+                name="Unit Region",
+                type="danger_zone",
+                polygon="[]",
+                x_distance=10,
+                y_stay_time=3,
+                created_at=datetime.utcnow(),
+            ),
+        ])
+        session.commit()
+    finally:
+        session.close()
+
+    captured = {}
+
+    def fake_capture_frame(stream_url, timeout, warmup_frames, camera_id=None):
+        captured.update({
+            "stream_url": stream_url,
+            "timeout": timeout,
+            "warmup_frames": warmup_frames,
+        })
+        return np.zeros((6, 6, 3), dtype=np.uint8)
+
+    sent = []
+    notifier = FakeNotifier()
+    svc = AlarmService(cooldown=30, notifier=notifier, broadcaster=sent.append)
+
+    monkeypatch.setattr("app.services.stream_capture.capture_frame", fake_capture_frame)
+    monkeypatch.setattr("app.services.alarm.get_alarm_service", lambda: svc)
+
+    app = Flask(__name__)
+    app.register_blueprint(bp)
+    client = app.test_client()
+
+    resp = client.post("/api/alarms/test-capture", json={
+        "camera_id": 51,
+        "region_id": 52,
+        "type": "fight",
+        "level": 2,
+        "actor": "Li Ming",
+        "behavior": "pushed another student",
+        "timeout": 3,
+        "warmup_frames": 0,
+    })
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["code"] == 0
+    assert body["data"]["snapshot_url"].startswith("/api/alarms/snapshots/")
+    assert captured == {
+        "stream_url": "rtmp://unit/test",
+        "timeout": 3.0,
+        "warmup_frames": 0,
+    }
+    assert sent == [body["data"]]
+    assert notifier.alarm_ids == [body["data"]["id"]]
+    assert (snapshot_dir / os.path.basename(body["data"]["snapshot_url"])).exists()
+
+    session = db()
+    try:
+        record = session.get(AlarmEvent, body["data"]["id"])
+        extra = json.loads(record.extra)
+        assert record.camera_id == 51
+        assert record.region_id == 52
+        assert record.type == "fight"
+        assert record.level == 2
+        assert extra["actor"] == "Li Ming"
+        assert extra["behavior"] == "pushed another student"
+        assert extra["source"] == "task_e_test_capture"
+    finally:
+        session.close()

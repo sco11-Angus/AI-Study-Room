@@ -281,3 +281,62 @@
   - Whether DingTalk visually notifies the exact person depends on `guard.dingtalk_id` being a valid DingTalk user ID or mobile accepted by the robot.
   - `127.0.0.1` confirm links only work on this same Windows machine while the local backend is running.
 
+## Session 2026-07-09 Task E Swagger Docs
+
+- Goal: add Swagger/OpenAPI documentation for task E REST interfaces used by other modules.
+- Actions:
+  - Rewrote `backend/app/api/alarms.py` docstrings with clean Swagger YAML while preserving existing route behavior.
+  - Documented `GET /api/alarms` for dashboard/list consumers, including status filtering and `AlarmEvent` schema.
+  - Documented `POST /api/alarms/{alarm_id}/confirm` for JSON clients.
+  - Documented `GET /api/alarms/{alarm_id}/confirm` as the DingTalk ActionCard browser confirmation callback.
+  - Documented `GET /api/alarms/snapshots/{filename}` for alarm snapshot access.
+  - Added response schemas for `AlarmEvent`, `AlarmConfirmResponse`, and `AlarmErrorResponse`.
+- Validation:
+  - From repo root: `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL still printed the localhost proxy warning.
+  - From `backend/`: `python -m py_compile app/api/alarms.py` passed.
+  - From `backend/`: `python -m pytest tests/test_alarm_center.py` passed: 7 passed, 11 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+  - Flask test client `GET /apispec_1.json` returned 200 and exposed `/api/alarms`, `/api/alarms/{alarm_id}/confirm`, `/api/alarms/snapshots/{filename}`, plus `AlarmEvent`, `AlarmConfirmResponse`, and `AlarmErrorResponse` definitions.
+- Remaining risks:
+  - WebSocket `/ws/alarms` is referenced in the REST description but is not represented as a native Swagger path because it is a WebSocket route.
+
+## Session 2026-07-09 Task E Local Stream Capture
+
+- Goal: add a Task E self-test path so alarm-center testing can pull one frame and create its own snapshot while upstream stream/detector modules are still incomplete.
+- Baseline:
+  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
+  - `feature_list.json` still treats `alarm-center-dingtalk-close-loop` as the Task E source of truth.
+  - `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL still printed the localhost proxy warning.
+  - PowerShell sandbox could not launch `python.exe` directly, so Python validation was run with elevated execution.
+- Actions:
+  - Added `backend/app/services/stream_capture.py` as a one-shot RTMP/RTSP/video frame capture helper using OpenCV `VideoCapture`.
+  - Added `POST /api/alarms/test-capture` in `backend/app/api/alarms.py`.
+  - The endpoint accepts `stream_url` or resolves `camera.stream_url` from `camera_id`, requires/derives `region_id`, captures one frame, creates `AlarmEvent`, and calls `AlarmService.raise_alarm(event, frame)`.
+  - The endpoint carries `actor`, `behavior`, `face_match`, scores, and custom `extra` into the alarm extra JSON so DingTalk cards can say who did what and who should handle it.
+  - Added Swagger documentation for the new local/manual test-capture endpoint.
+  - Added tests for stream capture success/failure and for the API path that resolves a camera stream URL, saves a snapshot, persists the alarm, broadcasts, and notifies.
+- Validation:
+  - From repo root: `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed.
+  - From `backend/`: `python -m py_compile app/api/alarms.py app/services/stream_capture.py tests/test_alarm_center.py` passed.
+  - From `backend/`: `python -m pytest tests/test_alarm_center.py` passed: 10 passed, 13 warnings.
+  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py` passed: 43 passed, 20 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+- Remaining risks:
+  - `POST /api/alarms/test-capture` is a local/manual integration helper. Continuous production stream scheduling and detector-driven alarm creation still belong to the upstream stream scheduler and detector modules.
+  - Real RTMP capture still depends on the RTMP source being reachable from this machine and OpenCV/FFmpeg being able to decode it.
+
+## Session 2026-07-09 Task E Capture Testing with Real Stream
+
+- Goal: test the `POST /api/alarms/test-capture` endpoint with a real RTMP stream from OBS.
+- Actions:
+  - Fixed `scheduler.py`: removed `live=1` from the RTMP URL (it should be an FFmpeg option, not part of the URL).
+  - Fixed `scheduler.py`: added `rtmp_live;live` to `OPENCV_FFMPEG_CAPTURE_OPTIONS` environment variable.
+  - Fixed `alarms.py`: changed `camera_id <= 0` check to `camera_id < 0` to allow camera_id=0.
+  - Fixed `alarms.py`: changed falsy checks (`if not camera_id`) to explicit `None` checks (`if camera_id is None`).
+  - Enhanced `stream_capture.py`: added `_try_get_from_scheduler()` to get frames from the scheduler's ring buffer instead of opening a second RTMP connection.
+- Validation:
+  - Backend successfully connected to RTMP stream: `cam-0 解码统计: ok=129, dropped=0`.
+  - Real-time frame capture from scheduler buffer works when stream is stable.
+- Remaining issues:
+  - Network instability: RTMP stream shows frequent packet mismatch errors, causing intermittent frame drops.
+  - When the stream is stable, `test-capture` can successfully grab frames from the scheduler's ring buffer.

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 os.environ.setdefault(
     "OPENCV_FFMPEG_CAPTURE_OPTIONS",
     "rtsp_transport;tcp"
+    "|rtmp_live;live"
     "|analyzeduration;100000|probesize;50000"
     "|fflags;nobuffer+genpts"
     "|flags;low_delay"
@@ -88,7 +89,7 @@ class StreamScheduler:
 
     def add_camera(self, camera_id: int, stream_name: str) -> CameraStream:
         """添加一路摄像头，返回其流状态对象。"""
-        stream_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name} live=1"
+        stream_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name}"
         cs = CameraStream(
             camera_id=camera_id,
             stream_name=stream_name,

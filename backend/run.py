@@ -22,7 +22,7 @@ engine.setup_all()
 print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 
 scheduler = StreamScheduler(engine)
-scheduler.add_camera(camera_id=0, stream_name="test")
+scheduler.add_camera(camera_id=5, stream_name="test")
 scheduler.start_all()
 set_scheduler(scheduler)
 
