@@ -15,14 +15,17 @@ pipeline {
         IMAGE_TAG       = "${env.BUILD_NUMBER}"
         BACKEND_IMAGE   = "${DOCKER_REGISTRY}/sco11-angus/${PROJECT_NAME}-backend:${IMAGE_TAG}"
         VENV_DIR        = 'backend/.venv'
-        // 模型权重下载地址（按实际 OSS/S3 调整）
+        // 模型权重下载地址（按实际 OSS/S3 调整；占位符时下载自动跳过，不影响流水线）
         YOLO_WEIGHTS_URL = 'https://your-oss.com/model_weights/yolov8n.pt'
         DLIB_WEIGHTS_URL = 'https://your-oss.com/model_weights/shape_predictor_68_face_landmarks.dat'
+        PROD_HOST        = '127.0.0.1'
     }
 
     // ---- 触发条件 ----
     triggers {
-        // 每 5 分钟轮询 SCM 变化（GitHub Webhook 更优，此处兜底）
+        // GitHub Webhook 推送触发（推荐）
+        githubPush()
+        // 每 5 分钟轮询 SCM 变化（Webhook 失效时兜底）
         pollSCM('H/5 * * * *')
     }
 
@@ -163,20 +166,19 @@ services:
       - DINGTALK_WEBHOOK=${DINGTALK_WEBHOOK}
 EOF
 
-                        # ③ SSH 到生产服务器部署（需要 SSH Credentials）
-                        #    此处用 Jenkins SSH Plugin 或 sh + ssh-key
+                        # ③ 本地部署（单服务器场景，直接在本机执行 docker compose）
                         echo "→ 目标: 低配 Linux 云服务器 (2核/2GB/4Mbps)"
                         echo "→ 方式: docker compose up -d"
 
-                        # 示例：SSH 部署（需在 Jenkins 配置 SSH 私钥）
-                        # ssh -o StrictHostKeyChecking=no deploy@${PROD_HOST} << 'DEPLOY'
-                        #     cd /opt/AI-Study-Room
-                        #     docker compose -f deploy/docker-compose.yml \
-                        #         -f deploy/docker-compose.override.yml \
-                        #         up -d --pull always --force-recreate
-                        # DEPLOY
+                        cd /opt/AI-Study-Room || cd ${WORKSPACE}
+                        docker compose -f deploy/docker-compose.yml \
+                            -f deploy/docker-compose.override.yml \
+                            up -d --pull always --force-recreate || \
+                        docker compose -f deploy/docker-compose.yml \
+                            -f deploy/docker-compose.override.yml \
+                            up -d --force-recreate
 
-                        echo '✅ 部署脚本已准备（取消注释 SSH 行并配置 PROD_HOST 即生效）'
+                        echo '✅ 部署完成'
                     '''
                 }
             }
@@ -189,15 +191,14 @@ EOF
             steps {
                 echo '🩺 [Stage 7] 验证服务健康'
                 sh '''
-                    # 生产环境健康检查（取消注释 SSH 部署后启用）
-                    # curl -sf http://${PROD_HOST}:5000/apidocs -o /dev/null \
-                    #     && echo "Backend Swagger OK" \
-                    #     || echo "Backend Swagger FAIL"
-                    # curl -sf http://${PROD_HOST}:8080/ -o /dev/null \
-                    #     && echo "Frontend OK" \
-                    #     || echo "Frontend FAIL"
-
-                    echo '💡 启用 SSH 部署后，取消注释健康检查 curl 命令'
+                    # 本地健康检查
+                    sleep 5
+                    curl -sf http://${PROD_HOST}:5000/apidocs -o /dev/null \
+                        && echo "Backend Swagger OK" \
+                        || echo "Backend Swagger FAIL (服务可能仍在启动中)"
+                    curl -sf http://${PROD_HOST}:8080/ -o /dev/null \
+                        && echo "Frontend OK" \
+                        || echo "Frontend FAIL (nginx-rtmp 可能仍在启动中)"
                 '''
             }
         }
