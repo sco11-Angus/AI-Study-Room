@@ -38,6 +38,48 @@ const previewPolygons = ref([])
 const canvasWidth = ref(0)
 const canvasHeight = ref(0)
 
+const getPixelPoints = (normalized) => {
+  if (!normalized || !normalized.length || !canvasWidth.value || !canvasHeight.value) {
+    return []
+  }
+  return normalized.map(([x, y]) => [x * canvasWidth.value, y * canvasHeight.value])
+}
+
+const updatePreviewPolygons = () => {
+  previewPolygons.value = props.previewPolygon ? [getPixelPoints(props.previewPolygon)] : []
+}
+
+const redraw = () => {
+  const canvas = canvasEl.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+  const drawPath = (points, options = {}) => {
+    if (!points || !points.length) return
+    ctx.save()
+    ctx.strokeStyle = options.strokeStyle || '#67c23a'
+    ctx.fillStyle = options.fillStyle || 'rgba(103, 195, 58, 0.15)'
+    ctx.lineWidth = options.lineWidth || 2
+    ctx.setLineDash(options.lineDash || [])
+    ctx.beginPath()
+    points.forEach(([x, y], index) => {
+      if (index === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    })
+    if (options.closed) {
+      ctx.closePath()
+      ctx.fill()
+    }
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  previewPolygons.value.forEach((polygon) => drawPath(polygon, { strokeStyle: '#f56c6c', fillStyle: 'rgba(245, 108, 108, 0.18)', lineWidth: 2, closed: true }))
+  polygons.value.forEach((polygon) => drawPath(polygon.points, { closed: true }))
+  drawPath(currentPolygon.value, { strokeStyle: '#409eff', lineDash: [6, 4] })
+}
+
 const updateCanvasSize = () => {
   const canvas = canvasEl.value
   const player = playerRef.value
@@ -75,17 +117,6 @@ watch(
 onMounted(() => {
   nextTick(updateCanvasSize)
 })
-
-const getPixelPoints = (normalized) => {
-  if (!normalized || !normalized.length || !canvasWidth.value || !canvasHeight.value) {
-    return []
-  }
-  return normalized.map(([x, y]) => [x * canvasWidth.value, y * canvasHeight.value])
-}
-
-const updatePreviewPolygons = () => {
-  previewPolygons.value = props.previewPolygon ? [getPixelPoints(props.previewPolygon)] : []
-}
 
 const pointFromEvent = (e) => {
   const canvas = canvasEl.value
@@ -128,37 +159,6 @@ const undoLastPoint = () => {
 const clearCurrentPolygon = () => {
   currentPolygon.value = []
   redraw()
-}
-
-const redraw = () => {
-  const canvas = canvasEl.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-  const drawPath = (points, options = {}) => {
-    if (!points || !points.length) return
-    ctx.save()
-    ctx.strokeStyle = options.strokeStyle || '#67c23a'
-    ctx.fillStyle = options.fillStyle || 'rgba(103, 195, 58, 0.15)'
-    ctx.lineWidth = options.lineWidth || 2
-    ctx.setLineDash(options.lineDash || [])
-    ctx.beginPath()
-    points.forEach(([x, y], index) => {
-      if (index === 0) ctx.moveTo(x, y)
-      else ctx.lineTo(x, y)
-    })
-    if (options.closed) {
-      ctx.closePath()
-      ctx.fill()
-    }
-    ctx.stroke()
-    ctx.restore()
-  }
-
-  previewPolygons.value.forEach((polygon) => drawPath(polygon, { strokeStyle: '#f56c6c', fillStyle: 'rgba(245, 108, 108, 0.18)', lineWidth: 2, closed: true }))
-  polygons.value.forEach((polygon) => drawPath(polygon.points, { closed: true }))
-  drawPath(currentPolygon.value, { strokeStyle: '#409eff', lineDash: [6, 4] })
 }
 </script>
 
