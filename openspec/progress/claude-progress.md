@@ -95,3 +95,21 @@
 - Notes:
   - The script does not call a real DingTalk webhook; it uses empty webhook values and verifies local notification logs/status transitions.
   - The user pasted an alternate SQL draft. For task E compatibility, any final SQL must keep `alarm_event.confirmed_at` and `notification_log.ack_at` nullable because those timestamps are only available after confirmation.
+
+## Session 2026-07-09 Pull Merge Push
+
+- Goal: pull latest `origin/main`, keep the merged code launchable, and push the complete result.
+- Baseline:
+  - `pwd` confirmed `D:\1\大二暑期实训\App`.
+  - PowerShell could not resolve `git` from PATH, but Git was available at `C:\Program Files\Git\cmd\git.exe`.
+  - Local `main` was behind `origin/main` by 2 commits.
+- Actions:
+  - Pulled `origin/main` with a fast-forward update to `a906fe8`.
+  - Fixed a post-pull smoke blocker in `backend/app/__init__.py` by removing the duplicate `ws.register_ws_routes(sock)` call that registered `/ws/alarms` twice.
+  - Updated `feature_list.json` with the verification evidence for the route-registration fix.
+- Validation:
+  - `./init.sh` returned exit code 0 from PowerShell.
+  - From `backend/`: `python tests/smoke_test.py` passed with `ALL SMOKE TESTS PASSED`.
+- Remaining risks:
+  - This host's PowerShell PATH still does not expose `git`; use `C:\Program Files\Git\cmd\git.exe` directly or add it to PATH.
+  - The existing `bash ./init.sh` WSL-distribution blocker remains unchanged.
