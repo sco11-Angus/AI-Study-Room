@@ -11,6 +11,8 @@ from .base import AlarmEvent, Detector, Frame
 
 logger = logging.getLogger(__name__)
 
+class FireSmokePlugin(Detector):
+    name = "fire_smoke"
 
 class FireSmokeDetector:
     """对 fire/smoke 置信度做滑动窗口确认."""
@@ -23,6 +25,8 @@ class FireSmokeDetector:
         if not self._window:
             return 0.0
         return sum(self._window) / len(self._window)
+
+
 
     def feed(self, conf: float) -> bool:
         """送入本帧 fire/smoke 最大置信度，返回是否判定为有效灾情."""
@@ -151,7 +155,6 @@ class FireSmokePlugin(Detector):
                     best_class = class_name
         return best_conf, best_class
 
-
 def _iter_results(results: Any) -> Iterable[Any]:
     if results is None:
         return []
@@ -176,7 +179,6 @@ def _to_list(values: Any) -> list:
     if isinstance(values, list):
         return values
     return [values]
-
 
 def _class_name(names: Any, cls_id: Any) -> str:
     idx = int(cls_id)

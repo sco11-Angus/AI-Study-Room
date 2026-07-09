@@ -91,7 +91,8 @@
         "backend app config now loads .env automatically and supports both KEY= and PowerShell $env:KEY= syntax.",
         "backend/requirements.txt includes PyMySQL for mysql+pymysql DATABASE_URI values.",
         "backend/tests/smoke_test.py passed after restoring StreamScheduler ring_buffer maxlen to 5.",
-        "PowerShell-equivalent init smoke passed with 16 markdown docs."
+        "PowerShell-equivalent init smoke passed with 16 markdown docs.",
+        "After pulling origin/main on 2026-07-09, removed duplicate ws.register_ws_routes(sock) registration in backend/app/__init__.py and verified python tests/smoke_test.py passed again."
       ],
       "blockers": [
         "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed."

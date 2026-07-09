@@ -96,6 +96,7 @@
   - The script does not call a real DingTalk webhook; it uses empty webhook values and verifies local notification logs/status transitions.
   - The user pasted an alternate SQL draft. For task E compatibility, any final SQL must keep `alarm_event.confirmed_at` and `notification_log.ack_at` nullable because those timestamps are only available after confirmation.
 
+taskC_firesmoke
 ## Session 2026-07-09 Task C3 Fire Smoke
 
 - Goal: implement C task book C3, "fire/smoke detection".
@@ -123,4 +124,4 @@
   - Updated `openspec/progress/progress.md` with Session 005 and current blockers.
 - Remaining risks:
   - `backend/model_weights/fire_smoke.pt` is a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file.
-  - `bash ./init.sh` still fails in this execution session with WSL no-distribution output, despite PowerShell-equivalent smoke passing.
+  - `bash ./init.sh` still fails in this execution session with WSL no-distribution output, despite PowerShell-equivalent smoke passing

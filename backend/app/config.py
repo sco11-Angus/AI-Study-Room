@@ -4,7 +4,8 @@ from pathlib import Path
 from urllib.parse import quote_plus
 from dotenv import load_dotenv
 
-env_path = Path(__file__).parent.parent.parent / ".env"
+
+env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
 
 
@@ -88,3 +89,9 @@ class Config:
         "SNAPSHOT_DIR",
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "snapshots")),
     )
+
+    # 活体检测
+    LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "true").lower() == "true"
+    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.5))
+    LIVENESS_HISTORY_SIZE = int(os.getenv("LIVENESS_HISTORY_SIZE", 30))
+    LIVENESS_EAR_BLINK_THRESH = float(os.getenv("LIVENESS_EAR_BLINK_THRESH", 0.25))

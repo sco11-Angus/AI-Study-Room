@@ -3,16 +3,19 @@
 - encode(face_img) -> 128 维向量（Dlib ResNet 模型）
 - match(feature) -> "member:<id>" / "stranger"：欧氏距离最近邻，>0.6 判 stranger
 - FaceDetector: 实现 Detector 接口，接入推理引擎做端到端人脸识别
+- 集成 LivenessDetector 活体检测：防御静态照片/视频回放/AI换脸
 """
 import json
 import logging
 import os
+from collections import deque
 from typing import Optional
 
 import numpy as np
 
 from ..config import Config
 from .base import AlarmEvent, Detector, Frame
+from .liveness import LivenessDetector
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +100,21 @@ class FaceMatcher:
         shape = self._shape_predictor(rgb, faces[0])
         descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
         return np.array(descriptor)
+
+    def shape_from_rect(self, image: np.ndarray, rect):
+        """从人脸矩形提取 68 点 landmarks。
+
+        Args:
+            image: BGR 全帧图像
+            rect: dlib rectangle（由 detect_faces() 返回）
+
+        Returns:
+            dlib full_object_detection，或 None
+        """
+        if not self._dlib_loaded:
+            return None
+        rgb = image[..., ::-1].copy()
+        return self._shape_predictor(rgb, rect)
 
     def encode_from_rect(self, image: np.ndarray, rect) -> Optional[np.ndarray]:
         """从已检测到的人脸矩形直接提取特征（不重复检测，更稳定）。
@@ -190,7 +208,7 @@ class FaceDetector(Detector):
 
     实现 Detector 接口：
     - setup(): 加载 dlib 模型
-    - detect(frame): 检测人脸 → 特征提取 → 会员匹配 → AlarmEvent
+    - detect(frame): 检测人脸 → 活体检测 → 特征提取 → 会员匹配 → AlarmEvent
     """
 
     name = "face_recognition"
@@ -205,11 +223,19 @@ class FaceDetector(Detector):
         """
         super().__init__()
         self._matcher: Optional[FaceMatcher] = None
+        self._liveness: Optional[LivenessDetector] = None
         self._skip_frames = skip_frames
         self._cooldown = cooldown
         self._frame_count = 0
         self._last_result: Optional[str] = None
         self._last_result_ts: float = 0.0
+        # 人脸裁剪历史（供活体检测微动分析）
+        self._face_crop_history: deque = deque(maxlen=Config.LIVENESS_HISTORY_SIZE)
+        # 滑动窗口投票：去抖动，只有连续 N 帧一致才推送
+        self._vote_window: deque = deque(maxlen=3)
+        self._stable_result: Optional[str] = None
+        # 诊断：记录最近的特征向量前5维 + 距离
+        self._last_feature_snapshot: Optional[list] = None
 
     def setup(self) -> None:
         """加载 dlib 模型（引擎启动时调用一次）。"""
@@ -219,9 +245,22 @@ class FaceDetector(Detector):
         else:
             logger.warning("[face] FaceDetector 模型未加载，detect() 将返回空")
 
+        # 初始化活体检测器
+        self._liveness = LivenessDetector(
+            enabled=Config.LIVENESS_ENABLED,
+            threshold=Config.LIVENESS_THRESHOLD,
+            history_size=Config.LIVENESS_HISTORY_SIZE,
+            ear_blink_thresh=Config.LIVENESS_EAR_BLINK_THRESH,
+        )
+        if Config.LIVENESS_ENABLED:
+            logger.info("[face] 活体检测已启用 (threshold=%.2f)", Config.LIVENESS_THRESHOLD)
+        else:
+            logger.info("[face] 活体检测已禁用")
+
     def detect(self, frame: Frame) -> list[AlarmEvent]:
         """对单帧执行人脸识别。
 
+        流程：人脸检测 → 活体检测 → 特征提取 → 会员匹配
         跳帧策略：每 self._skip_frames 帧检测一次 + 结果冷却去重。
         """
         if self._matcher is None or not self._matcher.dlib_loaded:
@@ -242,16 +281,10 @@ class FaceDetector(Detector):
 
         logger.info(f"[face] 检测到 {len(face_rects)} 张人脸")
 
-        # 取第一个人脸，直接用全帧 + 检测矩形提取特征（避免裁剪重检失败）
+        # 取第一个人脸
         rect = face_rects[0]
 
-        # 特征提取
-        feature = self._matcher.encode_from_rect(frame.image, rect)
-        if feature is None:
-            logger.warning("[face] encode_from_rect() 特征提取失败")
-            return []
-
-        # 裁剪人脸区域（仅用于 AlarmEvent）
+        # 裁剪人脸区域
         h, w = frame.image.shape[:2]
         x1 = max(0, rect.left())
         y1 = max(0, rect.top())
@@ -259,49 +292,155 @@ class FaceDetector(Detector):
         y2 = min(h, rect.bottom())
         face_crop = frame.image[y1:y2, x1:x2] if x2 > x1 and y2 > y1 else None
 
-        # 会员匹配
-        result = self._matcher.match(feature)
-        logger.info(f"[face] 匹配结果: {result}")
+        # ---- 活体检测 ----
+        if self._liveness is not None and self._liveness.enabled:
+            landmarks = self._matcher.shape_from_rect(frame.image, rect)
+            if landmarks is not None and face_crop is not None:
+                liveness_result = self._liveness.check(face_crop, landmarks)
+                score = liveness_result["score"]
+                reasons = liveness_result["reasons"]
+                logger.info(
+                    "[face] 活体分数=%.3f reasons=%s details=%s",
+                    score, reasons, liveness_result["details"],
+                )
 
-        # 冷却去重：冷却期内不再推送任何结果（避免特征漂移导致结果来回跳变）
-        now = time.time()
-        if (now - self._last_result_ts) < self._cooldown:
+                if score < self._liveness.threshold:
+                    logger.warning("[face] 活体检测失败，判定为欺骗攻击！")
+                    # 写入 WebSocket
+                    msg = {
+                        "type": "face_spoof",
+                        "confidence": round(1.0 - score, 3),
+                        "reasons": reasons,
+                    }
+                    try:
+                        from ..api.ws import broadcast_face_result
+                        broadcast_face_result(msg)
+                    except Exception as e:
+                        logger.error(f"[face] 写入 face_spoof 失败: {e}")
+
+                    return [
+                        AlarmEvent(
+                            region_id=0,
+                            type="face_spoof",
+                            confidence=1.0 - score,
+                            snapshot=frame.image,
+                            face_crop=face_crop,
+                            extra={
+                                "liveness_score": score,
+                                "reasons": reasons,
+                                "details": liveness_result["details"],
+                            },
+                        )
+                    ]
+
+        # ---- 特征提取 ----
+        feature = self._matcher.encode_from_rect(frame.image, rect)
+        if feature is None:
+            logger.warning("[face] encode_from_rect() 特征提取失败")
             return []
-        self._last_result = result
-        self._last_result_ts = now
 
-        # 构造事件
-        extra = {"face_match": result}
-        if result.startswith("member:"):
-            member_id = int(result.split(":")[1])
-            name = self._matcher.get_member_name(member_id)
-            extra["member_id"] = member_id
-            extra["name"] = name or f"member_{member_id}"
-        else:
-            extra["name"] = "陌生人"
+        # ---- 诊断：输出特征向量 + 逐一比对距离 ----
+        feat_snap = [round(float(feature[i]), 4) for i in range(min(5, len(feature)))]
+        result, extra = self._match_with_diag(feature, feat_snap)
+        logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}")
 
-        # 直接写入最新结果（绕过 engine → alarm 链路）
+        # ---- 滑动窗口投票（去抖动） ----
+        self._vote_window.append(result)
+        # 窗口满后才做决策
+        if len(self._vote_window) == self._vote_window.maxlen:
+            unique = set(self._vote_window)
+            if len(unique) == 1:
+                consensus = list(unique)[0]
+                if consensus != self._stable_result:
+                    self._stable_result = consensus
+                    self._last_result = consensus
+                    self._last_result_ts = time.time()
+                    self._push_result(consensus, extra, face_crop, frame)
+            else:
+                logger.info(f"[face] 窗口未一致，跳过: {list(self._vote_window)}")
+
+        return []
+
+    # ------------------------------------------------------------------
+    # 诊断 + 推送辅助方法
+    # ------------------------------------------------------------------
+
+    def _match_with_diag(self, feature: np.ndarray, feat_snap: list) -> tuple[str, dict]:
+        """执行匹配并输出逐一比对诊断日志。
+
+        Returns:
+            (result, extra_dict)
+        """
+        from ..models.database import SessionLocal
+        from ..models.entities import Member
+
+        import json as _json
+        result = "stranger"
+        extra = {"face_match": "stranger", "name": "陌生人"}
+
+        session = SessionLocal()
+        try:
+            members = session.query(Member).all()
+            if not members:
+                return result, extra
+
+            best_id = None
+            best_dist = float("inf")
+            all_dists = []
+
+            for m in members:
+                if not m.feature:
+                    continue
+                try:
+                    stored = np.array(_json.loads(m.feature))
+                    dist = float(np.linalg.norm(feature - stored))
+                    all_dists.append((m.member_id, m.name, dist))
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_id = m.member_id
+                except (_json.JSONDecodeError, ValueError) as e:
+                    logger.warning(f"[face] 会员 {m.member_id} 特征数据损坏: {e}")
+
+            # 输出诊断
+            diag_parts = [f"dist={best_dist:.4f} thr={self._matcher.threshold}"]
+            for mid, name, d in sorted(all_dists, key=lambda x: x[2]):
+                diag_parts.append(f"m{mid}({name or '?'})={d:.4f}")
+            logger.info(f"[face] feat前5={feat_snap} | {'; '.join(diag_parts)}")
+
+            if best_id is not None and best_dist < self._matcher.threshold:
+                result = f"member:{best_id}"
+                # 找名字
+                member_name = None
+                for mid, name, _ in all_dists:
+                    if mid == best_id:
+                        member_name = name
+                        break
+                extra = {
+                    "face_match": result,
+                    "member_id": best_id,
+                    "name": member_name or f"member_{best_id}",
+                    "distance": round(best_dist, 4),
+                }
+
+        except Exception:
+            logger.exception("[face] 匹配诊断失败")
+        finally:
+            session.close()
+
+        return result, extra
+
+    def _push_result(self, result: str, extra: dict, face_crop, frame: Frame) -> None:
+        """将匹配结果推送到 WebSocket + 产出 AlarmEvent。"""
         msg = {"type": "stranger"}
         if result.startswith("member:"):
             msg = {
                 "type": "member",
-                "member_id": extra["member_id"],
-                "name": extra["name"],
+                "member_id": extra.get("member_id"),
+                "name": extra.get("name"),
             }
         try:
-            from ..api.ws import set_face_result
-            set_face_result(msg)
-            logger.info(f"[face] 结果已写入: {msg}")
+            from ..api.ws import broadcast_face_result
+            broadcast_face_result(msg)
+            logger.info(f"[face] 投票通过，推送: {msg}")
         except Exception as e:
             logger.error(f"[face] 写入结果失败: {e}")
-
-        return [
-            AlarmEvent(
-                region_id=0,  # 人脸识别不绑定防区
-                type="face_recognition",
-                confidence=1.0,
-                snapshot=frame.image,
-                face_crop=face_crop,
-                extra=extra,
-            )
-        ]
