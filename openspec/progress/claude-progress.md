@@ -216,3 +216,47 @@
   - `DINGTALK_LEADER_WEBHOOK` is not configured, so escalation currently reuses the primary group robot.
   - Current DingTalk ActionCard payloads do not @ a specific `dingtalk_id`; true per-person targeting needs either a leader webhook/group routing decision or an @-mention payload enhancement.
   - Full button-click confirmation still needs `PUBLIC_BASE_URL` pointing to a reachable HTTP/HTTPS backend URL.
+
+## Session 2026-07-09 Task E Local Confirm Button URL Fix
+
+- Goal: fix the DingTalk ActionCard "confirm" button opening an RTMP handler instead of the alarm confirmation page.
+- Baseline:
+  - The user reported that clicking "confirm处理" prompted Windows to choose an app capable of opening RTMP.
+  - `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL still printed the localhost proxy warning.
+  - `.env` had `PUBLIC_BASE_URL` using an `rtmp://.../live/test` stream URL.
+- Actions:
+  - Changed local `.env` `PUBLIC_BASE_URL` to `http://127.0.0.1:5000`.
+  - Started the lightweight backend with `python run_simple.py`, exposing `http://127.0.0.1:5000`.
+  - Verified `DingTalkNotifier._public_url("/api/alarms/123/confirm")` now returns `http://127.0.0.1:5000/api/alarms/123/confirm`.
+  - Verified an existing confirm page returned HTTP 200 at `http://127.0.0.1:5000/api/alarms/14/confirm`.
+  - Sent a new DingTalk ActionCard for alarm ID 16; DingTalk returned `{"errcode":0,"errmsg":"ok"}` and the card used `http://127.0.0.1:5000/api/alarms/16/confirm`.
+- Validation:
+  - From `backend/`: `python -m pytest tests/test_alarm_center.py` passed: 6 passed, 7 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+- Remaining risks:
+  - `http://127.0.0.1:5000` only works when clicking from the same Windows machine running the backend, such as DingTalk desktop on this PC.
+  - Clicking from a phone or another machine still needs `PUBLIC_BASE_URL` to be an HTTP/HTTPS public tunnel or deployed server URL.
+  - Existing old DingTalk cards still contain their original URL; only newly sent cards use the corrected `PUBLIC_BASE_URL`.
+
+## Session 2026-07-09 Task E Actor Context And Handler Mention
+
+- Goal: make DingTalk alarm messages clearly say who triggered the alarm, what behavior triggered it, and which guard should handle it.
+- Baseline:
+  - The local confirm page text `Alarm <id> confirmed / You can close this page.` was verified as normal behavior for the browser-friendly DingTalk confirm endpoint.
+  - The existing card content showed raw alarm fields, and the selected guard was only recorded in `notification_log.guard_id`.
+- Actions:
+  - Updated `backend/app/services/dingtalk.py` so DingTalk ActionCards include actor, behavior, alarm type, handler, region/location, camera, snapshot, and score context.
+  - Actor resolution now prefers detector-provided `extra` fields such as `actor`, `person_name`, `student_name`, or `member_name`, then falls back to member face match, seat user nickname for fatigue/occupy, `stranger`, or unknown.
+  - Behavior resolution now prefers detector-provided `extra.behavior`/`extra.action`/`extra.reason`, then falls back to a per-alarm-type default behavior description.
+  - Added a separate DingTalk text message after each ActionCard to @ the selected guard via `guard.dingtalk_id`; 11-digit IDs are sent as `atMobiles`, other IDs as `atUserIds`.
+  - Added `.env.example` DingTalk placeholders and clarified that `PUBLIC_BASE_URL` must be HTTP/HTTPS backend URL, not an RTMP stream URL.
+  - Added `test_dingtalk_card_describes_actor_behavior_and_mentions_guard` to cover rich card content and @ payload generation.
+- Validation:
+  - From repo root: `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL still printed the localhost proxy warning.
+  - From `backend/`: `python -m py_compile app/services/dingtalk.py tests/test_alarm_center.py` passed.
+  - From `backend/`: `python -m pytest tests/test_alarm_center.py` passed: 7 passed, 11 warnings.
+  - Real DingTalk smoke sent alarm ID 17 with actor `小明`, behavior `推搡同学，疑似发生肢体冲突`, and handler mention; DingTalk returned `{"errcode":0,"errmsg":"ok"}` for both the ActionCard and the text @ message.
+  - Started `python run_simple.py` so `http://127.0.0.1:5000/api/alarms/17/confirm` can be clicked locally from DingTalk desktop.
+- Remaining risks:
+  - Whether DingTalk visually notifies the exact person depends on `guard.dingtalk_id` being a valid DingTalk user ID or mobile accepted by the robot.
+  - `127.0.0.1` confirm links only work on this same Windows machine while the local backend is running.
