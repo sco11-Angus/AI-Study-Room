@@ -168,6 +168,26 @@
   - The existing `bash ./init.sh` WSL-distribution blocker remains unchanged.
   - `backend/model_weights/fire_smoke.pt` is a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file.
   - `bash ./init.sh` still fails in this execution session with WSL no-distribution output, despite PowerShell-equivalent smoke passing.
+## Session 2026-07-09 Fire Smoke Swagger
+
+- Goal: add Swagger documentation to the interfaces other modules use to integrate with fire/smoke detection.
+- Baseline:
+  - `pwd` confirmed `C:\Users\ASUS\AI-Study-Room`.
+  - `feature_list.json` still marks `task-c3-fire-smoke-detection` as blocked only by the missing real non-empty YOLO weight.
+  - `bash ./init.sh` still fails with the Windows WSL no-distribution message in this execution session.
+- Actions:
+  - Added global Swagger definitions for camera, region, alarm event, fire/smoke alarm extra metadata, and face result.
+  - Added manual Swagger paths for `/ws/alarms`, `/ws/video_feed/{camera_id}`, and `/ws/face_recognition`.
+  - Tagged fire/smoke integration endpoints in Swagger: `/api/cameras`, `/api/regions`, `/api/alarms`, `/api/alarms/{alarm_id}/confirm`, `/api/alarms/snapshots/{filename}`, `/ws/alarms`, and `/ws/video_feed/{camera_id}`.
+  - Added endpoint descriptions explaining the fire/smoke contract: events are persisted and pushed as `AlarmEvent(type=fire_smoke)`, with confidence/window details in `extra`.
+- Validation:
+  - `.venv\Scripts\python.exe -m py_compile backend/app/__init__.py backend/app/api/cameras.py backend/app/api/regions.py backend/app/api/seat_status.py backend/app/api/alarms.py backend/app/api/ws.py backend/app/api/video_feed.py` passed.
+  - Generated `/apispec_1.json` with a temporary `DATABASE_URI=sqlite:///:memory:` and verified `FireSmoke` is present on 11 required operations.
+  - Ran `backend/tests/smoke_test.py` with temporary `DATABASE_URI=sqlite:///:memory:`; it passed with `ALL SMOKE TESTS PASSED`.
+- Remaining risks:
+  - Real MySQL validation was not rerun in this Swagger-only session. The local virtual environment lacks the `mysql-connector-python` driver required by a `mysql+mysqlconnector://` URI.
+  - `backend/model_weights/fire_smoke.pt` remains a 0-byte placeholder, so real video/model validation is still blocked.
+  
 ## Session 2026-07-09 Task E Post-Merge Validation Repair
 
 - Goal: verify the current `taskE` branch after conflict resolution and repair any narrow merge regressions.
@@ -260,3 +280,4 @@
 - Remaining risks:
   - Whether DingTalk visually notifies the exact person depends on `guard.dingtalk_id` being a valid DingTalk user ID or mobile accepted by the robot.
   - `127.0.0.1` confirm links only work on this same Windows machine while the local backend is running.
+
