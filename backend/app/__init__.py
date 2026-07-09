@@ -34,7 +34,6 @@ def create_app(config: type[Config] = Config) -> Flask:
     # WebSocket 路由通过 sock.route 注册（非 blueprint）
     ws.register_ws_routes(sock)
     video_feed.register_ws_routes(sock)
-    ws.register_ws_routes(sock)
 
     # 全局异常处理器
     @app.errorhandler(Exception)

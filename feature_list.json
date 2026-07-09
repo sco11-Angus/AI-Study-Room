@@ -69,6 +69,38 @@
       "blockers": [
         "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed."
       ]
+    },
+    {
+      "id": "task-b-fatigue-companion",
+      "name": "Implement Task B fatigue detection and study companion",
+      "priority": 6,
+      "status": "completed",
+      "description": "Implement Dlib-landmark EAR/MAR fatigue detection, the FatiguePlugin, seat status persistence and hot reload, and level=0 private fatigue reminders.",
+      "required_validation": [
+        "python -m py_compile backend/app/detectors/fatigue.py backend/app/api/seat_status.py backend/app/models/entities.py backend/app/config.py backend/app/services/alarm.py backend/app/detectors/face.py backend/app/__init__.py backend/app/stream/scheduler.py backend/run.py backend/tests/test_fatigue.py",
+        "python -m pytest tests/test_fatigue.py tests/test_alarm_center.py tests/test_face.py tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py",
+        "python tests/smoke_test.py",
+        "PowerShell-equivalent init.sh smoke test",
+        "bash ./init.sh"
+      ],
+      "evidence": [
+        "Created branch codex/task-b-fatigue-companion from latest origin/main after stashing pre-existing local dirty work.",
+        "Fixed init.sh to validate root PRD.md after the PRD was moved out of openspec/specs.",
+        "Implemented FatigueDetector EAR/MAR state machine with sleepy/yawn outcomes and corrected inner-mouth 60-67 MAR indexing.",
+        "Implemented FatiguePlugin with Dlib landmark loading, active studying-seat reload, per-region state, hot update handling, and level=0 AlarmEvent(type=fatigue) reminders.",
+        "Implemented POST /api/seat-status validation, seat-region requirement, application-level upsert, and fatigue plugin hot reload through the live StreamScheduler engine.",
+        "Registered FatiguePlugin in backend/run.py and exposed StreamScheduler.engine for API-triggered hot updates.",
+        "Fixed baseline blockers discovered by regression: duplicate Guard ORM model, missing AlarmService helper methods, FaceDetector mock fallback, duplicate WebSocket route registration, and local default DATABASE_URI fallback.",
+        "Added backend/tests/test_fatigue.py covering EAR duration, reset, yawn, level=0 fatigue events, resting disable, seat-status validation/upsert, hot reload, and multi-seat enable behavior.",
+        "py_compile passed for modified backend files and the new fatigue test.",
+        "pytest passed: 41 passed for fatigue, alarm center, face, intrusion, fight, and fight integration tests.",
+        "backend/tests/smoke_test.py passed.",
+        "PowerShell-equivalent init smoke passed with 15 markdown docs."
+      ],
+      "blockers": [
+        "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed.",
+        "Runtime Dlib fatigue inference requires backend/model_weights/shape_predictor_68_face_landmarks.dat or MODEL_DIR to point at that file."
+      ]
     }
   ]
 }

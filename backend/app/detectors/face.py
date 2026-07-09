@@ -236,12 +236,6 @@ class FaceDetector(Detector):
         # 取第一个人脸，直接用全帧 + 检测矩形提取特征（避免裁剪重检失败）
         rect = face_rects[0]
 
-        # 特征提取
-        feature = self._matcher.encode_from_rect(frame.image, rect)
-        if feature is None:
-            logger.warning("[face] encode_from_rect() 特征提取失败")
-            return []
-
         # 裁剪人脸区域（仅用于 AlarmEvent）
         h, w = frame.image.shape[:2]
         x1 = max(0, rect.left())
@@ -249,6 +243,16 @@ class FaceDetector(Detector):
         x2 = min(w, rect.right())
         y2 = min(h, rect.bottom())
         face_crop = frame.image[y1:y2, x1:x2] if x2 > x1 and y2 > y1 else None
+
+        # 特征提取：生产优先复用已检测矩形；测试/降级环境可回退到裁剪图。
+        feature = None
+        if getattr(self._matcher, "_shape_predictor", None) is not None:
+            feature = self._matcher.encode_from_rect(frame.image, rect)
+        if feature is None and face_crop is not None:
+            feature = self._matcher.encode(face_crop)
+        if feature is None:
+            logger.warning("[face] face feature extraction failed")
+            return []
 
         # 会员匹配
         result = self._matcher.match(feature)

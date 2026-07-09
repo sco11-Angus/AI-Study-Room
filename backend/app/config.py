@@ -31,6 +31,23 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
+def _default_database_uri() -> str:
+    """Use SQLite locally unless DB_* settings explicitly request MySQL."""
+    has_mysql_env = any(
+        os.getenv(key)
+        for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")
+    )
+    if not has_mysql_env:
+        return "sqlite:///study_room.db"
+
+    host = os.getenv("DB_HOST", "localhost")
+    port = os.getenv("DB_PORT", "3306")
+    user = os.getenv("DB_USER", "root")
+    password = os.getenv("DB_PASSWORD", "")
+    name = os.getenv("DB_NAME", "study_room")
+    return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}?charset=utf8mb4"
+
+
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
@@ -67,15 +84,12 @@ class Config:
     DINGTALK_WEBHOOK = os.getenv("DINGTALK_WEBHOOK", "")
 
     # 数据库 (§8)
-    DB_HOST = os.getenv("DB_HOST", "localhost")
-    DB_PORT = os.getenv("DB_PORT", "3306")
-    DB_USER = os.getenv("DB_USER", "root")
+    DB_HOST = os.getenv("DB_HOST", "")
+    DB_PORT = os.getenv("DB_PORT", "")
+    DB_USER = os.getenv("DB_USER", "")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-    DB_NAME = os.getenv("DB_NAME", "study_room")
-    DATABASE_URI = os.getenv(
-        "DATABASE_URI",
-        f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
-    )
+    DB_NAME = os.getenv("DB_NAME", "")
+    DATABASE_URI = os.getenv("DATABASE_URI", _default_database_uri())
 
     # 模型权重 / 抓拍
     MODEL_DIR = os.getenv("MODEL_DIR", "model_weights")

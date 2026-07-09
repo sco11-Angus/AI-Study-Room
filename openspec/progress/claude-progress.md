@@ -95,3 +95,31 @@
 - Notes:
   - The script does not call a real DingTalk webhook; it uses empty webhook values and verifies local notification logs/status transitions.
   - The user pasted an alternate SQL draft. For task E compatibility, any final SQL must keep `alarm_event.confirmed_at` and `notification_log.ack_at` nullable because those timestamps are only available after confirmation.
+
+## Session 2026-07-09 Task B Fatigue Companion
+
+- Goal: implement Task B fatigue detection and study companion from latest `origin/main`.
+- Baseline:
+  - Protected pre-existing dirty work with a stash before switching branches.
+  - Created `codex/task-b-fatigue-companion` from `origin/main`.
+  - `bash ./init.sh` is still blocked on this Windows host because `bash.exe` is the WSL shim and no WSL distribution is installed.
+- Actions:
+  - Implemented `FatigueDetector` EAR/MAR detection with closed-eye duration reset behavior and yawn detection.
+  - Corrected inner-mouth MAR indexing for landmarks 60-67.
+  - Added `FatiguePlugin` with Dlib landmark loading, active studying-seat reload, per-region state, hot updates, and `AlarmEvent(type="fatigue", level=0)` output.
+  - Implemented `POST /api/seat-status` validation, seat-only region checks, application-level upsert, and live fatigue hot reload through `StreamScheduler.engine`.
+  - Registered `FatiguePlugin` in `backend/run.py`.
+  - Fixed baseline regressions uncovered by validation: `init.sh` PRD path, duplicate `Guard` ORM declaration, missing `AlarmService` helper methods, `FaceDetector` test fallback, duplicate WebSocket route registration, and local default DB URI fallback.
+  - Added `backend/tests/test_fatigue.py`.
+- Validation:
+  - `python -m py_compile backend/app/detectors/fatigue.py backend/app/api/seat_status.py backend/app/models/entities.py backend/app/config.py backend/app/services/alarm.py backend/app/detectors/face.py backend/app/__init__.py backend/app/stream/scheduler.py backend/run.py backend/tests/test_fatigue.py` passed.
+  - From `backend/`: `python -m pytest tests/test_fatigue.py tests/test_alarm_center.py tests/test_face.py tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py` passed: 41 passed, 23 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed.
+  - PowerShell-equivalent `init.sh` smoke passed: 15 markdown docs.
+  - `bash ./init.sh` failed due to missing WSL distribution.
+- Evidence recorded:
+  - Added completed `task-b-fatigue-companion` entry to `feature_list.json`.
+  - Updated `openspec/progress/progress.md` with Session 005.
+- Remaining risks:
+  - Runtime fatigue detection requires `backend/model_weights/shape_predictor_68_face_landmarks.dat` or a valid `MODEL_DIR`.
+  - Private weak-reminder frontend/mobile delivery still needs real-device integration.

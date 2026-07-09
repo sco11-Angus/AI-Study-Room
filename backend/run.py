@@ -4,6 +4,7 @@ import sys
 
 from app import create_app
 from app.detectors.face import FaceDetector
+from app.detectors.fatigue import FatiguePlugin
 from app.stream.engine import InferenceEngine
 from app.stream.scheduler import StreamScheduler, set_scheduler
 
@@ -16,6 +17,7 @@ app = create_app()
 print("[run] ===== 启动推理引擎 =====", flush=True)
 engine = InferenceEngine()
 engine.register(FaceDetector(skip_frames=10, cooldown=1.0))
+engine.register(FatiguePlugin())
 engine.setup_all()
 print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 

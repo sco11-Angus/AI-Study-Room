@@ -121,6 +121,11 @@ class StreamScheduler:
         """返回所有摄像头的在线状态。"""
         return {cid: cs.online for cid, cs in self._cameras.items()}
 
+    @property
+    def engine(self):
+        """Return the live inference engine for API-triggered hot updates."""
+        return self._engine
+
     # ---- 启动 / 停止 ----
 
     def start_all(self) -> None:

@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-required_files="AGENTS.md README.md feature_list.json init.sh openspec/specs/PRD.md openspec/progress/progress.md openspec/progress/claude-progress.md"
+required_files="AGENTS.md README.md feature_list.json init.sh PRD.md openspec/progress/progress.md openspec/progress/claude-progress.md"
 
 for file in $required_files; do
   if [ ! -f "$file" ]; then
