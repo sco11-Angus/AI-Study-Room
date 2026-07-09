@@ -6,11 +6,17 @@ from collections import deque
 
 from ..config import Config
 
+class FireSmokePlugin(Detector):
+    name = "fire_smoke"
 
-class FireSmokeDetector:
-    def __init__(self):
-        self._window: deque = deque(maxlen=Config.FIRE_WINDOW)  # 滑动窗口
+    def setup(self):
+        # 加载 YOLO 权重
 
+    def detect(self, frame: Frame) -> list[AlarmEvent]:
+        # YOLO 推理
+        # 找 fire/smoke 最大置信度
+        # 送入 self._debouncer.feed(conf)
+        # 命中后返回 AlarmEvent(type="fire_smoke")
     def feed(self, conf: float) -> bool:
         """每次有效推理送入本帧 fire/smoke 置信度（未检出送 0）。
 
@@ -21,6 +27,3 @@ class FireSmokeDetector:
             return False
         return (sum(self._window) / len(self._window)) > Config.FIRE_CONF
 
-    def detect(self, frame):
-        # TODO: YOLO 烟火权重推理，取 fire/smoke 最大置信度传入 feed()
-        ...
