@@ -2,6 +2,9 @@
 from flask import Blueprint, jsonify
 from .response import ok
 
+from ..models.database import SessionLocal
+from ..models.entities import Camera
+
 bp = Blueprint("cameras", __name__, url_prefix="/api/cameras")
 
 
@@ -29,5 +32,19 @@ def list_cameras():
           resolution: {type: string}
           status: {type: string}
     """
-    # TODO: 查询 camera 表，返回 stream_url / resolution / status
-    return ok([])
+    session = SessionLocal()
+    try:
+        cameras = session.query(Camera).all()
+        data = [
+            {
+                'id': cam.id,
+                'name': cam.name,
+                'stream_url': cam.stream_url,
+                'resolution': cam.resolution,
+                'status': cam.status,
+            }
+            for cam in cameras
+        ]
+        return ok(data)
+    finally:
+        session.close()

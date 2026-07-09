@@ -28,7 +28,8 @@ import { ref } from 'vue'
 import CanvasDraw from '../components/CanvasDraw.vue'
 import { createRegion } from '../api'
 
-const streamUrl = ref('')
+const DEFAULT_STREAM_URL = `http://${location.hostname}:8080/live?app=live&stream=test`
+const streamUrl = ref(DEFAULT_STREAM_URL)
 const form = ref({ name: '', type: 'danger_zone', polygon: [], x_distance: 50, y_stay_time: 10 })
 
 const onPolygon = (pts) => (form.value.polygon = pts) // 双击闭合的多边形顶点
