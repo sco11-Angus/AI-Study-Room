@@ -28,12 +28,13 @@
 import { ref, watch, onMounted, nextTick } from 'vue'
 import VideoPlayer from './VideoPlayer.vue'
 
-const props = defineProps({ streamUrl: String })
+const props = defineProps({ streamUrl: String, previewPolygon: Array })
 const emit = defineEmits(['polygon'])
 const playerRef = ref(null)
 const canvasEl = ref(null)
 const currentPolygon = ref([])
 const polygons = ref([])
+const previewPolygons = ref([])
 const canvasWidth = ref(0)
 const canvasHeight = ref(0)
 
@@ -52,6 +53,7 @@ const updateCanvasSize = () => {
   canvas.style.height = '100%'
   canvasWidth.value = width
   canvasHeight.value = height
+  updatePreviewPolygons()
   redraw()
 }
 
@@ -61,9 +63,29 @@ watch(
   { immediate: true }
 )
 
+watch(
+  () => props.previewPolygon,
+  () => {
+    updatePreviewPolygons()
+    redraw()
+  },
+  { deep: true, immediate: true }
+)
+
 onMounted(() => {
   nextTick(updateCanvasSize)
 })
+
+const getPixelPoints = (normalized) => {
+  if (!normalized || !normalized.length || !canvasWidth.value || !canvasHeight.value) {
+    return []
+  }
+  return normalized.map(([x, y]) => [x * canvasWidth.value, y * canvasHeight.value])
+}
+
+const updatePreviewPolygons = () => {
+  previewPolygons.value = props.previewPolygon ? [getPixelPoints(props.previewPolygon)] : []
+}
 
 const pointFromEvent = (e) => {
   const canvas = canvasEl.value
@@ -134,6 +156,7 @@ const redraw = () => {
     ctx.restore()
   }
 
+  previewPolygons.value.forEach((polygon) => drawPath(polygon, { strokeStyle: '#f56c6c', fillStyle: 'rgba(245, 108, 108, 0.18)', lineWidth: 2, closed: true }))
   polygons.value.forEach((polygon) => drawPath(polygon.points, { closed: true }))
   drawPath(currentPolygon.value, { strokeStyle: '#409eff', lineDash: [6, 4] })
 }
