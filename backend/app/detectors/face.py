@@ -342,6 +342,23 @@ class FaceDetector(Detector):
         # ---- 诊断：输出特征向量 + 逐一比对距离 ----
         feat_snap = [round(float(feature[i]), 4) for i in range(min(5, len(feature)))]
         result, extra = self._match_with_diag(feature, feat_snap)
+        now = time.time()
+        if (now - self._last_result_ts) < self._cooldown:
+            return []
+        self._last_result = result
+        self._last_result_ts = now
+        self._push_result(result, extra, face_crop, frame)
+
+        return [
+            AlarmEvent(
+                region_id=0,
+                type="face_recognition",
+                confidence=1.0,
+                snapshot=frame.image,
+                face_crop=face_crop,
+                extra=extra,
+            )
+        ]
         logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}")
 
         # ---- 滑动窗口投票（去抖动） ----

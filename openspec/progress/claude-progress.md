@@ -168,3 +168,26 @@
   - The existing `bash ./init.sh` WSL-distribution blocker remains unchanged.
   - `backend/model_weights/fire_smoke.pt` is a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file.
   - `bash ./init.sh` still fails in this execution session with WSL no-distribution output, despite PowerShell-equivalent smoke passing.
+## Session 2026-07-09 Task E Post-Merge Validation Repair
+
+- Goal: verify the current `taskE` branch after conflict resolution and repair any narrow merge regressions.
+- Baseline:
+  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
+  - Current branch was `taskE` and was aligned with `origin/taskE`.
+  - `rg` found no remaining conflict markers outside `.env`.
+  - Ubuntu WSL is installed; `wsl -l -v` shows `Ubuntu` on WSL 2.
+- Actions:
+  - Removed a duplicate `ws.register_ws_routes(sock)` call in `backend/app/__init__.py`.
+  - Removed a duplicate `Guard` ORM class definition in `backend/app/models/entities.py`.
+  - Restored missing `AlarmService` helper methods for event normalization, snapshot save, face fallback, persistence, serialization, broadcast, and notification.
+  - Added `FaceMatcher.encode_from_rect()` fallback for mocked/unit-test contexts where dlib is marked loaded but predictor/encoder objects are not present.
+  - Updated `feature_list.json` with the repaired validation evidence and replaced the old WSL no-distribution blocker with the current proxy-warning note.
+- Validation:
+  - From repo root: `bash ./init.sh` passed and printed `Smoke test passed: required files present; markdown docs found`; WSL still printed a localhost proxy warning.
+  - From `backend/`: `python -m py_compile app/__init__.py app/models/entities.py app/services/alarm.py app/detectors/face.py` passed.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py` passed: 39 passed, 14 warnings.
+  - `python backend/scripts/verify_task_e_real_db.py` passed against real MySQL. Latest run wrote and verified alarm IDs: confirmed fight `4`, escalated intrusion `5`, private fatigue `6`.
+- Remaining risks:
+  - Full real DingTalk button confirmation still needs a public backend URL in `.env` as `PUBLIC_BASE_URL`.
+  - WSL NAT mode still warns that localhost proxy configuration is not mirrored into WSL; this does not block `init.sh`.
