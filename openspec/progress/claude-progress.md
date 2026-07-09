@@ -122,18 +122,35 @@
 
 ## Session 2026-07-09 Pull Merge Push
 
-- Goal: pull latest `origin/main`, keep the merged code launchable, and push the complete result.
+taskC_firesmoke
+
+## Session 2026-07-09 Task C3 Fire Smoke
+
+- Goal: implement C task book C3, "fire/smoke detection".
 - Baseline:
-  - `pwd` confirmed `D:\1\大二暑期实训\App`.
-  - PowerShell could not resolve `git` from PATH, but Git was available at `C:\Program Files\Git\cmd\git.exe`.
-  - Local `main` was behind `origin/main` by 2 commits.
+  - `pwd` confirmed `C:\Users\ASUS\AI-Study-Room`.
+  - Recent git history showed branch `taskC_firesmoke` after merging `origin/main`.
+  - `bash ./init.sh` still returned the Windows WSL "no distribution" message in this execution session; PowerShell-equivalent init smoke passed.
+  - Existing `backend/app/detectors/fire_smoke.py` was incomplete and would not import.
 - Actions:
-  - Pulled `origin/main` with a fast-forward update to `a906fe8`.
-  - Fixed a post-pull smoke blocker in `backend/app/__init__.py` by removing the duplicate `ws.register_ws_routes(sock)` call that registered `/ws/alarms` twice.
-  - Updated `feature_list.json` with the verification evidence for the route-registration fix.
+  - Rebuilt `backend/app/detectors/fire_smoke.py` with `FireSmokeDetector` and `FireSmokePlugin(Detector)`.
+  - Preserved the required 30-frame `FIRE_WINDOW` / `FIRE_CONF` sliding-window debounce logic.
+  - Implemented YOLO weight resolution/loading in `setup()`, explicit missing/empty weight errors, fire/smoke class filtering, max-confidence extraction, and `AlarmEvent(type="fire_smoke")` output with snapshot, camera_id, ts, confidence, and metadata.
+  - Registered `FireSmokePlugin()` in `backend/run.py`; the detector remains under `InferenceEngine` scheduling and does not create local threads or loops.
+  - Added `backend/tests/test_fire_smoke.py` with fake YOLO output for deterministic tests.
+  - Fixed narrow merge-damaged foundation blockers encountered during validation: MYSQL_* fallback and URL-encoded database credentials, duplicate `/ws/alarms` registration, duplicate `Guard` ORM class, missing `AlarmService` helpers, `FaceMatcher.encode_from_rect()` fallback for tests, and stale `init.sh` PRD path.
 - Validation:
-  - `./init.sh` returned exit code 0 from PowerShell.
-  - From `backend/`: `python tests/smoke_test.py` passed with `ALL SMOKE TESTS PASSED`.
+  - Installed missing local dependencies needed for validation: `SQLAlchemy`, `flask-cors`, `flask-sock`, `flasgger`, `requests`, `mysql-connector-python`, and transitive packages.
+  - `python -m py_compile backend/app/services/alarm.py backend/app/detectors/face.py backend/app/models/entities.py backend/app/config.py backend/app/detectors/fire_smoke.py backend/run.py backend/tests/test_fire_smoke.py` passed.
+  - From `backend/`: `python -m pytest tests/test_fire_smoke.py` passed: 6 passed.
+  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py` passed: 38 passed, 12 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed; database connection succeeded and `DATABASE_URI` was masked.
+  - PowerShell-equivalent init smoke passed with 15 markdown docs.
+- Evidence recorded:
+  - Added `task-c3-fire-smoke-detection` to `feature_list.json`.
+  - Updated `openspec/progress/progress.md` with Session 005 and current blockers.
 - Remaining risks:
   - This host's PowerShell PATH still does not expose `git`; use `C:\Program Files\Git\cmd\git.exe` directly or add it to PATH.
   - The existing `bash ./init.sh` WSL-distribution blocker remains unchanged.
+  - `backend/model_weights/fire_smoke.pt` is a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file.
+  - `bash ./init.sh` still fails in this execution session with WSL no-distribution output, despite PowerShell-equivalent smoke passing.

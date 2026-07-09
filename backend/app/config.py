@@ -1,7 +1,9 @@
 """应用配置 — 关键参数汇总（系统设计说明书 §12）。"""
 import os
 from pathlib import Path
+from urllib.parse import quote_plus
 from dotenv import load_dotenv
+
 
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
@@ -73,14 +75,16 @@ class Config:
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
     # 数据库 (§8)
-    DB_HOST = os.getenv("DB_HOST", "localhost")
-    DB_PORT = os.getenv("DB_PORT", "3306")
-    DB_USER = os.getenv("DB_USER", "root")
-    DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-    DB_NAME = os.getenv("DB_NAME", "study_room")
+    DB_HOST = os.getenv("DB_HOST", os.getenv("MYSQL_HOST", "localhost"))
+    DB_PORT = os.getenv("DB_PORT", os.getenv("MYSQL_PORT", "3306"))
+    DB_USER = os.getenv("DB_USER", os.getenv("MYSQL_USER", "root"))
+    DB_PASSWORD = os.getenv("DB_PASSWORD", os.getenv("MYSQL_PASSWORD", ""))
+    DB_NAME = os.getenv("DB_NAME", os.getenv("MYSQL_DATABASE", "study_room"))
+    DB_CHARSET = os.getenv("DB_CHARSET", os.getenv("MYSQL_CHARSET", "utf8mb4"))
     DATABASE_URI = os.getenv(
         "DATABASE_URI",
-        f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+        f"mysql+mysqlconnector://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@"
+        f"{DB_HOST}:{DB_PORT}/{DB_NAME}?charset={DB_CHARSET}"
     )
 
     # 模型权重 / 抓拍

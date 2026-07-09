@@ -2,19 +2,21 @@
 
 ## 当前已验证状态
 
-- 仓库根目录：`C:\Users\25003\AI-Study-Room`
+- 仓库根目录：`C:\Users\ASUS\AI-Study-Room`
 
-- 标准启动路径：shell-capable 环境运行 `./init.sh`；本 Windows 主机 `bash` 是 WSL shim 且未安装发行版，使用 PowerShell 等价检查。
+- 标准启动路径：shell-capable 环境运行 `./init.sh`；本 Windows 会话中 `bash ./init.sh` 仍返回 WSL 无可用发行版提示，使用 PowerShell 等价检查。
 
 - 标准验证路径：
   - `python backend/scripts/verify_task_e_real_db.py`（在仓库根目录，使用 `.env` 中 `DATABASE_URI` 验证真实 MySQL 任务 E 链路）
-  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py`（在 `backend/` 下）
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`（在 `backend/` 下）
   - `python tests/smoke_test.py`（在 `backend/` 下）
   - PowerShell-equivalent `init.sh` smoke
 
-- 当前最高优先级未完成功能：`feature_list.json` 中暂无未完成项；任务 E 已完成。
+- 当前最高优先级未完成功能：`task-c3-fire-smoke-detection` 已完成代码和 mock 验证，真实视频验收阻塞于非空 YOLO 烟火权重。
 
-- 当前 blocker：`bash ./init.sh` 在本 Windows 主机失败，因为未安装 WSL 发行版；PowerShell 等价 smoke 已通过。
+- 当前 blocker：
+  - `backend/model_weights/fire_smoke.pt` 是 0 字节占位文件，真实 YOLO 推理/视频验收需替换为训练好的非空权重。
+  - 本会话 `bash ./init.sh` 仍返回 WSL 无可用发行版提示；PowerShell 等价 smoke 已通过。
 
 ## 会话记录
 
@@ -152,4 +154,50 @@
   - 本机 `bash ./init.sh` 仍受 WSL 环境限制。
 
 - 下一步最佳动作：配置真实钉钉 webhook 后执行一次外发 ActionCard 和确认按钮回调联调。
+
+### Session 005
+
+- 日期：2026-07-09
+
+- 本轮目标：按照 C 任务书完成 C3「烟火检测」插件。
+
+- 已完成：
+  - 重写 `backend/app/detectors/fire_smoke.py`，实现 `FireSmokeDetector` 30 帧滑动窗口均值防误报和 `FireSmokePlugin(Detector)`。
+  - `FireSmokePlugin.setup()` 支持加载 YOLO 权重，缺失/空权重清晰失败；测试可注入 fake model。
+  - `FireSmokePlugin.detect()` 筛选 `fire/smoke` 类别，取本帧最大置信度送入 `feed()`，窗口命中后产出 `AlarmEvent(type="fire_smoke")`。
+  - 在 `backend/run.py` 注册 `FireSmokePlugin()`，由 `InferenceEngine` 统一调度，不自建线程或循环。
+  - 新增 `backend/tests/test_fire_smoke.py`，覆盖连续窗口告警、单帧高置信不告警、fire/smoke 类别、非烟火类别过滤、空权重拒绝。
+  - 为恢复基础状态，修复 `.env` 只有 `MYSQL_*` 时的数据库配置 fallback，并对用户名/密码做 URL 编码，避免特殊字符破坏连接串。
+  - 修复合并残留：`create_app()` 重复注册 `/ws/alarms`、`entities.py` 重复 `Guard`、`AlarmService` helper 缺失、`FaceMatcher.encode_from_rect()` mock fallback、`init.sh` 旧 PRD 路径。
+
+- 运行过的验证：
+  - `python -m py_compile backend/app/services/alarm.py backend/app/detectors/face.py backend/app/models/entities.py backend/app/config.py backend/app/detectors/fire_smoke.py backend/run.py backend/tests/test_fire_smoke.py`
+  - `python -m pytest tests/test_fire_smoke.py`（在 `backend/` 下）：6 passed。
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`（在 `backend/` 下）：38 passed, 12 warnings。
+  - `python tests/smoke_test.py`（在 `backend/` 下）：通过，数据库连接成功，`DATABASE_URI` 脱敏输出。
+  - PowerShell-equivalent `init.sh` smoke：通过，15 个 markdown 文档。
+  - `bash ./init.sh`：仍失败，当前会话返回 WSL 无可用发行版提示。
+
+- 已记录证据：已更新 `feature_list.json` 的 `task-c3-fire-smoke-detection` 条目。
+
+- 提交记录：待提交。
+
+- 更新过的文件或工件：
+  - `backend/app/detectors/fire_smoke.py`
+  - `backend/tests/test_fire_smoke.py`
+  - `backend/run.py`
+  - `backend/app/config.py`
+  - `backend/app/__init__.py`
+  - `backend/app/models/entities.py`
+  - `backend/app/services/alarm.py`
+  - `backend/app/detectors/face.py`
+  - `init.sh`
+  - `feature_list.json`
+  - `openspec/progress/progress.md`
+
+- 已知风险或未解决问题：
+  - `backend/model_weights/fire_smoke.pt` 是 0 字节占位文件；真实 fire/smoke YOLO 推理和打火机/反光视频验收需要替换为训练好的非空权重。
+  - 本会话中 `bash ./init.sh` 仍未能进入 WSL 发行版；PowerShell 等价 smoke 已通过。
+
+- 下一步最佳动作：提供真实 `fire_smoke.pt` 后运行后端服务，用打火机/烟雾视频和反光视频完成 C3 真实视频验收。
 
