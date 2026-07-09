@@ -39,6 +39,33 @@
       "blockers": []
     },
     {
+      "id": "task-c3-fire-smoke-detection",
+      "name": "Task C3 fire and smoke detection plugin",
+      "priority": 3,
+      "status": "blocked",
+      "description": "Implement the YOLO-backed fire/smoke detector plugin with 30-frame confidence-window debouncing and AlarmEvent(type=fire_smoke) output.",
+      "required_validation": [
+        "python -m pytest tests/test_fire_smoke.py",
+        "python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py",
+        "python tests/smoke_test.py",
+        "PowerShell-equivalent init.sh smoke test",
+        "Real fire/smoke YOLO weight and video validation"
+      ],
+      "evidence": [
+        "Implemented backend/app/detectors/fire_smoke.py with FireSmokeDetector.feed() preserving FIRE_WINDOW/FIRE_CONF sliding-window logic.",
+        "Added FireSmokePlugin(Detector) with setup() YOLO weight loading, fire/smoke class filtering, max-confidence extraction, and AlarmEvent(type=fire_smoke) output including camera_id, ts, snapshot, confidence, and extra metadata.",
+        "Registered FireSmokePlugin in backend/run.py so it is managed by InferenceEngine without creating detector-local threads or loops.",
+        "Added backend/tests/test_fire_smoke.py covering full-window debounce, single-frame flash rejection, fire/smoke class acceptance, non-fire/smoke filtering, and empty-weight rejection.",
+        "pytest passed: tests/test_fire_smoke.py -> 6 passed.",
+        "Backend related pytest passed: 38 passed for intrusion, fight, fight integration, face, alarm center, and fire smoke tests.",
+        "Backend smoke test passed after restoring merge-damaged foundation pieces.",
+        "PowerShell-equivalent init smoke passed with 15 markdown docs."
+      ],
+      "blockers": [
+        "backend/model_weights/fire_smoke.pt is currently a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file."
+      ]
+    },
+    {
       "id": "alarm-center-dingtalk-close-loop",
       "name": "Task E alarm center and DingTalk close loop",
       "priority": 5,
