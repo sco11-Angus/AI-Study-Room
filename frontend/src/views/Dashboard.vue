@@ -34,12 +34,41 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
-import { confirmAlarm } from '../api'
+import { confirmAlarm, getCameras } from '../api'
 
+const DEFAULT_STREAM_URL = `http://${location.hostname}:8080/live?app=live&stream=test`
 const streamUrl = ref('')
 const alarms = ref([])
 const faceResult = ref(null)
 let wsAlarms, wsFace, reconnectTimer
+
+function resolveStreamUrl(rawUrl) {
+  if (!rawUrl) {
+    return DEFAULT_STREAM_URL
+  }
+  if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
+    return rawUrl
+  }
+  const match = rawUrl.match(/\/live\/(.+?)(?:\s|$|\?)/)
+  if (match) {
+    return `http://${location.hostname}:8080/live?app=live&stream=${match[1]}`
+  }
+  return DEFAULT_STREAM_URL
+}
+
+function fetchStreamUrl() {
+  getCameras()
+    .then((list) => {
+      if (Array.isArray(list) && list.length) {
+        streamUrl.value = resolveStreamUrl(list[0].stream_url)
+      } else {
+        streamUrl.value = DEFAULT_STREAM_URL
+      }
+    })
+    .catch(() => {
+      streamUrl.value = DEFAULT_STREAM_URL
+    })
+}
 
 function connectFaceWs() {
   wsFace = new WebSocket(`ws://${location.host}/ws/face_recognition`)
@@ -57,6 +86,7 @@ function connectFaceWs() {
 }
 
 onMounted(() => {
+  fetchStreamUrl()
   wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
   wsAlarms.onmessage = (e) => alarms.value.unshift(JSON.parse(e.data))
   connectFaceWs()

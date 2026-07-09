@@ -9,7 +9,9 @@ bp = Blueprint("seat_status", __name__, url_prefix="/api/seat-status")
 def switch_status():
     """用户切换自习/休息状态
     ---
-    tags: [SeatStatus]
+    tags: [SeatStatus, Region]
+    summary: Switch seat study status
+    description: This endpoint controls study/rest state for fatigue logic. It is not a fire/smoke switch, but it shares region_id with region-based alarm display.
     parameters:
       - in: body
         name: body

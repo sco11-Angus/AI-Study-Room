@@ -59,7 +59,8 @@
         "pytest passed: tests/test_fire_smoke.py -> 6 passed.",
         "Backend related pytest passed: 38 passed for intrusion, fight, fight integration, face, alarm center, and fire smoke tests.",
         "Backend smoke test passed after restoring merge-damaged foundation pieces.",
-        "PowerShell-equivalent init smoke passed with 15 markdown docs."
+        "PowerShell-equivalent init smoke passed with 15 markdown docs.",
+        "Added Swagger docs for fire/smoke integration endpoints: cameras, regions, alarms, snapshots, and WebSocket stream/alarm paths. Verified /apispec_1.json contains FireSmoke on 11 required operations."
       ],
       "blockers": [
         "backend/model_weights/fire_smoke.pt is currently a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file."

@@ -3,6 +3,7 @@ import json
 import os
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
+from flasgger import swag_from
 
 from ..config import Config
 
@@ -311,6 +312,28 @@ def confirm_alarm_page(alarm_id: int):
 
 
 @bp.get("/snapshots/<path:filename>")
+@swag_from({
+    "tags": ["Alarm", "FireSmoke"],
+    "summary": "Get an alarm snapshot image",
+    "description": (
+        "Returns the saved snapshot referenced by AlarmEvent.snapshot_url. "
+        "Fire/smoke alarms can use this image for review and DingTalk cards."
+    ),
+    "parameters": [
+        {"name": "filename", "in": "path", "type": "string", "required": True},
+    ],
+    "responses": {
+        200: {
+            "description": "Snapshot image bytes",
+            "content": {
+                "image/jpeg": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
+        404: {"description": "Snapshot not found"},
+    },
+})
 def get_snapshot(filename: str):
     """Serve an alarm snapshot image.
     ---

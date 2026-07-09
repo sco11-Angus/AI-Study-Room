@@ -9,7 +9,9 @@ bp = Blueprint("regions", __name__, url_prefix="/api/regions")
 def list_regions():
     """查询某摄像头下防区
     ---
-    tags: [Region]
+    tags: [Region, FireSmoke]
+    summary: List regions for a camera
+    description: Fire/smoke alarms are emitted with region_id and camera_id, so clients can use this endpoint to map an alarm back to the configured danger zone.
     parameters:
       - {name: camera_id, in: query, type: integer, required: true}
     responses:
@@ -30,7 +32,9 @@ def list_regions():
 def create_region():
     """创建防区 (polygon + x_distance + y_stay_time)
     ---
-    tags: [Region]
+    tags: [Region, FireSmoke]
+    summary: Create a detection region
+    description: Create a polygon region for downstream detectors. For fire/smoke integration, create or reuse a danger_zone region for the target camera.
     parameters:
       - in: body
         name: body
@@ -41,7 +45,7 @@ def create_region():
           properties:
             camera_id: {type: integer}
             name: {type: string}
-            type: {type: string, enum: [danger_zone, seat]}
+            type: {type: string, enum: [danger_zone, seat], example: danger_zone}
             polygon: {type: array, items: {type: array, items: {type: integer}}}
             x_distance: {type: integer, description: 安全距离阈值(像素), default: 50}
             y_stay_time: {type: integer, description: 允许停留时间(秒), default: 10}
@@ -64,7 +68,9 @@ def create_region():
 def update_region(region_id: int):
     """更新防区参数
     ---
-    tags: [Region]
+    tags: [Region, FireSmoke]
+    summary: Update a detection region
+    description: Update the polygon or thresholds used by detector modules. Fire/smoke alarm events continue to reference this region_id.
     parameters:
       - {name: region_id, in: path, type: integer, required: true}
       - in: body
@@ -93,7 +99,9 @@ def update_region(region_id: int):
 def delete_region(region_id: int):
     """删除防区
     ---
-    tags: [Region]
+    tags: [Region, FireSmoke]
+    summary: Delete a detection region
+    description: Delete an unused region. Clients should stop using this region_id for fire/smoke alarm display after deletion.
     parameters:
       - {name: region_id, in: path, type: integer, required: true}
     responses:
