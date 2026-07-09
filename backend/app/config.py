@@ -7,6 +7,30 @@ env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
 
 
+def _load_env_file() -> None:
+    """加载仓库根目录 .env，支持 KEY= 和 PowerShell 的 $env:KEY= 写法。"""
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    env_path = os.path.join(root, ".env")
+    if not os.path.exists(env_path):
+        return
+
+    with open(env_path, encoding="utf-8") as fh:
+        for raw in fh:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key.startswith("$env:"):
+                key = key[len("$env:") :]
+            if not key or key in os.environ:
+                continue
+            os.environ[key] = value.strip().strip('"').strip("'")
+
+
+_load_env_file()
+
+
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
@@ -55,7 +79,10 @@ class Config:
 
     # 模型权重 / 抓拍
     MODEL_DIR = os.getenv("MODEL_DIR", "model_weights")
-    SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR", "snapshots")
+    SNAPSHOT_DIR = os.getenv(
+        "SNAPSHOT_DIR",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "snapshots")),
+    )
 
     # 活体检测
     LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "true").lower() == "true"

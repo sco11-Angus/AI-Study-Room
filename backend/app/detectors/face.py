@@ -14,6 +14,7 @@ from typing import Optional
 import numpy as np
 
 from ..config import Config
+from ..models.entities import Member
 from .base import AlarmEvent, Detector, Frame
 from .liveness import LivenessDetector
 
@@ -35,7 +36,8 @@ class FaceMatcher:
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, threshold: float = 0.35):
+    def __init__(self, threshold: float = 0.6):
+        
         if self._initialized:
             return
         self.threshold = threshold
@@ -135,8 +137,23 @@ class FaceMatcher:
 
     # ---- 会员匹配 ----
 
+    @staticmethod
+    def _load_features(feature_json: str) -> list[np.ndarray]:
+        """解析会员 feature JSON，兼容单/多参考特征。
+
+        - 单向量 [0.1, 0.2, ...] → [[0.1, 0.2, ...]]
+        - 多向量 [[0.1, ...], [0.2, ...]] → [[0.1, ...], [0.2, ...]]
+        """
+        data = json.loads(feature_json)
+        arr = np.array(data)
+        if arr.ndim == 1:
+            return [arr]
+        return [arr[i] for i in range(arr.shape[0])]
+
     def match(self, feature: np.ndarray) -> str:
         """与会员特征库比对，返回最近邻结果。
+
+        对每个会员取所有参考特征的最小欧氏距离作为匹配距离。
 
         Args:
             feature: 128 维人脸特征向量
@@ -155,20 +172,30 @@ class FaceMatcher:
 
             best_id = None
             best_dist = float("inf")
+            second_best_dist = float("inf")
             for m in members:
                 if not m.feature:
                     continue
                 try:
-                    stored = np.array(json.loads(m.feature))
-                    dist = float(np.linalg.norm(feature - stored))
+                    refs = FaceMatcher._load_features(m.feature)
+                    dist = min(float(np.linalg.norm(feature - ref)) for ref in refs)
                     if dist < best_dist:
+                        second_best_dist = best_dist
                         best_dist = dist
                         best_id = m.member_id
+                    elif dist < second_best_dist:
+                        second_best_dist = dist
                 except (json.JSONDecodeError, ValueError) as e:
                     logger.warning(f"[face] 会员 {m.member_id} 特征数据损坏，已跳过: {e}")
                     continue
 
-            if best_id is not None and best_dist < self.threshold:
+            nrr = best_dist / second_best_dist if second_best_dist < float("inf") else 1.0
+            gap = second_best_dist - best_dist if second_best_dist < float("inf") else 0
+            if (
+                best_id is not None
+                and best_dist < self.threshold
+                and (nrr < 0.9 or gap > 0.05 or second_best_dist >= float("inf"))
+            ):
                 return f"member:{best_id}"
             return "stranger"
         except Exception:
@@ -297,6 +324,9 @@ class FaceDetector(Detector):
 
                 if score < self._liveness.threshold:
                     logger.warning("[face] 活体检测失败，判定为欺骗攻击！")
+                    # 清空投票窗口，防止旧帧结果泄漏
+                    self._vote_window.clear()
+                    self._stable_result = None
                     # 写入 WebSocket
                     msg = {
                         "type": "face_spoof",
@@ -323,6 +353,12 @@ class FaceDetector(Detector):
                             },
                         )
                     ]
+
+                # 热身期：活体检测需要积累历史才能可靠判定
+                frames_cached = liveness_result["details"]["frames_cached"]
+                if frames_cached < 5:
+                    logger.info(f"[face] 活体热身中 (frames={frames_cached})，跳过匹配")
+                    return []
 
         # ---- 特征提取 ----
         feature = self._matcher.encode_from_rect(frame.image, rect)
@@ -363,7 +399,6 @@ class FaceDetector(Detector):
             (result, extra_dict)
         """
         from ..models.database import SessionLocal
-        from ..models.entities import Member
 
         import json as _json
         result = "stranger"
@@ -377,28 +412,40 @@ class FaceDetector(Detector):
 
             best_id = None
             best_dist = float("inf")
+            second_best_dist = float("inf")
             all_dists = []
 
             for m in members:
                 if not m.feature:
                     continue
                 try:
-                    stored = np.array(_json.loads(m.feature))
-                    dist = float(np.linalg.norm(feature - stored))
+                    refs = FaceMatcher._load_features(m.feature)
+                    dist = min(float(np.linalg.norm(feature - ref)) for ref in refs)
                     all_dists.append((m.member_id, m.name, dist))
                     if dist < best_dist:
+                        second_best_dist = best_dist
                         best_dist = dist
                         best_id = m.member_id
+                    elif dist < second_best_dist:
+                        second_best_dist = dist
                 except (_json.JSONDecodeError, ValueError) as e:
                     logger.warning(f"[face] 会员 {m.member_id} 特征数据损坏: {e}")
 
             # 输出诊断
-            diag_parts = [f"dist={best_dist:.4f} thr={self._matcher.threshold}"]
+            nrr = best_dist / second_best_dist if second_best_dist < float("inf") else 1.0
+            diag_parts = [f"dist={best_dist:.4f} nrr={nrr:.3f} thr={self._matcher.threshold}"]
             for mid, name, d in sorted(all_dists, key=lambda x: x[2]):
-                diag_parts.append(f"m{mid}({name or '?'})={d:.4f}")
+                marker = "*" if mid == best_id else ""
+                diag_parts.append(f"m{mid}({name or '?'})={d:.4f}{marker}")
             logger.info(f"[face] feat前5={feat_snap} | {'; '.join(diag_parts)}")
 
-            if best_id is not None and best_dist < self._matcher.threshold:
+            # NNR 判定：最佳匹配必须显著优于次佳匹配
+            gap = second_best_dist - best_dist if second_best_dist < float("inf") else 0
+            if (
+                best_id is not None
+                and best_dist < self._matcher.threshold
+                and (nrr < 0.9 or gap > 0.05 or second_best_dist >= float("inf"))
+            ):
                 result = f"member:{best_id}"
                 # 找名字
                 member_name = None

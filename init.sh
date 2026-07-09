@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-required_files="AGENTS.md PRD.md progress.md feature_list.json init.sh"
+required_files="AGENTS.md README.md feature_list.json init.sh openspec/specs/PRD.md openspec/progress/progress.md openspec/progress/claude-progress.md"
 
 for file in $required_files; do
   if [ ! -f "$file" ]; then
@@ -10,9 +10,9 @@ for file in $required_files; do
   fi
 done
 
-md_count=$(find . -maxdepth 1 -type f -name '*.md' | wc -l | tr -d ' ')
-if [ "$md_count" -lt 3 ]; then
-  echo "Expected at least 3 markdown files, found $md_count" >&2
+md_count=$(find openspec docs -type f -name '*.md' | wc -l | tr -d ' ')
+if [ "$md_count" -lt 8 ]; then
+  echo "Expected at least 8 project markdown docs, found $md_count" >&2
   exit 1
 fi
 
