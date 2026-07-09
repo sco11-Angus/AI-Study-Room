@@ -98,10 +98,11 @@
         "Added GET /api/alarms/{id}/confirm for DingTalk ActionCard button confirmation while preserving the existing POST confirm API.",
         "Regression after DingTalk real-integration prep passed: 28 task-E-related tests, backend smoke test with ALL SMOKE TESTS PASSED, and real MySQL verify script.",
         "Real DingTalk ActionCard smoke send through DingTalkNotifier returned errcode=0; click-confirm still awaits PUBLIC_BASE_URL.",
-        "After pulling origin/main on 2026-07-09, removed duplicate ws.register_ws_routes(sock) registration in backend/app/__init__.py and verified python tests/smoke_test.py passed again."
+        "After pulling origin/main on 2026-07-09, removed duplicate ws.register_ws_routes(sock) registration in backend/app/__init__.py and verified python tests/smoke_test.py passed again.",
+        "Post-merge validation repaired duplicate WebSocket registration, duplicate Guard ORM definition, missing AlarmService helper methods, and FaceMatcher immediate AlarmEvent compatibility; validation passed with bash ./init.sh, 39 pytest cases including fire_smoke, smoke test, and real MySQL verify."
       ],
       "blockers": [
-        "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed.",
+        "bash ./init.sh now passes after Ubuntu WSL was installed; WSL still prints a localhost proxy warning in NAT mode.",
         "Full DingTalk ActionCard click-confirm verification still needs PUBLIC_BASE_URL pointing at a public tunnel to the backend."
       ]
     }
