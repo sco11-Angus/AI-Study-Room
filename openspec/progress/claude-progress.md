@@ -96,7 +96,34 @@
   - The script does not call a real DingTalk webhook; it uses empty webhook values and verifies local notification logs/status transitions.
   - The user pasted an alternate SQL draft. For task E compatibility, any final SQL must keep `alarm_event.confirmed_at` and `notification_log.ack_at` nullable because those timestamps are only available after confirmation.
 
+## Session 2026-07-09 Task E DingTalk Real Integration Prep
+
+- Goal: prepare task E for real DingTalk ActionCard delivery and button confirmation.
+- Baseline:
+  - `DINGTALK_WEBHOOK` in `.env` was verified with a real DingTalk text message; DingTalk returned `errcode=0`.
+  - `bash ./init.sh` still fails on this Windows host because no WSL distribution is installed.
+  - Pre-change focused baseline passed: from `backend/`, `python -m pytest tests/test_alarm_center.py` passed: 5 passed.
+- Actions:
+  - Added config support for `DINGTALK_SECRET`, `DINGTALK_LEADER_WEBHOOK`, `DINGTALK_LEADER_SECRET`, and `PUBLIC_BASE_URL`.
+  - Updated `DingTalkNotifier` to append DingTalk signed webhook parameters when a secret is configured.
+  - Updated ActionCard payloads to use `PUBLIC_BASE_URL` for snapshot and confirm URLs when configured.
+  - Kept the word `告警` in ActionCard content so keyword-secured DingTalk robots can accept the card.
+  - Added `GET /api/alarms/{id}/confirm` as a browser-friendly confirmation endpoint for DingTalk ActionCard buttons while preserving the existing POST API.
+  - Added tests for signed webhook URL generation, public confirm URL generation, and GET confirmation behavior.
+- Validation:
+  - From `backend/`: `python -m py_compile app/config.py app/services/dingtalk.py app/api/alarms.py tests/test_alarm_center.py` passed.
+  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py` passed: 28 passed, 7 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+  - `python backend/scripts/verify_task_e_real_db.py` passed against real MySQL. Latest run wrote and verified alarm IDs: confirmed fight `16`, escalated intrusion `17`, private fatigue `18`.
+  - Real DingTalk ActionCard smoke send passed through `DingTalkNotifier`; DingTalk returned `{"errcode":0,"errmsg":"ok"}`.
+- Remaining risks:
+  - Full real DingTalk button confirmation still needs a public backend URL in `.env` as `PUBLIC_BASE_URL`.
+  - If the robot is switched from keyword security to signing security, `.env` must also include the matching `DINGTALK_SECRET`.
+
+## Session 2026-07-09 Pull Merge Push
+
 taskC_firesmoke
+
 ## Session 2026-07-09 Task C3 Fire Smoke
 
 - Goal: implement C task book C3, "fire/smoke detection".
@@ -123,5 +150,7 @@ taskC_firesmoke
   - Added `task-c3-fire-smoke-detection` to `feature_list.json`.
   - Updated `openspec/progress/progress.md` with Session 005 and current blockers.
 - Remaining risks:
+  - This host's PowerShell PATH still does not expose `git`; use `C:\Program Files\Git\cmd\git.exe` directly or add it to PATH.
+  - The existing `bash ./init.sh` WSL-distribution blocker remains unchanged.
   - `backend/model_weights/fire_smoke.pt` is a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file.
-  - `bash ./init.sh` still fails in this execution session with WSL no-distribution output, despite PowerShell-equivalent smoke passing
+  - `bash ./init.sh` still fails in this execution session with WSL no-distribution output, despite PowerShell-equivalent smoke passing.

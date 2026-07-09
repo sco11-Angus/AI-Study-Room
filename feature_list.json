@@ -92,10 +92,17 @@
         "backend/requirements.txt includes PyMySQL for mysql+pymysql DATABASE_URI values.",
         "backend/tests/smoke_test.py passed after restoring StreamScheduler ring_buffer maxlen to 5.",
         "PowerShell-equivalent init smoke passed with 16 markdown docs.",
+        
+        "Real DingTalk text webhook connectivity was verified with errcode=0 after DINGTALK_WEBHOOK was added to .env.",
+        "Added DingTalk signed webhook support via DINGTALK_SECRET and DINGTALK_LEADER_SECRET, plus public ActionCard confirm/snapshot URLs via PUBLIC_BASE_URL.",
+        "Added GET /api/alarms/{id}/confirm for DingTalk ActionCard button confirmation while preserving the existing POST confirm API.",
+        "Regression after DingTalk real-integration prep passed: 28 task-E-related tests, backend smoke test with ALL SMOKE TESTS PASSED, and real MySQL verify script.",
+        "Real DingTalk ActionCard smoke send through DingTalkNotifier returned errcode=0; click-confirm still awaits PUBLIC_BASE_URL.",
         "After pulling origin/main on 2026-07-09, removed duplicate ws.register_ws_routes(sock) registration in backend/app/__init__.py and verified python tests/smoke_test.py passed again."
       ],
       "blockers": [
-        "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed."
+        "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed.",
+        "Full DingTalk ActionCard click-confirm verification still needs PUBLIC_BASE_URL pointing at a public tunnel to the backend."
       ]
     }
   ]

@@ -2,7 +2,7 @@
 import json
 import os
 
-from flask import Blueprint, jsonify, request, send_from_directory
+from flask import Blueprint, Response, jsonify, request, send_from_directory
 
 from ..config import Config
 
@@ -58,18 +58,42 @@ def confirm_alarm(alarm_id: int):
             message: {type: string, example: success}
             data: {type: object}
     """
-    from ..services.dingtalk import get_notifier
+    payload, status_code = _confirm_alarm(alarm_id)
+    return jsonify(**payload), status_code
 
-    confirmed = get_notifier().confirm(alarm_id)
-    if not confirmed:
-        return jsonify(code=404, message="alarm not found", data={"id": alarm_id}), 404
-    return jsonify(code=0, message="ok", data={"id": alarm_id, "status": "confirmed"})
+
+@bp.get("/<int:alarm_id>/confirm")
+def confirm_alarm_page(alarm_id: int):
+    """Browser-friendly confirmation endpoint for DingTalk ActionCard."""
+    payload, status_code = _confirm_alarm(alarm_id)
+    if status_code == 200:
+        body = f"""<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Alarm Confirmed</title></head>
+<body><h1>Alarm {alarm_id} confirmed</h1><p>You can close this page.</p></body>
+</html>"""
+    else:
+        body = f"""<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Alarm Not Found</title></head>
+<body><h1>Alarm {alarm_id} not found</h1><p>Please check the alarm center.</p></body>
+</html>"""
+    return Response(body, status=status_code, mimetype="text/html")
 
 
 @bp.get("/snapshots/<path:filename>")
 def get_snapshot(filename: str):
     """访问告警抓拍图。"""
     return send_from_directory(os.path.abspath(Config.SNAPSHOT_DIR), filename)
+
+
+def _confirm_alarm(alarm_id: int) -> tuple[dict, int]:
+    from ..services.dingtalk import get_notifier
+
+    confirmed = get_notifier().confirm(alarm_id)
+    if not confirmed:
+        return {"code": 404, "message": "alarm not found", "data": {"id": alarm_id}}, 404
+    return {"code": 0, "message": "ok", "data": {"id": alarm_id, "status": "confirmed"}}, 200
 
 
 def _serialize_alarm(record) -> dict:
