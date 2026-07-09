@@ -103,7 +103,8 @@
         "The real escalation test wrote notification_log rows for guard role primary and guard role leader, confirming DB-level guard selection for primary/escalated stages.",
         "Fixed local DingTalk confirm-button testing by changing .env PUBLIC_BASE_URL from an RTMP stream URL to http://127.0.0.1:5000; a new ActionCard for alarm 16 was sent successfully with an HTTP confirm URL.",
         "Enhanced DingTalk alarm cards to show actor, behavior, alarm type, handler, location, camera, snapshot, and score context; added a separate text @ message to mention the selected guard by guard.dingtalk_id.",
-        "Real DingTalk actor/handler smoke passed for alarm 17: ActionCard returned errcode=0 with HTTP confirm URL and the follow-up text message with at payload also returned errcode=0."
+        "Real DingTalk actor/handler smoke passed for alarm 17: ActionCard returned errcode=0 with HTTP confirm URL and the follow-up text message with at payload also returned errcode=0.",
+        "Added Swagger documentation for task-E REST integration points: alarm listing, JSON confirm, DingTalk ActionCard HTML confirm, and snapshot access; /apispec_1.json exposes the AlarmEvent and confirm response schemas."
       ],
       "blockers": [
         "bash ./init.sh now passes after Ubuntu WSL was installed; WSL still prints a localhost proxy warning in NAT mode.",

@@ -1,4 +1,4 @@
-"""告警接口 — 查询与钉钉确认回调 (§7, §9)。"""
+"""Alarm query, snapshot, and DingTalk confirmation APIs."""
 import json
 import os
 
@@ -11,20 +11,92 @@ bp = Blueprint("alarms", __name__, url_prefix="/api/alarms")
 
 @bp.get("")
 def list_alarms():
-    """告警列表查询
+    """List alarm records for the alarm center dashboard.
     ---
-    tags: [Alarm]
+    tags:
+      - Alarm
+    summary: List alarm events
+    description: >
+      Query persisted alarm_event records for dashboards and other modules.
+      Frontend dashboards can combine this REST list with the /ws/alarms
+      WebSocket stream for realtime red-flash and buzzer behavior.
     parameters:
-      - {name: status, in: query, type: string, enum: [pending, notified, confirmed, escalated]}
+      - name: status
+        in: query
+        type: string
+        required: false
+        enum: [pending, notified, confirmed, escalated]
+        description: Optional alarm status filter.
     responses:
       200:
-        description: 告警列表
+        description: Alarm list ordered by created_at descending.
         schema:
           type: object
           properties:
             code: {type: integer, example: 0}
-            message: {type: string, example: success}
-            data: {type: array, items: {$ref: '#/definitions/AlarmEvent'}}
+            message: {type: string, example: ok}
+            data:
+              type: array
+              items:
+                $ref: '#/definitions/AlarmEvent'
+    definitions:
+      AlarmEvent:
+        type: object
+        properties:
+          id: {type: integer, example: 19}
+          region_id: {type: integer, example: 3}
+          camera_id: {type: integer, example: 1}
+          type:
+            type: string
+            enum: [intrusion, fire_smoke, occupy, fatigue, fight]
+            example: fight
+          snapshot_url:
+            type: string
+            example: /api/alarms/snapshots/alarm_123_3_fight.jpg
+          face_match:
+            type: string
+            description: member:<id> or stranger.
+            example: stranger
+          level:
+            type: integer
+            description: 0=private weak reminder, 1=normal, 2+=high/escalated.
+            example: 2
+          status:
+            type: string
+            enum: [pending, notified, confirmed, escalated]
+            example: confirmed
+          extra:
+            type: object
+            description: Detector-specific context, such as actor, behavior, fuse scores, boxes.
+            additionalProperties: true
+          created_at:
+            type: string
+            format: date-time
+            example: "2026-07-09T14:30:00"
+          confirmed_at:
+            type: string
+            format: date-time
+            nullable: true
+            example: "2026-07-09T14:31:12"
+      AlarmConfirmResponse:
+        type: object
+        properties:
+          code: {type: integer, example: 0}
+          message: {type: string, example: ok}
+          data:
+            type: object
+            properties:
+              id: {type: integer, example: 19}
+              status: {type: string, example: confirmed}
+      AlarmErrorResponse:
+        type: object
+        properties:
+          code: {type: integer, example: 404}
+          message: {type: string, example: alarm not found}
+          data:
+            type: object
+            properties:
+              id: {type: integer, example: 404}
     """
     status = request.args.get("status")
     from ..models.database import SessionLocal
@@ -43,20 +115,30 @@ def list_alarms():
 
 @bp.post("/<int:alarm_id>/confirm")
 def confirm_alarm(alarm_id: int):
-    """安全员确认处理（钉钉卡片回调）— 停止升级计时 (§7.4)
+    """Confirm an alarm from an API client.
     ---
-    tags: [Alarm]
+    tags:
+      - Alarm
+    summary: Confirm alarm by JSON API
+    description: >
+      Mark alarm_event.status as confirmed, set confirmed_at, set ack_at on
+      related notification_log rows, and cancel the pending DingTalk escalation
+      timer in the current backend process when it still exists.
     parameters:
-      - {name: alarm_id, in: path, type: integer, required: true}
+      - name: alarm_id
+        in: path
+        type: integer
+        required: true
+        description: Alarm event ID.
     responses:
       200:
-        description: 已确认
+        description: Alarm confirmed.
         schema:
-          type: object
-          properties:
-            code: {type: integer, example: 0}
-            message: {type: string, example: success}
-            data: {type: object}
+          $ref: '#/definitions/AlarmConfirmResponse'
+      404:
+        description: Alarm not found.
+        schema:
+          $ref: '#/definitions/AlarmErrorResponse'
     """
     payload, status_code = _confirm_alarm(alarm_id)
     return jsonify(**payload), status_code
@@ -64,7 +146,35 @@ def confirm_alarm(alarm_id: int):
 
 @bp.get("/<int:alarm_id>/confirm")
 def confirm_alarm_page(alarm_id: int):
-    """Browser-friendly confirmation endpoint for DingTalk ActionCard."""
+    """Browser-friendly confirmation endpoint for DingTalk ActionCard.
+    ---
+    tags:
+      - Alarm
+    summary: Confirm alarm from DingTalk ActionCard
+    description: >
+      DingTalk ActionCard singleURL points here. It performs the same close-loop
+      confirmation as POST /api/alarms/{alarm_id}/confirm, then returns a small
+      text/html page such as "Alarm 19 confirmed / You can close this page."
+    produces:
+      - text/html
+    parameters:
+      - name: alarm_id
+        in: path
+        type: integer
+        required: true
+        description: Alarm event ID.
+    responses:
+      200:
+        description: Alarm confirmed HTML page.
+        schema:
+          type: string
+          example: "<h1>Alarm 19 confirmed</h1><p>You can close this page.</p>"
+      404:
+        description: Alarm not found HTML page.
+        schema:
+          type: string
+          example: "<h1>Alarm 404 not found</h1><p>Please check the alarm center.</p>"
+    """
     payload, status_code = _confirm_alarm(alarm_id)
     if status_code == 200:
         body = f"""<!doctype html>
@@ -83,7 +193,32 @@ def confirm_alarm_page(alarm_id: int):
 
 @bp.get("/snapshots/<path:filename>")
 def get_snapshot(filename: str):
-    """访问告警抓拍图。"""
+    """Serve an alarm snapshot image.
+    ---
+    tags:
+      - Alarm
+    summary: Get alarm snapshot
+    description: >
+      Returns a snapshot file saved by AlarmService.raise_alarm(). AlarmEvent
+      snapshot_url values point to this endpoint.
+    produces:
+      - image/jpeg
+      - image/png
+      - application/octet-stream
+    parameters:
+      - name: filename
+        in: path
+        type: string
+        required: true
+        description: Snapshot filename under Config.SNAPSHOT_DIR.
+    responses:
+      200:
+        description: Snapshot file.
+        schema:
+          type: file
+      404:
+        description: Snapshot not found.
+    """
     return send_from_directory(os.path.abspath(Config.SNAPSHOT_DIR), filename)
 
 

@@ -260,3 +260,22 @@
 - Remaining risks:
   - Whether DingTalk visually notifies the exact person depends on `guard.dingtalk_id` being a valid DingTalk user ID or mobile accepted by the robot.
   - `127.0.0.1` confirm links only work on this same Windows machine while the local backend is running.
+
+## Session 2026-07-09 Task E Swagger Docs
+
+- Goal: add Swagger/OpenAPI documentation for task E REST interfaces used by other modules.
+- Actions:
+  - Rewrote `backend/app/api/alarms.py` docstrings with clean Swagger YAML while preserving existing route behavior.
+  - Documented `GET /api/alarms` for dashboard/list consumers, including status filtering and `AlarmEvent` schema.
+  - Documented `POST /api/alarms/{alarm_id}/confirm` for JSON clients.
+  - Documented `GET /api/alarms/{alarm_id}/confirm` as the DingTalk ActionCard browser confirmation callback.
+  - Documented `GET /api/alarms/snapshots/{filename}` for alarm snapshot access.
+  - Added response schemas for `AlarmEvent`, `AlarmConfirmResponse`, and `AlarmErrorResponse`.
+- Validation:
+  - From repo root: `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL still printed the localhost proxy warning.
+  - From `backend/`: `python -m py_compile app/api/alarms.py` passed.
+  - From `backend/`: `python -m pytest tests/test_alarm_center.py` passed: 7 passed, 11 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+  - Flask test client `GET /apispec_1.json` returned 200 and exposed `/api/alarms`, `/api/alarms/{alarm_id}/confirm`, `/api/alarms/snapshots/{filename}`, plus `AlarmEvent`, `AlarmConfirmResponse`, and `AlarmErrorResponse` definitions.
+- Remaining risks:
+  - WebSocket `/ws/alarms` is referenced in the REST description but is not represented as a native Swagger path because it is a WebSocket route.
