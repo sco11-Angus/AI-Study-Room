@@ -151,6 +151,63 @@ def test_dingtalk_notify_confirm_and_escalate_update_logs(db):
         session.close()
 
 
+def test_dingtalk_signed_action_card_uses_public_confirm_url(monkeypatch, db):
+    import base64
+    import hashlib
+    import hmac
+    from urllib.parse import quote_plus
+
+    from app.models.entities import AlarmEvent, Guard
+    from app.services.dingtalk import DingTalkNotifier
+
+    session = db()
+    try:
+        session.add_all([
+            Guard(id=3, name="primary", role="primary", priority=0),
+            AlarmEvent(
+                id=12,
+                region_id=1,
+                camera_id=1,
+                type="intrusion",
+                level=1,
+                status="pending",
+                snapshot_url="/api/alarms/snapshots/12.jpg",
+                created_at=datetime.utcnow(),
+            ),
+        ])
+        session.commit()
+    finally:
+        session.close()
+
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+
+    monkeypatch.setattr("app.services.dingtalk.time.time", lambda: 1234.567)
+    notifier = DingTalkNotifier(
+        webhook="https://oapi.dingtalk.com/robot/send?access_token=test-token",
+        secret="SECtest",
+        public_base_url="https://example.test",
+        timeout=0,
+        session_factory=db,
+        http_post=fake_post,
+    )
+
+    notifier.notify(12)
+
+    timestamp = "1234567"
+    string_to_sign = f"{timestamp}\nSECtest".encode("utf-8")
+    expected_sign = quote_plus(
+        base64.b64encode(hmac.new(b"SECtest", string_to_sign, hashlib.sha256).digest())
+    )
+    assert len(calls) == 1
+    assert calls[0]["url"].endswith(f"&timestamp={timestamp}&sign={expected_sign}")
+    assert "SECtest" not in calls[0]["url"]
+    assert calls[0]["json"]["actionCard"]["singleURL"] == "https://example.test/api/alarms/12/confirm"
+    assert "https://example.test/api/alarms/snapshots/12.jpg" in calls[0]["json"]["actionCard"]["text"]
+
+
 def test_alarm_api_lists_and_confirms(monkeypatch, db):
     from app.api.alarms import bp
     from app.models.entities import AlarmEvent
@@ -188,3 +245,11 @@ def test_alarm_api_lists_and_confirms(monkeypatch, db):
     confirmed = client.post("/api/alarms/21/confirm")
     assert confirmed.status_code == 200
     assert confirmed.get_json()["data"] == {"id": 21, "status": "confirmed"}
+
+    confirmed_page = client.get("/api/alarms/21/confirm")
+    assert confirmed_page.status_code == 200
+    assert b"Alarm 21 confirmed" in confirmed_page.data
+
+    missing_page = client.get("/api/alarms/404/confirm")
+    assert missing_page.status_code == 404
+    assert b"Alarm 404 not found" in missing_page.data

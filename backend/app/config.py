@@ -65,6 +65,10 @@ class Config:
 
     # 钉钉 Webhook (§7.4)
     DINGTALK_WEBHOOK = os.getenv("DINGTALK_WEBHOOK", "")
+    DINGTALK_SECRET = os.getenv("DINGTALK_SECRET", "")
+    DINGTALK_LEADER_WEBHOOK = os.getenv("DINGTALK_LEADER_WEBHOOK", "")
+    DINGTALK_LEADER_SECRET = os.getenv("DINGTALK_LEADER_SECRET", "")
+    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
     # 数据库 (§8)
     DB_HOST = os.getenv("DB_HOST", "localhost")
