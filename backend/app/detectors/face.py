@@ -110,6 +110,15 @@ class FaceMatcher:
         """
         if not self._dlib_loaded:
             return None
+        if not getattr(self, "_shape_predictor", None) or not getattr(self, "_face_encoder", None):
+            h, w = image.shape[:2]
+            x1 = max(0, rect.left())
+            y1 = max(0, rect.top())
+            x2 = min(w, rect.right())
+            y2 = min(h, rect.bottom())
+            if x2 <= x1 or y2 <= y1:
+                return None
+            return self.encode(image[y1:y2, x1:x2])
         rgb = image[..., ::-1].copy()
         shape = self._shape_predictor(rgb, rect)
         descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)

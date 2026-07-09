@@ -25,15 +25,6 @@ class AppUser(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class Guard(Base):
-    __tablename__ = "guard"
-    id = Column(Integer, primary_key=True)
-    name = Column(Text)
-    dingtalk_id = Column(Text)
-    role = Column(Text)
-    priority = Column(Integer, default=0)
-
-
 class Region(Base):
     __tablename__ = "region"
     id = Column(Integer, primary_key=True)
