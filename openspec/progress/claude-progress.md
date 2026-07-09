@@ -191,3 +191,28 @@
 - Remaining risks:
   - Full real DingTalk button confirmation still needs a public backend URL in `.env` as `PUBLIC_BASE_URL`.
   - WSL NAT mode still warns that localhost proxy configuration is not mirrored into WSL; this does not block `init.sh`.
+
+## Session 2026-07-09 Task E DingTalk Send Escalation Test
+
+- Goal: verify real DingTalk sending and the unconfirmed escalation path for task E.
+- Baseline:
+  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
+  - `feature_list.json` showed task E as completed, with remaining public confirm URL risk.
+  - `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL still printed the localhost proxy warning.
+  - Windows Python needed non-sandbox execution in this session; `python --version` returned Python 3.14.6.
+- Actions:
+  - Re-read task E, especially E4: primary ActionCard, `ESCALATE_TIMEOUT=180`, confirm cancels timer, and unconfirmed alarms escalate to a leader/responsible person through either a second webhook or an @ mention.
+  - Reviewed `backend/app/services/dingtalk.py` and confirmed current behavior: selects `Guard(role="primary")` for primary logs and `Guard(role="leader")` for escalated logs, sends ActionCard through `DINGTALK_WEBHOOK`, and uses `DINGTALK_LEADER_WEBHOOK` only when configured.
+  - Confirmed current ActionCard payloads do not include DingTalk @ fields; `guard.dingtalk_id` is stored but not used for an @ mention.
+  - Ran a real-send local escalation test with `DingTalkNotifier(timeout=5)` so the escalation path did not require waiting 3 minutes.
+- Validation:
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+  - From `backend/`: `python -m pytest tests/test_alarm_center.py` passed: 6 passed, 7 warnings.
+  - Real DingTalk primary ActionCard send returned HTTP 200 with `{"errcode":0,"errmsg":"ok"}`.
+  - After 5 seconds without confirmation, alarm ID 14 became `status=escalated` and `level=2`.
+  - Real DingTalk escalated ActionCard send returned HTTP 200 with `{"errcode":0,"errmsg":"ok"}`.
+  - `notification_log` contained one `primary` row linked to a primary guard and one `escalated` row linked to a leader guard.
+- Remaining risks:
+  - `DINGTALK_LEADER_WEBHOOK` is not configured, so escalation currently reuses the primary group robot.
+  - Current DingTalk ActionCard payloads do not @ a specific `dingtalk_id`; true per-person targeting needs either a leader webhook/group routing decision or an @-mention payload enhancement.
+  - Full button-click confirmation still needs `PUBLIC_BASE_URL` pointing to a reachable HTTP/HTTPS backend URL.
