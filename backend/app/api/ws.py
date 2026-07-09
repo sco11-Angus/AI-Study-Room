@@ -1,44 +1,109 @@
 """WebSocket 告警实时推送 — 看板订阅 (§7.3, §9.1)。"""
 import json
 import logging
-import queue
-import threading
+import json
+import os
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request, send_from_directory
+
+from ..config import Config
 
 bp = Blueprint("ws", __name__)
 logger = logging.getLogger(__name__)
 
-# 人脸识别结果广播队列
+"""WebSocket 实时推送接口。"""
+import json
+import logging
+import queue
+import threading
+
+from flask import Blueprint, jsonify
+from flask_sock import Sock
+from simple_websocket import ConnectionClosed
+
+bp = Blueprint("ws", __name__)
+logger = logging.getLogger(__name__)
+
+# ---- 任务 E：告警 WebSocket ----
+
+_alarm_subscribers: set = set()
+_alarm_lock = threading.Lock()
+
+
+def broadcast_alarm(payload: dict) -> int:
+    """向所有告警看板连接推送 JSON，返回成功发送数。"""
+    data = json.dumps(payload, ensure_ascii=False)
+    with _alarm_lock:
+        subscribers = list(_alarm_subscribers)
+
+    sent = 0
+    dead = []
+    for ws in subscribers:
+        try:
+            ws.send(data)
+            sent += 1
+        except ConnectionClosed:
+            dead.append(ws)
+        except Exception:
+            logger.exception("[alarm_ws] 告警推送失败")
+            dead.append(ws)
+
+    if dead:
+        with _alarm_lock:
+            for ws in dead:
+                _alarm_subscribers.discard(ws)
+    return sent
+
+
+# ---- 人脸识别结果 ----
+
 face_result_queue = queue.Queue()
-# 最新人脸识别结果
 latest_face_result = None
-_lock = threading.Lock()
+_face_lock = threading.Lock()
 
 
 def set_face_result(result: dict) -> None:
     """线程安全地更新最新人脸识别结果。"""
     global latest_face_result
-    with _lock:
+    with _face_lock:
         latest_face_result = result
 
-
-# ---- REST API（直接写在 ws 模块里，零跨文件导入） ----
 
 @bp.get("/api/face_result")
 def get_face_result():
     """获取最新人脸识别结果（前端每 500ms 轮询）。"""
-    with _lock:
+    with _face_lock:
         data = latest_face_result
     return jsonify(code=0, message="ok", data=data)
 
 
 # ---- WebSocket 路由 ----
 
-def register_ws_routes(sock):
+def register_ws_routes(sock: Sock) -> None:
+    """注册 WebSocket 路由（由 create_app 调用）。"""
+
+    @sock.route("/ws/alarms")
+    def alarms_ws(ws):
+        """看板订阅告警事件：格子 绿->红闪烁 + 蜂鸣。"""
+        with _alarm_lock:
+            _alarm_subscribers.add(ws)
+        logger.info("[alarm_ws] 客户端已连接")
+
+        try:
+            while True:
+                ws.receive()
+        except ConnectionClosed:
+            pass
+        except Exception:
+            logger.exception("[alarm_ws] WebSocket 异常")
+        finally:
+            with _alarm_lock:
+                _alarm_subscribers.discard(ws)
+            logger.info("[alarm_ws] 客户端断开")
+
     @sock.route("/ws/face_recognition")
     def ws_face_recognition(ws):
-        logger.info("[ws] 客户端已连接 face_recognition")
+        logger.info("[face_ws] 客户端已连接 face_recognition")
         try:
             while True:
                 try:
@@ -46,14 +111,18 @@ def register_ws_routes(sock):
                     _safe_send(ws, json.dumps(msg, ensure_ascii=False))
                 except queue.Empty:
                     continue
-        except Exception:
+        except ConnectionClosed:
             pass
+        except Exception:
+            logger.exception("[face_ws] WebSocket 异常")
         finally:
-            logger.info("[ws] 客户端断开 face_recognition")
+            logger.info("[face_ws] 客户端断开 face_recognition")
 
 
 def _safe_send(ws, data):
     try:
         ws.send(data)
+    except ConnectionClosed:
+        raise
     except Exception:
         pass
