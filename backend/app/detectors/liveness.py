@@ -1,9 +1,10 @@
 """活体检测 — 多信号融合 Anti-Spoofing（被动式）。
 
-结合 3 种信号加权融合判定人脸真伪：
-1. 眨眼检测（EAR 时序）               — 权重 0.4，防御静态照片
-2. 微动分析（Farneback 光流幅值）      — 权重 0.35，防御静态照片/视频回放
-3. 纹理分析（LBP 直方图熵值）          — 权重 0.25，防御翻拍/屏幕摩尔纹/AI 伪影
+结合 4 种信号加权融合判定人脸真伪：
+1. 眨眼检测（EAR 时序）               — 权重 0.35，防御静态照片
+2. 微动分析（Farneback 光流幅值）      — 权重 0.25，防御静态照片/视频回放
+3. 纹理分析（LBP 直方图熵值）          — 权重 0.20，防御翻拍/屏幕摩尔纹
+4. 频域分析（FFT 频谱伪影）            — 权重 0.20，防御AI换脸/深度伪造
 
 融合分数 < liveness_threshold → 判定为欺骗攻击。
 """
@@ -19,9 +20,10 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 # 权重常量
 # ------------------------------------------------------------------
-W_EAR = 0.4
-W_MOTION = 0.35
-W_TEXTURE = 0.25
+W_EAR = 0.35
+W_MOTION = 0.25
+W_TEXTURE = 0.20
+W_FREQ = 0.20
 
 
 class LivenessDetector:
@@ -115,8 +117,16 @@ class LivenessDetector:
         # ---- 信号 3: 纹理分析 ----
         texture_score = self._analyze_texture(face_crop)
 
+        # ---- 信号 4: 频域分析 ----
+        freq_score = self._analyze_frequency(face_crop)
+
         # ---- 融合 ----
-        score = W_EAR * blink_score + W_MOTION * motion_score + W_TEXTURE * texture_score
+        score = W_EAR * blink_score + W_MOTION * motion_score + W_TEXTURE * texture_score + W_FREQ * freq_score
+
+        # 频域硬门控：频域信号极低时强制拉低总分
+        if freq_score < 0.05:
+            score = min(score, 0.45)
+
         score = float(np.clip(score, 0.0, 1.0))
 
         reasons: list[str] = []
@@ -126,12 +136,14 @@ class LivenessDetector:
             reasons.append("low_motion")
         if texture_score < W_TEXTURE:
             reasons.append("texture_anomaly")
+        if freq_score < W_FREQ:
+            reasons.append("freq_anomaly")
 
         is_live = score >= self.threshold
 
         logger.debug(
-            "[liveness] is_live=%s score=%.3f ear=%.3f motion=%.3f texture=%.3f reasons=%s",
-            is_live, score, blink_score, motion_score, texture_score, reasons,
+            "[liveness] is_live=%s score=%.3f ear=%.3f motion=%.3f texture=%.3f freq=%.3f reasons=%s",
+            is_live, score, blink_score, motion_score, texture_score, freq_score, reasons,
         )
 
         return is_live, score, reasons
@@ -156,8 +168,14 @@ class LivenessDetector:
         blink_score, blink_detected = self._compute_blink_score(landmarks)
         motion_score = self._analyze_motion(face_crop)
         texture_score = self._analyze_texture(face_crop)
+        freq_score = self._analyze_frequency(face_crop)
 
-        score = W_EAR * blink_score + W_MOTION * motion_score + W_TEXTURE * texture_score
+        score = W_EAR * blink_score + W_MOTION * motion_score + W_TEXTURE * texture_score + W_FREQ * freq_score
+
+        # 频域硬门控：频域信号极低时强制拉低总分（AI换脸即使运动/纹理正常也应拦下）
+        if freq_score < 0.05:
+            score = min(score, 0.45)
+
         score = round(float(np.clip(score, 0.0, 1.0)), 3)
 
         reasons: list[str] = []
@@ -167,11 +185,14 @@ class LivenessDetector:
             reasons.append("low_motion")
         if texture_score < W_TEXTURE:
             reasons.append("texture_anomaly")
+        if freq_score < W_FREQ:
+            reasons.append("freq_anomaly")
 
         details = {
             "ear_score": round(blink_score, 3),
             "motion_score": round(motion_score, 3),
             "texture_score": round(texture_score, 3),
+            "freq_score": round(freq_score, 3),
             "blink_detected": blink_detected,
             "frames_cached": len(self._ear_history),
         }
@@ -423,6 +444,87 @@ class LivenessDetector:
         """
         gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
         return self._compute_texture_score(gray)
+
+    # ------------------------------------------------------------------
+    # 信号 4: 频域伪影检测（FFT 频谱分析）
+    # ------------------------------------------------------------------
+
+    def _analyze_frequency(self, face_crop: np.ndarray) -> float:
+        """FFT 频域分析：检测 GAN 生成人脸的周期性伪影。
+
+        AI换脸/深度伪造人脸在频域高频段常有GAN转置卷积层产生的
+        网格状伪影，表现为频谱高频段能量异常集中或波动。
+        真实人脸频谱呈平滑指数衰减。
+
+        Returns:
+            [0, 1] 分数，1.0 = 频域正常（真人），越低越可疑
+        """
+        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY).astype(np.float64)
+        return self._compute_frequency_score(gray)
+
+    def _compute_frequency_score(self, gray: np.ndarray) -> float:
+        """基于灰度图计算频域活体分数（兼容测试）。
+
+        原理：
+        1. 2D FFT → 幅度谱
+        2. 径向平均：统计每个频率半径的平均幅度
+        3. 高频段变异系数：AI脸频谱波动大 → CV高 → 分低
+
+        Args:
+            gray: 灰度人脸裁剪图像 (H, W)
+
+        Returns:
+            频域自然度分数 [0, 1]
+        """
+        h, w = gray.shape
+
+        # 2D FFT → 移位 → 幅度谱
+        try:
+            fft = np.fft.fft2(gray)
+            fft_shift = np.fft.fftshift(fft)
+            mag = np.abs(fft_shift)
+        except Exception:
+            return 0.5
+
+        # 径向平均谱
+        cy, cx = h // 2, w // 2
+        max_r = min(cy, cx)
+        if max_r < 4:
+            return 0.5
+
+        y, x = np.ogrid[:h, :w]
+        radii = np.sqrt((y - cy) ** 2 + (x - cx) ** 2).astype(np.int32)
+        # 裁剪：角落像素到中心距离可能超过 max_r
+        radii = np.clip(radii, 0, max_r)
+
+        # 每个半径的幅度均值
+        r_count = np.bincount(radii.ravel(), minlength=max_r + 1)
+        r_sum = np.bincount(radii.ravel(), mag.ravel(), minlength=max_r + 1)
+
+        valid = r_count > 0
+        if not valid.any():
+            return 0.5
+
+        radial_mean = np.zeros(max_r + 1)
+        radial_mean[valid] = r_sum[valid] / r_count[valid]
+
+        # 高频段 (radius > 65% max_r)：计算变异系数衡量频谱波动
+        high_start = int(max_r * 0.65)
+        if high_start >= len(radial_mean) - 2:
+            return 0.5
+
+        high_band = radial_mean[high_start:]
+        mean_val = np.mean(high_band)
+        if mean_val < 1e-9:
+            return 0.5
+
+        # 变异系数 CV = std / mean
+        # 真实人脸 CV 小（平滑衰减）；AI脸频谱有GAN伪影 → CV 大
+        cv = float(np.std(high_band) / mean_val)
+
+        # 映射到 [0, 1]：CV < 0.03 → 1.0, CV > 0.15 → 0.0
+        score = 1.0 - (cv - 0.03) / 0.12
+        return float(np.clip(score, 0.0, 1.0))
 
     # ------------------------------------------------------------------
     # LBP 向量化实现
