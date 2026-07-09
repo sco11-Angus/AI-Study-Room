@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime, timezone
@@ -16,6 +17,36 @@ import requests
 from ..config import Config
 
 logger = logging.getLogger(__name__)
+
+
+ALARM_TYPE_LABELS = {
+    "intrusion": "\u5165\u4fb5\u544a\u8b66",
+    "fire_smoke": "\u70df\u706b\u544a\u8b66",
+    "occupy": "\u5360\u5ea7\u544a\u8b66",
+    "fatigue": "\u75b2\u52b3\u63d0\u9192",
+    "fight": "\u6253\u67b6\u544a\u8b66",
+}
+
+DEFAULT_BEHAVIORS = {
+    "intrusion": "\u8fdb\u5165\u6216\u957f\u65f6\u95f4\u505c\u7559\u5728\u9632\u533a",
+    "fire_smoke": "\u51fa\u73b0\u7591\u4f3c\u70df\u96fe\u6216\u660e\u706b",
+    "occupy": "\u5360\u7528\u5ea7\u4f4d\u6216\u975e\u6cd5\u4f7f\u7528\u5ea7\u4f4d",
+    "fatigue": "\u51fa\u73b0\u95ed\u773c\u3001\u6253\u54c8\u6b20\u7b49\u75b2\u52b3\u5b66\u4e60\u884c\u4e3a",
+    "fight": "\u51fa\u73b0\u7591\u4f3c\u6253\u67b6\u6216\u80a2\u4f53\u51b2\u7a81\u884c\u4e3a",
+}
+
+ACTOR_KEYS = (
+    "actor",
+    "person",
+    "person_name",
+    "student",
+    "student_name",
+    "member_name",
+    "nickname",
+    "name",
+)
+
+BEHAVIOR_KEYS = ("behavior", "action", "reason", "trigger", "description")
 
 
 class DingTalkNotifier:
@@ -55,7 +86,7 @@ class DingTalkNotifier:
 
     def notify(self, alarm_id: int, title: str | None = None, text: str | None = None):
         """Notify the primary guard and start the escalation timer."""
-        payload_title, payload_text = self._build_card(alarm_id, title, text, "primary")
+        payload_title, payload_text = self._build_card_v2(alarm_id, title, text, "primary")
         guard_id = self._send_card(alarm_id, payload_title, payload_text, "primary")
         self._mark_notified(alarm_id, "notified")
         self._write_log(alarm_id, guard_id, "primary")
@@ -111,7 +142,7 @@ class DingTalkNotifier:
         finally:
             session.close()
 
-        title, text = self._build_card(alarm_id, None, None, "escalated")
+        title, text = self._build_card_v2(alarm_id, None, None, "escalated")
         guard_id = self._send_card(alarm_id, title, text, "escalated")
         self._write_log(alarm_id, guard_id, "escalated")
 
@@ -159,8 +190,69 @@ class DingTalkNotifier:
         finally:
             session.close()
 
+    def _build_card_v2(
+        self,
+        alarm_id: int,
+        title: str | None,
+        text: str | None,
+        stage: str,
+    ) -> tuple[str, str]:
+        from ..models.entities import AlarmEvent, AppUser, Camera, Member, Region
+
+        session = self._session()
+        try:
+            alarm = session.get(AlarmEvent, alarm_id)
+            if alarm is None:
+                base_title = title or f"Alarm {alarm_id}"
+                return base_title, text or "Alarm not found or deleted."
+
+            extra = {}
+            if alarm.extra:
+                try:
+                    extra = json.loads(alarm.extra)
+                except json.JSONDecodeError:
+                    extra = {}
+
+            region = session.get(Region, alarm.region_id) if alarm.region_id else None
+            camera = session.get(Camera, alarm.camera_id) if alarm.camera_id else None
+            app_user = session.get(AppUser, region.user_id) if region and region.user_id else None
+            handler = self._select_guard_info(stage)
+            actor = self._resolve_actor(session, alarm, extra, app_user, Member)
+            behavior = self._resolve_behavior(alarm.type, extra)
+            type_label = ALARM_TYPE_LABELS.get(alarm.type, alarm.type)
+            stage_text = "\u5347\u7ea7\u544a\u8b66" if stage == "escalated" else "\u5b89\u5168\u544a\u8b66"
+            handler_name = handler.get("name") or "\u672a\u914d\u7f6e"
+            location = region.name if region and region.name else f"Region {alarm.region_id or '-'}"
+            camera_name = camera.name if camera and camera.name else f"Camera {alarm.camera_id or '-'}"
+            base_title = title or f"{stage_text}: {type_label}"
+            created = alarm.created_at.isoformat() if alarm.created_at else ""
+
+            lines = [
+                f"### {base_title}",
+                f"- \u544a\u8b66ID: {alarm.id}",
+                f"- \u89e6\u53d1\u4eba: {actor}",
+                f"- \u89e6\u53d1\u884c\u4e3a: {behavior}",
+                f"- \u544a\u8b66\u7c7b\u578b: {type_label}",
+                f"- \u5904\u7406\u4eba: {handler_name}",
+                f"- \u4f4d\u7f6e: {location}",
+                f"- \u6444\u50cf\u5934: {camera_name}",
+                f"- \u7ea7\u522b: {alarm.level}",
+                f"- \u65f6\u95f4: {created}",
+            ]
+            if alarm.snapshot_url:
+                lines.append(f"- \u6293\u62cd: {self._public_url(alarm.snapshot_url)}")
+            if alarm.face_match:
+                lines.append(f"- \u4eba\u8138\u5339\u914d: {alarm.face_match}")
+            score_text = self._score_summary(extra)
+            if score_text:
+                lines.append(f"- \u68c0\u6d4b\u4f9d\u636e: {score_text}")
+            return base_title, text or "\n".join(lines)
+        finally:
+            session.close()
+
     def _send_card(self, alarm_id: int, title: str, text: str, guard_stage: str) -> int | None:
-        guard_id = self._select_guard_id(guard_stage)
+        guard = self._select_guard_info(guard_stage)
+        guard_id = guard.get("id")
         payload = {
             "msgtype": "actionCard",
             "actionCard": {
@@ -170,6 +262,7 @@ class DingTalkNotifier:
                 "singleURL": self._public_url(f"/api/alarms/{alarm_id}/confirm"),
             },
         }
+        payload["actionCard"]["singleTitle"] = "\u786e\u8ba4\u5904\u7406"
         webhook = self.leader_webhook if guard_stage == "escalated" else self.webhook
         secret = self.leader_secret if guard_stage == "escalated" else self.secret
         if webhook:
@@ -183,9 +276,54 @@ class DingTalkNotifier:
                 )
         else:
             logger.info("[dingtalk] webhook not configured; log only stage=%s alarm_id=%s", guard_stage, alarm_id)
+        self._send_handler_mention(alarm_id, guard, guard_stage, webhook, secret)
         return guard_id
 
+    def _send_handler_mention(
+        self,
+        alarm_id: int,
+        guard: dict,
+        guard_stage: str,
+        webhook: str,
+        secret: str,
+    ) -> None:
+        target = (guard.get("dingtalk_id") or "").strip()
+        if not webhook or not target:
+            return
+
+        handler_name = guard.get("name") or target
+        mention_text, at_payload = self._mention_payload(target, handler_name)
+        stage_text = "\u5347\u7ea7\u544a\u8b66" if guard_stage == "escalated" else "\u5b89\u5168\u544a\u8b66"
+        payload = {
+            "msgtype": "text",
+            "text": {
+                "content": (
+                    f"{mention_text} {stage_text}\u9700\u8981\u5904\u7406\uff1a"
+                    f"\u8bf7\u67e5\u770b\u4e0a\u65b9\u544a\u8b66\u5361\u7247\uff0c"
+                    f"\u5e76\u70b9\u51fb\u786e\u8ba4\u5904\u7406\u3002Alarm ID: {alarm_id}"
+                )
+            },
+            "at": at_payload,
+        }
+        try:
+            self._http_post(self._webhook_url(webhook, secret), json=payload, timeout=5)
+        except Exception:
+            logger.exception(
+                "[dingtalk] failed to send @ mention stage=%s alarm_id=%s guard_id=%s",
+                guard_stage,
+                alarm_id,
+                guard.get("id"),
+            )
+
+    def _mention_payload(self, dingtalk_id: str, handler_name: str) -> tuple[str, dict]:
+        if re.fullmatch(r"\d{11}", dingtalk_id):
+            return f"@{dingtalk_id}", {"atMobiles": [dingtalk_id], "isAtAll": False}
+        return f"@{handler_name}", {"atUserIds": [dingtalk_id], "isAtAll": False}
+
     def _select_guard_id(self, stage: str) -> int | None:
+        return self._select_guard_info(stage).get("id")
+
+    def _select_guard_info(self, stage: str) -> dict:
         from ..models.entities import Guard
 
         role = "leader" if stage == "escalated" else "primary"
@@ -197,9 +335,62 @@ class DingTalkNotifier:
                 .order_by(Guard.priority.asc(), Guard.id.asc())
                 .first()
             )
-            return guard.id if guard else None
+            if guard is None:
+                return {}
+            return {
+                "id": guard.id,
+                "name": guard.name or "",
+                "dingtalk_id": guard.dingtalk_id or "",
+                "role": guard.role or role,
+            }
         finally:
             session.close()
+
+    def _resolve_actor(self, session, alarm, extra: dict, app_user, member_model) -> str:
+        for key in ACTOR_KEYS:
+            value = extra.get(key)
+            if value:
+                return str(value)
+
+        face_match = alarm.face_match or ""
+        if face_match.startswith("member:"):
+            try:
+                member_id = int(face_match.split(":", 1)[1])
+            except ValueError:
+                member_id = None
+            if member_id is not None:
+                member = session.get(member_model, member_id)
+                if member and member.name:
+                    return member.name
+            return face_match
+
+        if app_user is not None and app_user.nickname and alarm.type in {"fatigue", "occupy"}:
+            return app_user.nickname
+        if face_match == "stranger":
+            return "\u964c\u751f\u4eba"
+        if app_user is not None and app_user.nickname:
+            return app_user.nickname
+        return "\u672a\u77e5\u4eba\u5458"
+
+    def _resolve_behavior(self, alarm_type: str, extra: dict) -> str:
+        for key in BEHAVIOR_KEYS:
+            value = extra.get(key)
+            if value:
+                return str(value)
+        return DEFAULT_BEHAVIORS.get(alarm_type, "\u89e6\u53d1\u544a\u8b66\u89c4\u5219")
+
+    def _score_summary(self, extra: dict) -> str:
+        keys = (
+            "confidence",
+            "score",
+            "vis_score",
+            "aud_score",
+            "fuse",
+            "stay_seconds",
+            "duration",
+        )
+        parts = [f"{key}={extra[key]}" for key in keys if key in extra]
+        return ", ".join(parts)
 
     def _mark_notified(self, alarm_id: int, status: str) -> None:
         from ..models.entities import AlarmEvent
