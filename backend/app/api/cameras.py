@@ -9,7 +9,9 @@ bp = Blueprint("cameras", __name__, url_prefix="/api/cameras")
 def list_cameras():
     """摄像头列表及流地址
     ---
-    tags: [Camera]
+    tags: [Camera, FireSmoke]
+    summary: List camera sources
+    description: Other modules use camera_id and stream_url from this endpoint to bind a video source to the fire/smoke detector and the live preview stream.
     responses:
       200:
         description: 摄像头列表

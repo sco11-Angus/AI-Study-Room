@@ -3,6 +3,7 @@ import json
 import os
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
+from flasgger import swag_from
 
 from ..config import Config
 
@@ -13,9 +14,11 @@ bp = Blueprint("alarms", __name__, url_prefix="/api/alarms")
 def list_alarms():
     """告警列表查询
     ---
-    tags: [Alarm]
+    tags: [Alarm, FireSmoke]
+    summary: List persisted alarm events
+    description: Fire/smoke detector hits are persisted here as AlarmEvent records with type=fire_smoke and fire/smoke confidence details in extra.
     parameters:
-      - {name: status, in: query, type: string, enum: [pending, notified, confirmed, escalated]}
+      - {name: status, in: query, type: string, enum: [pending, notified, confirmed, escalated], description: Optional alarm status filter}
     responses:
       200:
         description: 告警列表
@@ -45,7 +48,9 @@ def list_alarms():
 def confirm_alarm(alarm_id: int):
     """安全员确认处理（钉钉卡片回调）— 停止升级计时 (§7.4)
     ---
-    tags: [Alarm]
+    tags: [Alarm, FireSmoke]
+    summary: Confirm an alarm
+    description: Confirms an alarm and stops DingTalk escalation. Fire/smoke alarms use the same confirmation endpoint.
     parameters:
       - {name: alarm_id, in: path, type: integer, required: true}
     responses:
@@ -64,7 +69,25 @@ def confirm_alarm(alarm_id: int):
 
 @bp.get("/<int:alarm_id>/confirm")
 def confirm_alarm_page(alarm_id: int):
-    """Browser-friendly confirmation endpoint for DingTalk ActionCard."""
+    """Browser-friendly DingTalk alarm confirmation page.
+    ---
+    tags: [Alarm, FireSmoke]
+    summary: Confirm an alarm from a browser link
+    description: DingTalk ActionCard buttons can open this endpoint. Fire/smoke alarms use it to mark the same AlarmEvent as confirmed.
+    parameters:
+      - {name: alarm_id, in: path, type: integer, required: true}
+    responses:
+      200:
+        description: Alarm confirmed and an HTML success page is returned
+        content:
+          text/html:
+            schema: {type: string}
+      404:
+        description: Alarm was not found
+        content:
+          text/html:
+            schema: {type: string}
+    """
     payload, status_code = _confirm_alarm(alarm_id)
     if status_code == 200:
         body = f"""<!doctype html>
@@ -82,6 +105,28 @@ def confirm_alarm_page(alarm_id: int):
 
 
 @bp.get("/snapshots/<path:filename>")
+@swag_from({
+    "tags": ["Alarm", "FireSmoke"],
+    "summary": "Get an alarm snapshot image",
+    "description": (
+        "Returns the saved snapshot referenced by AlarmEvent.snapshot_url. "
+        "Fire/smoke alarms can use this image for review and DingTalk cards."
+    ),
+    "parameters": [
+        {"name": "filename", "in": "path", "type": "string", "required": True},
+    ],
+    "responses": {
+        200: {
+            "description": "Snapshot image bytes",
+            "content": {
+                "image/jpeg": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
+        404: {"description": "Snapshot not found"},
+    },
+})
 def get_snapshot(filename: str):
     """访问告警抓拍图。"""
     return send_from_directory(os.path.abspath(Config.SNAPSHOT_DIR), filename)
