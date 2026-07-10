@@ -67,10 +67,15 @@ class FireSmokePlugin(Detector):
         if weights.stat().st_size <= 0:
             raise RuntimeError(f"[fire_smoke] 模型权重为空文件: {weights}")
 
-        from ultralytics import YOLO
+        try:
+            from ultralytics import YOLO
 
-        self._model = YOLO(str(weights))
-        logger.info("[fire_smoke] YOLO 权重加载完成: %s", weights)
+            self._model = YOLO(str(weights))
+            logger.info("[fire_smoke] YOLO 权重加载完成: %s", weights)
+        except Exception as exc:
+            logger.warning("[fire_smoke] Ultralytics YOLO 加载失败，尝试旧 YOLOv5 适配: %s", exc)
+            self._model = self._load_legacy_yolov5(weights)
+            logger.info("[fire_smoke] legacy YOLOv5 权重加载完成: %s", weights)
 
     def detect(self, frame: Frame) -> list[AlarmEvent]:
         if self._model is None:
@@ -133,6 +138,34 @@ class FireSmokePlugin(Detector):
             if candidate.exists():
                 return candidate
         return candidates[1]
+
+    def _load_legacy_yolov5(self, weights: Path) -> Any:
+        from .legacy_yolov5 import LegacyYolov5FireSmokeModel
+
+        return LegacyYolov5FireSmokeModel(
+            weights_path=weights,
+            source_dir=self._resolve_legacy_yolov5_dir(),
+            image_size=Config.FIRE_SMOKE_IMG_SIZE,
+            conf_thres=Config.FIRE_SMOKE_DETECT_CONF,
+            iou_thres=Config.FIRE_SMOKE_IOU,
+            device=Config.FIRE_SMOKE_DEVICE,
+        )
+
+    def _resolve_legacy_yolov5_dir(self) -> Path:
+        configured = Path(Config.FIRE_SMOKE_LEGACY_YOLOV5_DIR)
+        if configured.is_absolute():
+            return configured
+
+        backend_root = Path(__file__).resolve().parents[2]
+        repo_root = backend_root.parent
+        candidates = [
+            backend_root / configured,
+            repo_root / configured,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[-1]
 
     def _max_fire_smoke_conf(self, results: Any) -> tuple[float, str | None]:
         best_conf = 0.0

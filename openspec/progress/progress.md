@@ -12,10 +12,11 @@
   - `python tests/smoke_test.py`（在 `backend/` 下）
   - `.\init.cmd`（Windows PowerShell smoke）
 
-- 当前最高优先级未完成功能：`task-c3-fire-smoke-detection` 已完成代码和 mock 验证，真实视频验收阻塞于非空 YOLO 烟火权重。
+- 当前最高优先级未完成功能：`task-c3-fire-smoke-detection` 已接入本地旧 YOLOv5 烟火权重并通过 demo 图推理；真实 RTMP/视频验收仍待用 live camera 或 OBS 素材完成。
 
 - 当前 blocker：
-  - `backend/model_weights/fire_smoke.pt` 是 0 字节占位文件，真实 YOLO 推理/视频验收需替换为训练好的非空权重。
+  - 完整真实视频验收仍需 live camera 或 OBS 烟火/反光负样本素材。
+  - 部署时需保留 `fire-smoke-detect-yolov4-master/yolov5`，或通过 `FIRE_SMOKE_LEGACY_YOLOV5_DIR` 指向旧 YOLOv5 源码目录；`backend/model_weights/fire_smoke.pt` 是本地 gitignored 权重工件。
 
 ### Session 006
 
@@ -254,4 +255,36 @@
   - fire_smoke 权重文件仍为 0 字节占位。
 
 - 下一步最佳动作：启动 OBS 推流到云服务器后，调用 `POST /api/alarms/test-capture` 验证真实抓拍功能。
+
+### Session 007
+
+- 日期：2026-07-10
+
+- 本轮目标：把根目录 `fire-smoke-detect-yolov4-master` 开源项目中的烟火模型嫁接到当前系统。
+
+- 已完成：
+  - 检查开源项目后确认 YOLOv4 权重占位为空，实际可用权重为 `fire-smoke-detect-yolov4-master/yolov5/best.pt`。
+  - 确认该 `best.pt` 是老版 Ultralytics YOLOv5 pickle，不能被当前 `ultralytics==8.*` 的 `YOLO(...)` 直接加载。
+  - 新增 `backend/app/detectors/legacy_yolov5.py`，封装旧 YOLOv5 源码路径、PyTorch 2.6+ `weights_only=False` 加载、letterbox、推理和 NMS，输出兼容现有 `FireSmokePlugin` 的 result/boxes 结构。
+  - 修改 `FireSmokePlugin.setup()`：优先尝试 Ultralytics YOLO，失败时自动回退旧 YOLOv5 适配器。
+  - 新增火烟配置项：`FIRE_SMOKE_LEGACY_YOLOV5_DIR`、`FIRE_SMOKE_IMG_SIZE`、`FIRE_SMOKE_DETECT_CONF`、`FIRE_SMOKE_IOU`、`FIRE_SMOKE_DEVICE`。
+  - 将 `fire-smoke-detect-yolov4-master/yolov5/best.pt` 复制为本地 `backend/model_weights/fire_smoke.pt`，解除 0 字节权重问题；该权重按 `.gitignore` 不入库。
+  - 补充后端依赖：`scipy`、`tqdm`、`mysql-connector-python`。
+
+- 运行过的验证：
+  - `.\init.cmd`：通过。
+  - `python -m py_compile backend/app/config.py backend/app/detectors/fire_smoke.py backend/app/detectors/legacy_yolov5.py backend/tests/test_fire_smoke.py`：通过。
+  - 真实权重加载：Ultralytics YOLOv8 拒绝旧 YOLOv5 权重后，legacy YOLOv5 fallback 成功加载，类别为 `['fire', 'smoke']`。
+  - demo 图推理：`fire-smoke-detect-yolov4-master/result/result_demo.jpg` 检出 fire≈0.662、smoke≈0.311；连续 30 帧后产出 `AlarmEvent(type="fire_smoke")`。
+  - `python -m pytest tests/test_fire_smoke.py`：7 passed。
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`：44 passed（使用仓库内临时目录绕过系统 Temp 权限问题）。
+  - `python tests/smoke_test.py`：`ALL SMOKE TESTS PASSED`。
+  - `python backend/scripts/verify_task_e_real_db.py`：通过，输出 `TASK_E_REAL_DB_VERIFY_OK`（本次从 `.env` 的 `MYSQL_*` 临时拼接 `DATABASE_URI`）。
+
+- 已记录证据：已更新 `feature_list.json` 的 `task-c3-fire-smoke-detection` evidence 和 blockers。
+
+- 已知风险或未解决问题：
+  - 还未用真实 live RTMP/OBS 烟火视频和反光负样本完成 C3 最终验收。
+  - 旧 YOLOv5 权重依赖 `fire-smoke-detect-yolov4-master/yolov5` 源码目录；部署时需要保留该目录或配置 `FIRE_SMOKE_LEGACY_YOLOV5_DIR`。
+  - `backend/model_weights/fire_smoke.pt` 为本地模型工件，按 `.gitignore` 不入库。
 
