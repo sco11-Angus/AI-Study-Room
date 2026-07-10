@@ -85,10 +85,26 @@ class AlarmService:
         if event.level >= 1:
             self._broadcast(payload)
             self._notify(record.id)
+            self._record_clip(record.id, event)
         else:
             logger.info("[alarm] private level=0 alarm_id=%s", record.id)
 
         return payload
+
+    def _record_clip(self, alarm_id: int, event: AlarmEvent):
+        """触发视频片段录制(任务书G2)。"""
+        try:
+            from .clip_recorder import get_clip_recorder
+            recorder = get_clip_recorder()
+            recorder.record(
+                camera_id=event.camera_id,
+                alarm_id=alarm_id,
+                event_ts=event.ts,
+                alarm_type=event.type,
+            )
+            logger.info("[alarm] 已触发片段录制 alarm_id=%d", alarm_id)
+        except Exception:
+            logger.exception("[alarm] 片段录制触发失败 alarm_id=%d", alarm_id)
 
     def _normalize_event(
         self,
@@ -182,7 +198,9 @@ class AlarmService:
                 camera_id=event.camera_id,
                 type=event.type,
                 snapshot_url=event.snapshot_url or "",
+                clip_url="",
                 face_match=event.face_match or "stranger",
+                message=self._describe_alarm(event),
                 level=event.level,
                 status="pending",
                 extra=json.dumps(event.extra or {}, ensure_ascii=False),
@@ -200,6 +218,47 @@ class AlarmService:
         finally:
             session.close()
 
+    def _describe_alarm(self, event: AlarmEvent) -> str:
+        """生成告警文字描述(任务书G4)。"""
+        extra = event.extra or {}
+        face_match = event.face_match or extra.get("face_match", "")
+        
+        if event.type == "fight":
+            vis_score = extra.get("vis_score", "")
+            aud_score = extra.get("aud_score", "")
+            fuse = extra.get("fuse", "")
+            return f"检测到肢体冲突：视觉冲突分 {vis_score}，音频冲突分 {aud_score}，融合分 {fuse} 超过阈值"
+        
+        elif event.type == "intrusion":
+            if face_match.startswith("member:"):
+                member_name = face_match.split(":")[1] if ":" in face_match else face_match
+                return f"会员 {member_name} 闯入危险区域"
+            return f"{face_match} 闯入危险区域"
+        
+        elif event.type == "fire_smoke":
+            confidence = extra.get("confidence", "")
+            return f"检测到烟火，置信度 {confidence}"
+        
+        elif event.type == "occupy":
+            if face_match.startswith("member:"):
+                member_name = face_match.split(":")[1] if ":" in face_match else face_match
+                return f"会员 {member_name} 占用座位时间过长"
+            return f"{face_match} 占用座位时间过长"
+        
+        elif event.type == "fatigue":
+            ear_score = extra.get("ear_score", "")
+            mar_score = extra.get("mar_score", "")
+            if ear_score:
+                return f"检测到疲劳：眼睛闭合，EAR={ear_score}"
+            if mar_score:
+                return f"检测到疲劳：打哈欠，MAR={mar_score}"
+            return "检测到疲劳状态"
+        
+        elif event.type == "face_recognition":
+            return f"人脸识别：{face_match}"
+        
+        return f"{event.type} 告警"
+
     def _serialize_record(self, record) -> dict:
         extra = {}
         if record.extra:
@@ -213,7 +272,9 @@ class AlarmService:
             "camera_id": record.camera_id,
             "type": record.type,
             "snapshot_url": record.snapshot_url or "",
+            "clip_url": record.clip_url or "",
             "face_match": record.face_match or "",
+            "message": record.message or "",
             "level": record.level,
             "status": record.status,
             "extra": extra,

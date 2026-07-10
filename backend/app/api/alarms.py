@@ -1,6 +1,7 @@
 """Alarm query, snapshot, and DingTalk confirmation APIs."""
 import json
 import os
+from datetime import datetime
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 from flasgger import swag_from
@@ -311,6 +312,63 @@ def confirm_alarm_page(alarm_id: int):
     return Response(body, status=status_code, mimetype="text/html")
 
 
+@bp.get("/clips/<path:filename>")
+@swag_from({
+    "tags": ["Alarm"],
+    "summary": "Get an alarm video clip",
+    "description": (
+        "Returns the saved video clip referenced by AlarmEvent.clip_url. "
+        "Supports HTTP Range requests for seeking."
+    ),
+    "parameters": [
+        {"name": "filename", "in": "path", "type": "string", "required": True},
+    ],
+    "responses": {
+        200: {
+            "description": "Video clip bytes",
+            "content": {
+                "video/mp4": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
+        206: {
+            "description": "Partial content for range requests",
+        },
+        404: {"description": "Clip not found"},
+    },
+})
+def get_clip(filename: str):
+    """Serve an alarm video clip.
+    ---
+    tags:
+      - Alarm
+    summary: Get alarm video clip
+    description: >
+      Returns a video clip saved by ClipRecorder. AlarmEvent
+      clip_url values point to this endpoint. Supports HTTP Range
+      for seeking/progress bar.
+    produces:
+      - video/mp4
+    parameters:
+      - name: filename
+        in: path
+        type: string
+        required: true
+        description: Clip filename under Config.CLIP_DIR.
+    responses:
+      200:
+        description: Full clip file.
+        schema:
+          type: file
+      206:
+        description: Partial clip for range request.
+      404:
+        description: Clip not found.
+    """
+    return send_from_directory(os.path.abspath(Config.CLIP_DIR), filename)
+
+
 @bp.get("/snapshots/<path:filename>")
 @swag_from({
     "tags": ["Alarm", "FireSmoke"],
@@ -459,6 +517,73 @@ def _parse_float(value, field_name: str) -> float:
     return result
 
 
+@bp.get("/daily-report")
+def get_daily_report():
+    """Get daily monitoring report.
+    ---
+    tags:
+      - Alarm
+    summary: Get daily monitoring report
+    description: >
+      Generate and return the daily monitoring report with statistics,
+      top alarms, recommendations, and detailed alarm list.
+    parameters:
+      - name: date
+        in: query
+        type: string
+        format: date
+        required: false
+        description: Date in YYYY-MM-DD format. Defaults to yesterday.
+      - name: format
+        in: query
+        type: string
+        enum: [json, markdown]
+        default: json
+        description: Output format.
+    responses:
+      200:
+        description: Daily report.
+        schema:
+          type: object
+          properties:
+            date: {type: string, example: "2026-07-10"}
+            generated_at: {type: string, format: date-time}
+            summary:
+              type: object
+              properties:
+                total_alarms: {type: integer}
+                confirmed_count: {type: integer}
+                escalated_count: {type: integer}
+                confirmation_rate: {type: number}
+                avg_response_time_minutes: {type: number}
+            by_type: {type: array}
+            by_level: {type: array}
+            top_regions: {type: array}
+            top_cameras: {type: array}
+            recommendations: {type: array, items: {type: string}}
+    """
+    from ..services.daily_report import get_report_service
+    
+    date_str = request.args.get("date")
+    out_format = request.args.get("format", "json")
+    
+    report_date = None
+    if date_str:
+        try:
+            report_date = datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            return jsonify(code=400, message="invalid date format, use YYYY-MM-DD"), 400
+    
+    service = get_report_service()
+    
+    if out_format == "markdown":
+        md = service.generate_markdown(report_date)
+        return Response(md, mimetype="text/markdown")
+    
+    report = service.generate_report(report_date)
+    return jsonify(code=0, message="ok", data=report)
+
+
 def _serialize_alarm(record) -> dict:
     extra = {}
     if record.extra:
@@ -472,7 +597,9 @@ def _serialize_alarm(record) -> dict:
         "camera_id": record.camera_id,
         "type": record.type,
         "snapshot_url": record.snapshot_url or "",
+        "clip_url": record.clip_url or "",
         "face_match": record.face_match or "",
+        "message": record.message or "",
         "level": record.level,
         "status": record.status,
         "extra": extra,

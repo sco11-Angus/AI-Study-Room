@@ -41,6 +41,9 @@ os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "10000")
 TARGET_W, TARGET_H = 640, 360
 
 
+PRE_BUFFER_SIZE = Config.CLIP_PRE_SECONDS * Config.CLIP_FPS
+
+
 @dataclass
 class CameraStream:
     """单路摄像头的流状态。"""
@@ -49,6 +52,7 @@ class CameraStream:
     stream_name: str                    # RTMP 推流名称，如 "test"
     stream_url: str                     # 完整拉流地址（含 live=1）
     ring_buffer: deque = field(default_factory=lambda: deque(maxlen=5))
+    pre_buffer: deque = field(default_factory=lambda: deque(maxlen=PRE_BUFFER_SIZE))
     online: bool = False
     _frame_idx: int = 0
     _thread: threading.Thread | None = None
@@ -72,6 +76,11 @@ class CameraStream:
         """阻塞等待新帧到达，timeout 秒后超时返回 False。"""
         with self._new_frame:
             return self._new_frame.wait(timeout)
+
+    def get_frames_since(self, ts: float) -> list[tuple[float, bytes]]:
+        """获取自 ts 时间戳以来的所有帧（用于片段录制），线程安全。"""
+        with self._lock:
+            return [(frame_ts, jpg) for frame_ts, jpg in self.pre_buffer if frame_ts >= ts]
 
 
 class StreamScheduler:
@@ -216,8 +225,10 @@ class StreamScheduler:
 
                 ret, jpg = cv2.imencode(".jpg", frame, cs._encode_params)
                 if ret:
+                    frame_ts = time.time()
                     with cs._lock:
                         cs.ring_buffer.append(jpg.tobytes())
+                        cs.pre_buffer.append((frame_ts, jpg.tobytes()))
                     with cs._new_frame:
                         cs._new_frame.notify_all()
 

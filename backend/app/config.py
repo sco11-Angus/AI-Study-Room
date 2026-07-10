@@ -99,3 +99,13 @@ class Config:
     LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.5))
     LIVENESS_HISTORY_SIZE = int(os.getenv("LIVENESS_HISTORY_SIZE", 30))
     LIVENESS_EAR_BLINK_THRESH = float(os.getenv("LIVENESS_EAR_BLINK_THRESH", 0.25))
+
+    # 违规抓拍回放 (任务书 G)
+    CLIP_PRE_SECONDS = int(os.getenv("CLIP_PRE_SECONDS", 5))    # 违规前录制秒数
+    CLIP_POST_SECONDS = int(os.getenv("CLIP_POST_SECONDS", 5))   # 违规后录制秒数
+    CLIP_FPS = int(os.getenv("CLIP_FPS", 15))                    # 片段帧率
+    CLIP_DIR = os.getenv(
+        "CLIP_DIR",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "clips")),
+    )
+    CLIP_MAX_DAYS = int(os.getenv("CLIP_MAX_DAYS", 7))           # 片段保留天数

@@ -115,6 +115,8 @@ class DingTalkNotifier:
             for log in session.query(NotificationLog).filter(NotificationLog.alarm_id == alarm_id).all():
                 log.ack_at = alarm.confirmed_at
             session.commit()
+
+            self._broadcast_update(alarm_id, {"status": "confirmed", "confirmed_at": alarm.confirmed_at.isoformat() if alarm.confirmed_at else None})
             return True
         except Exception:
             session.rollback()
@@ -122,6 +124,14 @@ class DingTalkNotifier:
             raise
         finally:
             session.close()
+
+    def _broadcast_update(self, alarm_id: int, updates: dict):
+        """推送告警状态更新到前端。"""
+        try:
+            from ..api.ws import broadcast_alarm_update
+            broadcast_alarm_update(alarm_id, updates)
+        except Exception:
+            logger.exception("[dingtalk] failed to broadcast alarm update alarm_id=%s", alarm_id)
 
     def _escalate(self, alarm_id: int):
         """Escalate an unconfirmed alarm and notify the leader guard."""
