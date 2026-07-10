@@ -288,3 +288,24 @@
   - 旧 YOLOv5 权重依赖 `fire-smoke-detect-yolov4-master/yolov5` 源码目录；部署时需要保留该目录或配置 `FIRE_SMOKE_LEGACY_YOLOV5_DIR`。
   - `backend/model_weights/fire_smoke.pt` 为本地模型工件，按 `.gitignore` 不入库。
 
+### Session 008
+
+- 日期：2026-07-10
+
+- 本轮目标：封装单张照片烟火检测测试脚本。
+
+- 已完成：
+  - 新增 `backend/scripts/test_fire_smoke_image.py`，用于对单张图片输出模型原始 `fire/smoke` 检测结果。
+  - 新增 `backend/scripts/test_fire_smoke_alarm_image.py`，用于把单张图片重复送入 30 帧窗口，验证是否产出 `AlarmEvent(type="fire_smoke")`。
+  - 两个脚本默认读取 `test_photos/fire_test.jpg`，也支持传入任意图片路径。
+  - 脚本已抑制旧 YOLOv5 fallback 的加载噪声，只输出测试结果。
+
+- 运行过的验证：
+  - `.\init.cmd`：通过。
+  - `python -m py_compile backend/scripts/test_fire_smoke_image.py backend/scripts/test_fire_smoke_alarm_image.py`：通过。
+  - `python backend/scripts/test_fire_smoke_image.py`：对 `test_photos/fire_test.jpg` 输出 fire≈0.757、fire≈0.557、smoke≈0.256。
+  - `python backend/scripts/test_fire_smoke_alarm_image.py`：对同一图片重复 30 帧后输出 1 个 `fire_smoke` 告警事件。
+
+- 已知风险或未解决问题：
+  - 该脚本是本地图片验证工具，不等同于真实 RTMP/OBS 视频验收。
+
