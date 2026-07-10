@@ -15,6 +15,7 @@ backend/model_weights/*.pt
 backend/model_weights/*.dat
 backend/snapshots/*.jpg
 backend/snapshots/*.png
+backend/clips/*.mp4
 
 # Node / 前端
 node_modules/

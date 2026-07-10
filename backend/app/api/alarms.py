@@ -1,6 +1,8 @@
 """Alarm query, snapshot, and DingTalk confirmation APIs."""
 import json
 import os
+from datetime import datetime
+from html import escape
 
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 from flasgger import swag_from
@@ -273,8 +275,8 @@ def confirm_alarm_page(alarm_id: int):
     summary: Confirm alarm from DingTalk ActionCard
     description: >
       DingTalk ActionCard singleURL points here. It performs the same close-loop
-      confirmation as POST /api/alarms/{alarm_id}/confirm, then returns a small
-      text/html page such as "Alarm 19 confirmed / You can close this page."
+      confirmation as POST /api/alarms/{alarm_id}/confirm, then returns a
+      text/html detail page with message, snapshot, clip link, and key context.
     produces:
       - text/html
     parameters:
@@ -288,7 +290,7 @@ def confirm_alarm_page(alarm_id: int):
         description: Alarm confirmed HTML page.
         schema:
           type: string
-          example: "<h1>Alarm 19 confirmed</h1><p>You can close this page.</p>"
+          example: "<h1>Alarm 19 confirmed</h1><p>告警已确认...</p>"
       404:
         description: Alarm not found HTML page.
         schema:
@@ -297,18 +299,70 @@ def confirm_alarm_page(alarm_id: int):
     """
     payload, status_code = _confirm_alarm(alarm_id)
     if status_code == 200:
-        body = f"""<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><title>Alarm Confirmed</title></head>
-<body><h1>Alarm {alarm_id} confirmed</h1><p>You can close this page.</p></body>
-</html>"""
+        body = _render_confirm_page(alarm_id)
     else:
-        body = f"""<!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><title>Alarm Not Found</title></head>
-<body><h1>Alarm {alarm_id} not found</h1><p>Please check the alarm center.</p></body>
-</html>"""
+        body = _render_not_found_page(alarm_id)
     return Response(body, status=status_code, mimetype="text/html")
+
+
+@bp.get("/clips/<path:filename>")
+@swag_from({
+    "tags": ["Alarm"],
+    "summary": "Get an alarm video clip",
+    "description": (
+        "Returns the saved video clip referenced by AlarmEvent.clip_url. "
+        "Supports HTTP Range requests for seeking."
+    ),
+    "parameters": [
+        {"name": "filename", "in": "path", "type": "string", "required": True},
+    ],
+    "responses": {
+        200: {
+            "description": "Video clip bytes",
+            "content": {
+                "video/mp4": {
+                    "schema": {"type": "string", "format": "binary"}
+                }
+            },
+        },
+        206: {
+            "description": "Partial content for range requests",
+        },
+        404: {"description": "Clip not found"},
+    },
+})
+def get_clip(filename: str):
+    """Serve an alarm video clip.
+    ---
+    tags:
+      - Alarm
+    summary: Get alarm video clip
+    description: >
+      Returns a video clip saved by ClipRecorder. AlarmEvent
+      clip_url values point to this endpoint. Supports HTTP Range
+      for seeking/progress bar.
+    produces:
+      - video/mp4
+    parameters:
+      - name: filename
+        in: path
+        type: string
+        required: true
+        description: Clip filename under Config.CLIP_DIR.
+    responses:
+      200:
+        description: Full clip file.
+        schema:
+          type: file
+      206:
+        description: Partial clip for range request.
+      404:
+        description: Clip not found.
+    """
+    clip_path = os.path.join(os.path.abspath(Config.CLIP_DIR), filename)
+    if not os.path.exists(clip_path):
+        return jsonify(code=404, message="clip not found", data=None), 404
+    return send_from_directory(os.path.abspath(Config.CLIP_DIR), filename)
 
 
 @bp.get("/snapshots/<path:filename>")
@@ -371,6 +425,129 @@ def _confirm_alarm(alarm_id: int) -> tuple[dict, int]:
     if not confirmed:
         return {"code": 404, "message": "alarm not found", "data": {"id": alarm_id}}, 404
     return {"code": 0, "message": "ok", "data": {"id": alarm_id, "status": "confirmed"}}, 200
+
+
+def _render_confirm_page(alarm_id: int) -> str:
+    alarm = _load_alarm_payload(alarm_id)
+    if not alarm:
+        return _render_not_found_page(alarm_id)
+
+    snapshot_url = _public_http_url(alarm.get("snapshot_url", ""))
+    clip_url = _public_http_url(alarm.get("clip_url", ""))
+    message = alarm.get("message") or _fallback_message(alarm)
+    extra = alarm.get("extra") or {}
+
+    extra_html = ""
+    if extra:
+        extra_html = (
+            "<section><h2>检测上下文</h2><pre>"
+            f"{escape(json.dumps(extra, ensure_ascii=False, indent=2))}"
+            "</pre></section>"
+        )
+
+    snapshot_html = ""
+    if snapshot_url:
+        safe_snapshot = escape(snapshot_url, quote=True)
+        snapshot_html = (
+            "<section><h2>抓拍图片</h2>"
+            f'<img src="{safe_snapshot}" alt="告警抓拍">'
+            f'<p><a href="{safe_snapshot}">打开抓拍原图</a></p>'
+            "</section>"
+        )
+
+    clip_html = (
+        "<section><h2>视频回放</h2><p>视频片段生成中，可稍后在告警中心刷新查看。</p></section>"
+    )
+    if clip_url:
+        safe_clip = escape(clip_url, quote=True)
+        clip_html = (
+            "<section><h2>视频回放</h2>"
+            f'<video controls preload="metadata" src="{safe_clip}"></video>'
+            f'<p><a href="{safe_clip}">打开视频片段</a></p>'
+            "</section>"
+        )
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Alarm {alarm_id} confirmed</title>
+  <style>
+    body {{ font-family: Arial, "Microsoft YaHei", sans-serif; max-width: 880px; margin: 24px auto; padding: 0 16px; color: #1f2933; }}
+    h1 {{ font-size: 24px; margin-bottom: 8px; }}
+    h2 {{ font-size: 18px; margin: 22px 0 10px; }}
+    .ok {{ color: #0f766e; font-weight: 700; }}
+    dl {{ display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px; }}
+    dt {{ color: #52616b; }}
+    dd {{ margin: 0; }}
+    img, video {{ max-width: 100%; border: 1px solid #d9e2ec; border-radius: 6px; background: #f5f7fa; }}
+    video {{ width: 100%; }}
+    pre {{ white-space: pre-wrap; word-break: break-word; background: #f5f7fa; padding: 12px; border-radius: 6px; }}
+  </style>
+</head>
+<body>
+  <h1>Alarm {alarm_id} confirmed</h1>
+  <p class="ok">告警已确认，状态已同步到告警中心。You can close this page.</p>
+  <section>
+    <h2>告警信息</h2>
+    <dl>
+      <dt>告警说明</dt><dd>{escape(str(message))}</dd>
+      <dt>类型</dt><dd>{escape(str(alarm.get("type") or ""))}</dd>
+      <dt>状态</dt><dd>{escape(str(alarm.get("status") or ""))}</dd>
+      <dt>级别</dt><dd>{escape(str(alarm.get("level") or ""))}</dd>
+      <dt>摄像头</dt><dd>{escape(str(alarm.get("camera_id") or ""))}</dd>
+      <dt>区域</dt><dd>{escape(str(alarm.get("region_id") or ""))}</dd>
+      <dt>人脸匹配</dt><dd>{escape(str(alarm.get("face_match") or ""))}</dd>
+      <dt>触发时间</dt><dd>{escape(str(alarm.get("created_at") or ""))}</dd>
+      <dt>确认时间</dt><dd>{escape(str(alarm.get("confirmed_at") or ""))}</dd>
+    </dl>
+  </section>
+  {snapshot_html}
+  {clip_html}
+  {extra_html}
+</body>
+</html>"""
+
+
+def _render_not_found_page(alarm_id: int) -> str:
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Alarm Not Found</title></head>
+<body><h1>Alarm {alarm_id} not found</h1><p>Please check the alarm center.</p></body>
+</html>"""
+
+
+def _load_alarm_payload(alarm_id: int) -> dict | None:
+    from ..models.database import SessionLocal
+    from ..models.entities import AlarmEvent
+
+    session = SessionLocal()
+    try:
+        record = session.get(AlarmEvent, alarm_id)
+        if record is None:
+            return None
+        return _serialize_alarm(record)
+    finally:
+        session.close()
+
+
+def _public_http_url(path_or_url: str) -> str:
+    if not path_or_url:
+        return ""
+    if path_or_url.startswith(("http://", "https://")):
+        return path_or_url
+    if Config.PUBLIC_BASE_URL:
+        path = path_or_url if path_or_url.startswith("/") else f"/{path_or_url}"
+        return f"{Config.PUBLIC_BASE_URL}{path}"
+    return path_or_url
+
+
+def _fallback_message(alarm: dict) -> str:
+    extra = alarm.get("extra") or {}
+    actor = extra.get("actor") or extra.get("person") or extra.get("student") or "未知人员"
+    behavior = extra.get("behavior") or extra.get("action") or extra.get("reason") or "触发告警规则"
+    return f"{actor}因{behavior}触发{alarm.get('type') or '告警'}"
 
 
 def _resolve_capture_target(payload: dict) -> tuple[int, int, str]:
@@ -459,6 +636,73 @@ def _parse_float(value, field_name: str) -> float:
     return result
 
 
+@bp.get("/daily-report")
+def get_daily_report():
+    """Get daily monitoring report.
+    ---
+    tags:
+      - Alarm
+    summary: Get daily monitoring report
+    description: >
+      Generate and return the daily monitoring report with statistics,
+      top alarms, recommendations, and detailed alarm list.
+    parameters:
+      - name: date
+        in: query
+        type: string
+        format: date
+        required: false
+        description: Date in YYYY-MM-DD format. Defaults to yesterday.
+      - name: format
+        in: query
+        type: string
+        enum: [json, markdown]
+        default: json
+        description: Output format.
+    responses:
+      200:
+        description: Daily report.
+        schema:
+          type: object
+          properties:
+            date: {type: string, example: "2026-07-10"}
+            generated_at: {type: string, format: date-time}
+            summary:
+              type: object
+              properties:
+                total_alarms: {type: integer}
+                confirmed_count: {type: integer}
+                escalated_count: {type: integer}
+                confirmation_rate: {type: number}
+                avg_response_time_minutes: {type: number}
+            by_type: {type: array}
+            by_level: {type: array}
+            top_regions: {type: array}
+            top_cameras: {type: array}
+            recommendations: {type: array, items: {type: string}}
+    """
+    from ..services.daily_report import get_report_service
+    
+    date_str = request.args.get("date")
+    out_format = request.args.get("format", "json")
+    
+    report_date = None
+    if date_str:
+        try:
+            report_date = datetime.strptime(date_str, "%Y-%m-%d")
+        except ValueError:
+            return jsonify(code=400, message="invalid date format, use YYYY-MM-DD"), 400
+    
+    service = get_report_service()
+    
+    if out_format == "markdown":
+        md = service.generate_markdown(report_date)
+        return Response(md, mimetype="text/markdown")
+    
+    report = service.generate_report(report_date)
+    return jsonify(code=0, message="ok", data=report)
+
+
 def _serialize_alarm(record) -> dict:
     extra = {}
     if record.extra:
@@ -472,7 +716,9 @@ def _serialize_alarm(record) -> dict:
         "camera_id": record.camera_id,
         "type": record.type,
         "snapshot_url": record.snapshot_url or "",
+        "clip_url": record.clip_url or "",
         "face_match": record.face_match or "",
+        "message": record.message or "",
         "level": record.level,
         "status": record.status,
         "extra": extra,

@@ -115,6 +115,8 @@ class DingTalkNotifier:
             for log in session.query(NotificationLog).filter(NotificationLog.alarm_id == alarm_id).all():
                 log.ack_at = alarm.confirmed_at
             session.commit()
+
+            self._broadcast_update(alarm_id, {"status": "confirmed", "confirmed_at": alarm.confirmed_at.isoformat() if alarm.confirmed_at else None})
             return True
         except Exception:
             session.rollback()
@@ -122,6 +124,14 @@ class DingTalkNotifier:
             raise
         finally:
             session.close()
+
+    def _broadcast_update(self, alarm_id: int, updates: dict):
+        """推送告警状态更新到前端。"""
+        try:
+            from ..api.ws import broadcast_alarm_update
+            broadcast_alarm_update(alarm_id, updates)
+        except Exception:
+            logger.exception("[dingtalk] failed to broadcast alarm update alarm_id=%s", alarm_id)
 
     def _escalate(self, alarm_id: int):
         """Escalate an unconfirmed alarm and notify the leader guard."""
@@ -239,8 +249,15 @@ class DingTalkNotifier:
                 f"- \u7ea7\u522b: {alarm.level}",
                 f"- \u65f6\u95f4: {created}",
             ]
+            if alarm.message:
+                lines.append(f"- \u544a\u8b66\u8bf4\u660e: {alarm.message}")
             if alarm.snapshot_url:
-                lines.append(f"- \u6293\u62cd: {self._public_url(alarm.snapshot_url)}")
+                snapshot_url = self._public_url(alarm.snapshot_url)
+                if snapshot_url.startswith(("http://", "https://")):
+                    lines.append(f"![\u544a\u8b66\u6293\u62cd]({snapshot_url})")
+                lines.append(f"- \u6293\u62cd: {snapshot_url}")
+            if alarm.clip_url:
+                lines.append(f"- \u56de\u653e: {self._public_url(alarm.clip_url)}")
             if alarm.face_match:
                 lines.append(f"- \u4eba\u8138\u5339\u914d: {alarm.face_match}")
             score_text = self._score_summary(extra)

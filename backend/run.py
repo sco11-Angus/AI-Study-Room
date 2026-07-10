@@ -15,6 +15,7 @@ def start_services():
     from app.detectors.face import FaceDetector
     from app.detectors.fire_smoke import FireSmokePlugin
     from app.detectors.fight import FightPlugin
+    from app.config import Config
     from app.stream.engine import InferenceEngine
     from app.stream.scheduler import StreamScheduler, set_scheduler
 
@@ -27,7 +28,12 @@ def start_services():
     print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 
     scheduler = StreamScheduler(engine)
-    scheduler.add_camera(camera_id=5, stream_name="test")
+    scheduler.add_camera(
+        camera_id=Config.STREAM_CAMERA_ID,
+        stream_name=Config.STREAM_NAME or None,
+        local_camera=Config.STREAM_LOCAL_CAMERA,
+        stream_url=Config.STREAM_URL or None,
+    )
     scheduler.start_all()
     set_scheduler(scheduler)
 

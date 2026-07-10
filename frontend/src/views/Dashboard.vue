@@ -299,9 +299,17 @@ onMounted(() => {
   })
   wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
   wsAlarms.onmessage = (e) => {
-    const alarm = JSON.parse(e.data)
-    alarms.value.unshift(alarm)
-    alarmStore.push(alarm)
+    const data = JSON.parse(e.data)
+    if (data.type === 'update') {
+      const idx = alarms.value.findIndex(a => a.id === data.id)
+      if (idx !== -1) {
+        alarms.value[idx] = { ...alarms.value[idx], ...data }
+        alarmStore.update(data.id, data)
+      }
+    } else {
+      alarms.value.unshift(data)
+      alarmStore.push(data)
+    }
   }
   connectFaceWs()
   window.addEventListener('resize', updateOverlaySize)

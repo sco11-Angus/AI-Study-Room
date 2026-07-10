@@ -113,16 +113,56 @@
         "Fixed local DingTalk confirm-button testing by changing .env PUBLIC_BASE_URL from an RTMP stream URL to http://127.0.0.1:5000; a new ActionCard for alarm 16 was sent successfully with an HTTP confirm URL.",
         "Enhanced DingTalk alarm cards to show actor, behavior, alarm type, handler, location, camera, snapshot, and score context; added a separate text @ message to mention the selected guard by guard.dingtalk_id.",
         "Real DingTalk actor/handler smoke passed for alarm 17: ActionCard returned errcode=0 with HTTP confirm URL and the follow-up text message with at payload also returned errcode=0.",
+        "Enhanced the DingTalk ActionCard backend payload to include the persisted alarm message, public snapshot markdown image, and clip playback URL when available.",
+        "Enhanced the DingTalk GET confirm page so clicking Confirm now confirms the alarm and returns a detail page with message, status, snapshot image, clip video/link, and detector extra context.",
         "Added Swagger documentation for task-E REST integration points: alarm listing, JSON confirm, DingTalk ActionCard HTML confirm, and snapshot access; /apispec_1.json exposes the AlarmEvent and confirm response schemas.",
         "Added a Task E local integration endpoint POST /api/alarms/test-capture that pulls one frame from an RTMP/RTSP/video source or camera.stream_url, saves the snapshot through AlarmService, persists alarm_event, broadcasts WebSocket payloads, and triggers DingTalk for level>=1 alarms.",
         "Task E self-capture validation passed: py_compile for alarms.py/stream_capture.py/test_alarm_center.py, focused alarm-center pytest with 10 passed, related backend regression pytest with 43 passed, and backend smoke with ALL SMOKE TESTS PASSED.",
-        "Real RTMP stream integration: backend successfully connected to cloud RTMP server at 49.233.71.82:9090, decoder statistics showed ok=129 frames with dropped=0. Fixed scheduler.py to remove live=1 from URL and add rtmp_live;live as FFmpeg option. Fixed camera_id=0 boundary checks in alarms.py. Enhanced stream_capture.py to prioritize scheduler ring buffer over opening a second RTMP connection."
+        "Real RTMP stream integration: backend successfully connected to cloud RTMP server at 49.233.71.82:9090, decoder statistics showed ok=129 frames with dropped=0. Fixed scheduler.py to remove live=1 from URL and add rtmp_live;live as FFmpeg option. Fixed camera_id=0 boundary checks in alarms.py. Enhanced stream_capture.py to prioritize scheduler ring buffer over opening a second RTMP connection.",
+        "Made stream startup configurable with STREAM_CAMERA_ID/STREAM_NAME/STREAM_URL/STREAM_LOCAL_CAMERA. Default startup camera is camera_id=5, and StreamScheduler.add_camera(camera_id=5) now loads camera.stream_url from the database when no explicit stream name or URL is provided.",
+        "Added scheduler tests for database stream_url resolution, legacy RTMP stream-name fallback, and local camera integer handling. Validation passed: py_compile via WSL, tests/test_task_g.py -> 6 passed, tests/test_alarm_center.py tests/test_task_g.py -> 16 passed, and backend smoke printed ALL SMOKE TESTS PASSED.",
+        "Real camera verification script was fixed to keep the requested --camera-id when deriving region_id. A run with --camera-id 5 resolved camera_id=5, region_id=5, source=rtmp://49.233.71.82:9090/live/test, then timed out waiting for a frame after the RTMP source did not produce readable frames.",
+        "Added --stream-url to verify_task_e_g_real_camera.py so a real RTMP source can be tested with any existing camera/region row. Retesting with camera_id=1 and stream_url=rtmp://49.233.71.82:9090/live/test still failed at RTMP handshake, confirming the current blocker is not camera_id binding.",
+        "Added GET /api/cameras/{camera_id}/stream-status to inspect whether StreamScheduler is running, camera is registered/online, and decoded JPEG/pre-buffer frames are available. Updated stream_capture to wait the full timeout for scheduler frames before opening a second RTMP connection. Validation passed: py_compile, tests/test_task_g.py tests/test_alarm_center.py -> 17 passed, and backend smoke printed ALL SMOKE TESTS PASSED.",
+        "Clean restart after stopping duplicate Python listeners on port 5000 fixed the confusing stale-process state. python backend/run.py connected to camera_id=5 at rtmp://49.233.71.82:9090/live/test with decoder stats ok frames and 0 dropped.",
+        "Real Task E/G verification succeeded through the running backend scheduler: /api/cameras/5/stream-status returned online=true and has_frame=true, POST /api/alarms/test-capture created alarm_id=48 with snapshot_url, async recording filled clip_url=/api/alarms/clips/alarm_48_1783691900602.mp4, snapshot returned 200 with 17558 bytes, clip returned 200 with 227218 bytes, and daily report for 2026-07-10 returned 200."
       ],
       "blockers": [
         "bash ./init.sh now passes after Ubuntu WSL was installed; WSL still prints a localhost proxy warning in NAT mode.",
         "Full DingTalk ActionCard click-confirm verification still needs PUBLIC_BASE_URL pointing at a public tunnel to the backend.",
         "DINGTALK_LEADER_WEBHOOK is not configured, so escalation currently reuses the primary group robot; true separate leader-group delivery needs a leader webhook.",
         "The @ mention payload is now sent, but real human notification still depends on guard.dingtalk_id being a DingTalk user ID or mobile accepted by the robot."
+      ]
+    },
+    {
+      "id": "task-g-violation-playback-evidence-report",
+      "name": "Task G violation snapshot playback and AI daily report",
+      "priority": 6,
+      "status": "completed",
+      "description": "Enhance the alarm center with pre/post-event video clip evidence, HTTP playback, stream diagnostics, and daily monitoring report generation.",
+      "required_validation": [
+        "python -m pytest tests/test_task_g.py tests/test_alarm_center.py -q",
+        "python tests/smoke_test.py",
+        "bash ./init.sh",
+        "Real RTMP scheduler capture, snapshot, clip playback, and daily report verification"
+      ],
+      "evidence": [
+        "AlarmEvent includes clip_url, and AlarmService starts asynchronous clip recording after snapshot persistence so the alarm path returns before MP4 generation completes.",
+        "StreamScheduler maintains pre-event JPEG frames, exposes camera status diagnostics, and can load camera.stream_url by STREAM_CAMERA_ID or explicit STREAM_URL/STREAM_LOCAL_CAMERA config.",
+        "ClipRecorder generates MP4 files under CLIP_DIR, updates alarm_event.clip_url, and broadcasts a WebSocket clip_url update when the clip becomes available.",
+        "GET /api/alarms/clips/{filename} serves saved MP4 evidence with HTTP Range support for playback seeking.",
+        "DailyReportService in backend/app/services/daily_report.py generates JSON and Markdown monitoring reports, saves report_<date>.json and report_<date>.md artifacts, and exposes backend/scripts/daily_report.py for scheduled daily generation.",
+        "ClipRecorder has a CLIP_MAX_DAYS cleanup strategy that removes expired video artifacts before new recording jobs.",
+        "Added backend/tests/test_task_g.py covering MP4 encode and clip_url update, daily report JSON/Markdown/file generation, daily-report API formats, stream-status API, database stream_url startup, legacy stream-name fallback, and local camera integer handling.",
+        "Added formal tests for clip HTTP Range playback, clip retention cleanup, scheduled daily-report artifact generation, public DingTalk snapshot markdown, and confirm-page snapshot/clip/detail rendering.",
+        "Backend-only regression passed after alarm-center refinements: py_compile for changed backend files, tests/test_alarm_center.py tests/test_task_g.py -> 20 passed, full related backend pytest -> 53 passed, backend smoke printed ALL SMOKE TESTS PASSED, and bash ./init.sh passed with only the WSL localhost proxy warning.",
+        "Validation passed: WSL py_compile for Task G files, pytest for tests/test_task_g.py tests/test_alarm_center.py -> 17 passed with 13 warnings, backend smoke printed ALL SMOKE TESTS PASSED, and bash ./init.sh passed with only the WSL localhost proxy warning.",
+        "Real RTMP verification succeeded after clean backend restart: /api/cameras/5/stream-status returned online=true and has_frame=true, POST /api/alarms/test-capture created alarm_id=48 with a snapshot, async recording produced /api/alarms/clips/alarm_48_1783691900602.mp4, snapshot and clip endpoints returned HTTP 200, and /api/alarms/daily-report?date=2026-07-10 returned HTTP 200 including alarm 48."
+      ],
+      "blockers": [
+        "Task G backend capture/playback/report flow is complete; frontend playback UI is owned by Task F and existing staged frontend files were not changed in this backend verification pass.",
+        "Fight clips produced by the current alarm-center OpenCV fallback are video-only. If the team requires audio evidence, A/D should provide a muxed clip or audio stream interface; the alarm center can persist and expose the resulting clip_url.",
+        "If live capture fails again, first check for duplicate Python processes listening on port 5000 before changing RTMP code."
       ]
     }
   ]

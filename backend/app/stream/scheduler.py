@@ -11,6 +11,8 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from typing import Any
+from urllib.parse import urlparse
 
 import cv2
 
@@ -41,14 +43,18 @@ os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "10000")
 TARGET_W, TARGET_H = 640, 360
 
 
+PRE_BUFFER_SIZE = Config.CLIP_PRE_SECONDS * Config.CLIP_FPS
+
+
 @dataclass
 class CameraStream:
     """单路摄像头的流状态。"""
 
     camera_id: int
     stream_name: str                    # RTMP 推流名称，如 "test"
-    stream_url: str                     # 完整拉流地址（含 live=1）
+    stream_url: Any                     # 完整拉流地址或本地摄像头索引
     ring_buffer: deque = field(default_factory=lambda: deque(maxlen=5))
+    pre_buffer: deque = field(default_factory=lambda: deque(maxlen=PRE_BUFFER_SIZE))
     online: bool = False
     _frame_idx: int = 0
     _thread: threading.Thread | None = None
@@ -73,6 +79,11 @@ class CameraStream:
         with self._new_frame:
             return self._new_frame.wait(timeout)
 
+    def get_frames_since(self, ts: float) -> list[tuple[float, bytes]]:
+        """获取自 ts 时间戳以来的所有帧（用于片段录制），线程安全。"""
+        with self._lock:
+            return [(frame_ts, jpg) for frame_ts, jpg in self.pre_buffer if frame_ts >= ts]
+
 
 class StreamScheduler:
     """多摄像头拉流调度器 — 管理所有摄像头解码线程。
@@ -90,7 +101,13 @@ class StreamScheduler:
 
     # ---- 摄像头管理 ----
 
-    def add_camera(self, camera_id: int, stream_name: str, local_camera: int = None) -> CameraStream:
+    def add_camera(
+        self,
+        camera_id: int,
+        stream_name: str | None = None,
+        local_camera: int | None = None,
+        stream_url: str | None = None,
+    ) -> CameraStream:
         """添加一路摄像头，返回其流状态对象。
         
         Args:
@@ -98,20 +115,59 @@ class StreamScheduler:
             stream_name: RTMP推流名称，如 "test"
             local_camera: 本地摄像头索引（0=第一个USB摄像头），为None时使用RTMP流
         """
+        resolved_url = stream_url.strip() if isinstance(stream_url, str) else stream_url
         if local_camera is not None:
-            stream_url = f"{local_camera}"
+            resolved_url = local_camera
             stream_name = f"local_{local_camera}"
         else:
-            stream_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name}"
+            if not resolved_url and stream_name is None:
+                resolved_url = self._load_stream_url_from_db(camera_id)
+            if not stream_name and resolved_url:
+                stream_name = self._stream_name_from_url(str(resolved_url))
+            stream_name = stream_name or "test"
+            if not resolved_url:
+                resolved_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name}"
         cs = CameraStream(
             camera_id=camera_id,
             stream_name=stream_name,
-            stream_url=stream_url,
+            stream_url=resolved_url,
         )
         with self._lock:
             self._cameras[camera_id] = cs
         logger.info(f"[scheduler] 已添加摄像头: camera_id={camera_id}, stream={stream_name}{', local' if local_camera is not None else ''}")
         return cs
+
+    def _load_stream_url_from_db(self, camera_id: int) -> str:
+        """Load camera.stream_url when camera_id alone identifies the source."""
+        try:
+            from ..models.database import SessionLocal
+            from ..models.entities import Camera
+
+            session = SessionLocal()
+            try:
+                camera = session.get(Camera, camera_id)
+                return str(camera.stream_url or "").strip() if camera else ""
+            finally:
+                session.close()
+        except Exception:
+            logger.exception("[scheduler] failed to load stream_url for camera_id=%s", camera_id)
+            return ""
+
+    def _stream_name_from_url(self, stream_url: str) -> str:
+        parsed = urlparse(stream_url.split()[0])
+        path = parsed.path.rstrip("/")
+        if "/live/" in path:
+            return path.rsplit("/live/", 1)[1].split("/", 1)[0] or "test"
+        if path:
+            return path.rsplit("/", 1)[-1] or "test"
+        return "test"
+
+    def _open_capture(self, stream_url: Any):
+        if isinstance(stream_url, int):
+            if os.name == "nt":
+                return cv2.VideoCapture(stream_url, cv2.CAP_DSHOW)
+            return cv2.VideoCapture(stream_url)
+        return cv2.VideoCapture(str(stream_url), cv2.CAP_FFMPEG)
 
     def remove_camera(self, camera_id: int) -> None:
         """移除摄像头并停止其解码线程。"""
@@ -169,7 +225,7 @@ class StreamScheduler:
         while not cs._stop_event.is_set():
             if cap is None or not cap.isOpened():
                 logger.info(f"[scheduler] camera_id={cs.camera_id} 连接流: {cs.stream_url}")
-                cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
+                cap = self._open_capture(cs.stream_url)
                 if cap.isOpened():
                     cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
                     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -216,8 +272,10 @@ class StreamScheduler:
 
                 ret, jpg = cv2.imencode(".jpg", frame, cs._encode_params)
                 if ret:
+                    frame_ts = time.time()
                     with cs._lock:
                         cs.ring_buffer.append(jpg.tobytes())
+                        cs.pre_buffer.append((frame_ts, jpg.tobytes()))
                     with cs._new_frame:
                         cs._new_frame.notify_all()
 

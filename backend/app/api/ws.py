@@ -55,6 +55,16 @@ def broadcast_alarm(payload: dict) -> int:
     return sent
 
 
+def broadcast_alarm_update(alarm_id: int, updates: dict) -> int:
+    """推送告警状态更新（确认、升级、片段就绪等）。"""
+    payload = {
+        "type": "update",
+        "id": alarm_id,
+        **updates,
+    }
+    return broadcast_alarm(payload)
+
+
 # ---- 人脸识别结果 ----
 
 face_result_queue = queue.Queue()
