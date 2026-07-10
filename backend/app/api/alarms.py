@@ -50,7 +50,7 @@ def list_alarms():
           camera_id: {type: integer, example: 1}
           type:
             type: string
-            enum: [intrusion, fire_smoke, occupy, fatigue, fight]
+            enum: [intrusion, fire_smoke, occupy, fatigue, fight, face_recognition]
             example: fight
           snapshot_url:
             type: string
@@ -149,7 +149,7 @@ def create_test_capture_alarm():
               example: 1
             type:
               type: string
-              enum: [intrusion, fire_smoke, occupy, fatigue, fight]
+              enum: [intrusion, fire_smoke, occupy, fatigue, fight, face_recognition]
               default: fight
             level:
               type: integer
