@@ -1,6 +1,5 @@
 <template>
   <div class="page">
-    <!-- 人脸识别结果 — 顶部醒目横幅 -->
     <div v-if="faceResult" class="face-banner" :class="faceResult.type">
       <span v-if="faceResult.type === 'member'">欢迎你, {{ faceResult.name }}</span>
       <span v-else>陌生人</span>
@@ -36,37 +35,27 @@ import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
 import { confirmAlarm, getCameras } from '../api'
 
-const DEFAULT_STREAM_URL = `http://${location.hostname}:8080/live?app=live&stream=test`
-const streamUrl = ref('')
+const streamUrl = ref('camera_id=5')
 const alarms = ref([])
 const faceResult = ref(null)
 let wsAlarms, wsFace, reconnectTimer
-
-function resolveStreamUrl(rawUrl) {
-  if (!rawUrl) {
-    return DEFAULT_STREAM_URL
-  }
-  if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
-    return rawUrl
-  }
-  const match = rawUrl.match(/\/live\/(.+?)(?:\s|$|\?)/)
-  if (match) {
-    return `http://${location.hostname}:8080/live?app=live&stream=${match[1]}`
-  }
-  return DEFAULT_STREAM_URL
-}
 
 function fetchStreamUrl() {
   getCameras()
     .then((list) => {
       if (Array.isArray(list) && list.length) {
-        streamUrl.value = resolveStreamUrl(list[0].stream_url)
+        const cloudCamera = list.find(c => c.stream_url.includes('49.233.71.82'))
+        if (cloudCamera) {
+          streamUrl.value = `camera_id=${cloudCamera.id}`
+        } else {
+          streamUrl.value = `camera_id=${list[0].id}`
+        }
       } else {
-        streamUrl.value = DEFAULT_STREAM_URL
+        streamUrl.value = 'camera_id=5'
       }
     })
     .catch(() => {
-      streamUrl.value = DEFAULT_STREAM_URL
+      streamUrl.value = 'camera_id=5'
     })
 }
 

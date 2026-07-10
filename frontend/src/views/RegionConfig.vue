@@ -51,7 +51,7 @@ import { ElMessage } from 'element-plus'
 import CanvasDraw from '../components/CanvasDraw.vue'
 import { createRegion, getCameras } from '../api'
 
-const DEFAULT_STREAM_URL = `http://${location.hostname}:8080/live?app=live&stream=test`
+const DEFAULT_STREAM_URL = 'camera_id=5'
 const streamUrl = ref(DEFAULT_STREAM_URL)
 const cameras = ref([])
 const form = ref({ camera_id: null, name: '', type: 'danger_zone', polygon: [], x_distance: 50, y_stay_time: 10 })
