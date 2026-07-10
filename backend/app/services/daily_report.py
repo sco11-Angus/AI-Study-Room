@@ -8,6 +8,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import requests
+
 from ..config import Config
 
 logger = logging.getLogger(__name__)
@@ -107,16 +109,18 @@ class DailyReportService:
             
             avg_response_time = self._calculate_avg_response_time(alarms)
             
+            summary_data = {
+                "total_alarms": total_alarms,
+                "confirmed_count": confirmed_count,
+                "escalated_count": escalated_count,
+                "confirmation_rate": round(confirmed_count / total_alarms * 100, 1) if total_alarms > 0 else 0,
+                "avg_response_time_minutes": round(avg_response_time, 1)
+            }
+            
             report = {
                 "date": date.strftime("%Y-%m-%d"),
                 "generated_at": datetime.now(timezone.utc).isoformat(),
-                "summary": {
-                    "total_alarms": total_alarms,
-                    "confirmed_count": confirmed_count,
-                    "escalated_count": escalated_count,
-                    "confirmation_rate": round(confirmed_count / total_alarms * 100, 1) if total_alarms > 0 else 0,
-                    "avg_response_time_minutes": round(avg_response_time, 1)
-                },
+                "summary": summary_data,
                 "by_type": [
                     {
                         "type": t,
@@ -137,7 +141,7 @@ class DailyReportService:
                     {"type": t, "label": TYPE_STATS_LABELS.get(t, t), "count": c}
                     for t, c in top_alarm_types
                 ],
-                "recommendations": self._generate_recommendations(type_stats, region_stats),
+                "recommendations": self._generate_recommendations(type_stats, region_stats, summary_data),
                 "alarm_details": [
                     {
                         "id": alarm.id,
@@ -174,8 +178,105 @@ class DailyReportService:
             return total_seconds / 60 / count
         return 0
 
-    def _generate_recommendations(self, type_stats, region_stats) -> list[str]:
-        """生成改进建议。"""
+    def _generate_recommendations(self, type_stats, region_stats, summary) -> list[str]:
+        """生成改进建议（优先使用LLM）。"""
+        if Config.LLM_ENABLED and Config.LLM_API_KEY:
+            try:
+                return self._generate_recommendations_with_llm(type_stats, region_stats, summary)
+            except Exception:
+                logger.exception("[daily_report] LLM调用失败，回退到规则建议")
+        
+        return self._generate_recommendations_fallback(type_stats, region_stats)
+
+    def _generate_recommendations_with_llm(self, type_stats, region_stats, summary) -> list[str]:
+        """调用LLM生成智能分析建议。"""
+        type_desc = {
+            "fight": "打架冲突",
+            "intrusion": "入侵危险区域",
+            "fire_smoke": "烟火检测",
+            "occupy": "占座超时",
+            "fatigue": "疲劳学习",
+            "face_recognition": "人脸识别"
+        }
+        
+        type_summary = "\n".join([
+            f"- {type_desc.get(t, t)}: {c}次"
+            for t, c in type_stats.items()
+        ])
+        
+        top_region = max(region_stats.items(), key=lambda x: x[1], default=(None, 0))
+        
+        prompt = f"""
+你是一个智能监控分析助手，请根据以下监控数据生成3-5条专业的改进建议：
+
+日期：{datetime.now().strftime('%Y-%m-%d')}
+监控概览：
+- 告警总数：{summary['total_alarms']}
+- 已确认：{summary['confirmed_count']}
+- 确认率：{summary['confirmation_rate']}%
+- 平均响应时间：{summary['avg_response_time_minutes']}分钟
+
+告警类型分布：
+{type_summary}
+
+告警最频繁区域：区域{top_region[0]}（{top_region[1]}次）
+
+请基于以上数据，分析监控情况并给出具体的改进建议。每条建议用"- "开头，语言简洁专业。
+        """.strip()
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {Config.LLM_API_KEY}"
+        }
+        
+        payload = {
+            "model": Config.LLM_MODEL,
+            "input": {
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "你是一个智能监控分析助手，请根据监控数据生成专业的改进建议。"
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            },
+            "parameters": {
+                "temperature": 0.7,
+                "max_tokens": 500
+            }
+        }
+        
+        try:
+            response = requests.post(Config.LLM_API_URL, headers=headers, json=payload, timeout=30)
+            response.raise_for_status()
+            result = response.json()
+            
+            if "output" in result:
+                text = result["output"]["text"]
+            elif "choices" in result and result["choices"]:
+                text = result["choices"][0]["text"]
+            elif "result" in result:
+                text = result["result"]
+            else:
+                text = result.get("message", "").get("content", "")
+            
+            recommendations = [
+                line.strip().replace("- ", "")
+                for line in text.split("\n")
+                if line.strip() and not line.startswith("#")
+            ]
+            
+            logger.info("[daily_report] LLM生成建议: %s", recommendations)
+            return recommendations[:5]
+        except Exception as e:
+            logger.error("[daily_report] LLM调用异常: %s", e)
+            raise
+
+    def _generate_recommendations_fallback(self, type_stats, region_stats) -> list[str]:
+        """规则驱动的改进建议（LLM不可用时的回退方案）。"""
         recommendations = []
         
         if type_stats.get("fight", 0) > 0:
@@ -201,8 +302,7 @@ class DailyReportService:
 
     def _save_report(self, report: dict) -> str:
         """保存日报到文件。"""
-        filename = f"report_{report['date']}.json"
-        path = os.path.join(self.report_dir, filename)
+        path = self._report_path(report["date"], "json")
         
         with open(path, "w", encoding="utf-8") as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
@@ -210,10 +310,48 @@ class DailyReportService:
         logger.info("[daily_report] 日报已保存: %s", path)
         return path
 
+    def save_markdown(self, markdown: str, date_str: str) -> str:
+        """保存 Markdown 日报文件。"""
+        path = self._report_path(date_str, "md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(markdown)
+        logger.info("[daily_report] Markdown 日报已保存: %s", path)
+        return path
+
+    def generate_artifacts(
+        self,
+        date: Optional[datetime] = None,
+        formats: tuple[str, ...] = ("json", "markdown"),
+    ) -> dict:
+        """生成可由定时任务调用的日报产物。"""
+        requested = set(formats)
+        unknown = requested - {"json", "markdown"}
+        if unknown:
+            raise ValueError(f"unsupported report formats: {sorted(unknown)}")
+
+        report = self.generate_report(date)
+        outputs = {}
+        if "json" in requested:
+            outputs["json"] = self._report_path(report["date"], "json")
+        if "markdown" in requested:
+            markdown = self._render_markdown(report)
+            outputs["markdown"] = self.save_markdown(markdown, report["date"])
+        return {
+            "date": report["date"],
+            "summary": report["summary"],
+            "outputs": outputs,
+        }
+
+    def _report_path(self, date_str: str, suffix: str) -> str:
+        return os.path.join(self.report_dir, f"report_{date_str}.{suffix}")
+
     def generate_markdown(self, date: Optional[datetime] = None) -> str:
         """生成Markdown格式的日报。"""
         report = self.generate_report(date)
-        
+        return self._render_markdown(report)
+
+    def _render_markdown(self, report: dict) -> str:
+        """将已生成的日报字典渲染为 Markdown。"""
         lines = []
         lines.append(f"# 📊 AI自习室监控日报")
         lines.append(f"**日期**: {report['date']}")

@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 
 import cv2
+import numpy as np
 
 from ..config import Config
 from ..stream.scheduler import get_scheduler
@@ -42,6 +43,7 @@ class ClipRecorder:
             if camera_id in self._recording:
                 logger.info("[clip] camera_id=%d 正在录制中，跳过", camera_id)
                 return ""
+        self.cleanup_old_clips()
 
         ts_ms = int(event_ts * 1000)
         filename = f"alarm_{alarm_id}_{ts_ms}.mp4"
@@ -115,7 +117,7 @@ class ClipRecorder:
             return
 
         first_jpg = frames[0][1]
-        first_frame = cv2.imdecode(cv2.imdecode(np.frombuffer(first_jpg, np.uint8), cv2.IMREAD_COLOR), cv2.IMREAD_COLOR)
+        first_frame = cv2.imdecode(np.frombuffer(first_jpg, np.uint8), cv2.IMREAD_COLOR)
         if first_frame is None:
             logger.error("[clip] 无法解码首帧")
             return
@@ -166,6 +168,34 @@ class ClipRecorder:
         except Exception:
             logger.exception("[clip] 广播片段就绪失败")
 
+    def cleanup_old_clips(self, max_days: int | None = None, now: float | None = None) -> int:
+        """删除超过保留天数的视频片段，返回删除数量。"""
+        days = Config.CLIP_MAX_DAYS if max_days is None else max_days
+        if days <= 0:
+            return 0
+
+        cutoff = (time.time() if now is None else now) - days * 24 * 60 * 60
+        deleted = 0
+        try:
+            entries = list(os.scandir(self.clip_dir))
+        except FileNotFoundError:
+            return 0
+
+        for entry in entries:
+            if not entry.is_file():
+                continue
+            if not entry.name.lower().endswith((".mp4", ".mov", ".m4v", ".webm")):
+                continue
+            try:
+                if entry.stat().st_mtime < cutoff:
+                    os.remove(entry.path)
+                    deleted += 1
+            except OSError:
+                logger.exception("[clip] 清理旧片段失败: %s", entry.path)
+        if deleted:
+            logger.info("[clip] 已清理过期片段: %d", deleted)
+        return deleted
+
 
 _default_clip_recorder: ClipRecorder | None = None
 
@@ -176,6 +206,3 @@ def get_clip_recorder() -> ClipRecorder:
     if _default_clip_recorder is None:
         _default_clip_recorder = ClipRecorder()
     return _default_clip_recorder
-
-
-import numpy as np

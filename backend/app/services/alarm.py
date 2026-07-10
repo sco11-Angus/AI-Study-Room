@@ -222,42 +222,89 @@ class AlarmService:
         """生成告警文字描述(任务书G4)。"""
         extra = event.extra or {}
         face_match = event.face_match or extra.get("face_match", "")
-        
+        actor = self._first_extra_text(
+            extra,
+            ("actor", "person", "person_name", "student", "student_name", "member_name", "nickname", "name"),
+        )
+        behavior = self._first_extra_text(extra, ("behavior", "action", "reason", "trigger", "description"))
+        type_label = {
+            "intrusion": "入侵告警",
+            "fire_smoke": "烟火告警",
+            "occupy": "占座告警",
+            "fatigue": "疲劳提醒",
+            "fight": "打架告警",
+            "face_recognition": "人脸识别",
+        }.get(event.type, f"{event.type}告警")
+
+        if actor and behavior:
+            return self._append_score_summary(f"{actor}因{behavior}触发{type_label}", extra)
+        if behavior:
+            return self._append_score_summary(f"检测到{behavior}，触发{type_label}", extra)
+        if actor:
+            return self._append_score_summary(f"{actor}触发{type_label}", extra)
+
         if event.type == "fight":
-            vis_score = extra.get("vis_score", "")
-            aud_score = extra.get("aud_score", "")
-            fuse = extra.get("fuse", "")
-            return f"检测到肢体冲突：视觉冲突分 {vis_score}，音频冲突分 {aud_score}，融合分 {fuse} 超过阈值"
+            parts = ["检测到肢体冲突"]
+            vis_score = extra.get("vis_score")
+            aud_score = extra.get("aud_score")
+            fuse = extra.get("fuse")
+            if vis_score is not None:
+                parts.append(f"视觉冲突分{vis_score}")
+            if aud_score is not None:
+                parts.append(f"音频冲突分{aud_score}")
+            if fuse is not None:
+                parts.append(f"融合分{fuse}")
+            return "，".join(parts)
         
         elif event.type == "intrusion":
             if face_match.startswith("member:"):
                 member_name = face_match.split(":")[1] if ":" in face_match else face_match
-                return f"会员 {member_name} 闯入危险区域"
-            return f"{face_match} 闯入危险区域"
+                return f"会员{member_name}闯入危险区域"
+            if face_match and face_match != "stranger":
+                return f"{face_match}闯入危险区域"
+            return "检测到人员闯入危险区域"
         
         elif event.type == "fire_smoke":
-            confidence = extra.get("confidence", "")
-            return f"检测到烟火，置信度 {confidence}"
+            confidence = extra.get("confidence")
+            if confidence:
+                return f"检测到烟火，置信度{confidence}"
+            return "检测到疑似烟火"
         
         elif event.type == "occupy":
             if face_match.startswith("member:"):
                 member_name = face_match.split(":")[1] if ":" in face_match else face_match
-                return f"会员 {member_name} 占用座位时间过长"
-            return f"{face_match} 占用座位时间过长"
+                return f"会员{member_name}占用座位时间过长"
+            if face_match and face_match != "stranger":
+                return f"{face_match}占用座位时间过长"
+            return "检测到座位占用时间过长"
         
         elif event.type == "fatigue":
-            ear_score = extra.get("ear_score", "")
-            mar_score = extra.get("mar_score", "")
+            ear_score = extra.get("ear_score")
+            mar_score = extra.get("mar_score")
             if ear_score:
                 return f"检测到疲劳：眼睛闭合，EAR={ear_score}"
             if mar_score:
                 return f"检测到疲劳：打哈欠，MAR={mar_score}"
-            return "检测到疲劳状态"
+            return "检测到疲劳学习状态"
         
         elif event.type == "face_recognition":
-            return f"人脸识别：{face_match}"
+            return f"人脸识别：{face_match}" if face_match else "人脸识别告警"
         
-        return f"{event.type} 告警"
+        return type_label
+
+    def _first_extra_text(self, extra: dict, keys: tuple[str, ...]) -> str:
+        for key in keys:
+            value = extra.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+        return ""
+
+    def _append_score_summary(self, message: str, extra: dict) -> str:
+        score_keys = ("confidence", "score", "vis_score", "aud_score", "fuse", "stay_seconds", "duration")
+        parts = [f"{key}={extra[key]}" for key in score_keys if extra.get(key) is not None]
+        if not parts:
+            return message
+        return f"{message}（检测依据：{', '.join(parts)}）"
 
     def _serialize_record(self, record) -> dict:
         extra = {}

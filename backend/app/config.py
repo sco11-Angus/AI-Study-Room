@@ -38,6 +38,11 @@ class Config:
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
     RTMP_SERVER = os.getenv("RTMP_SERVER", "49.233.71.82")
     RTMP_PORT = int(os.getenv("RTMP_PORT", 9090))
+    STREAM_CAMERA_ID = int(os.getenv("STREAM_CAMERA_ID", os.getenv("CAMERA_ID", 5)))
+    STREAM_NAME = os.getenv("STREAM_NAME", "").strip()
+    STREAM_URL = os.getenv("STREAM_URL", "").strip()
+    _stream_local_camera = os.getenv("STREAM_LOCAL_CAMERA", "").strip()
+    STREAM_LOCAL_CAMERA = int(_stream_local_camera) if _stream_local_camera else None
 
     # 疲劳检测 (§4.3)
     EAR_THRESH = float(os.getenv("EAR_THRESH", 0.2))  # 闭眼阈值
@@ -109,3 +114,9 @@ class Config:
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "clips")),
     )
     CLIP_MAX_DAYS = int(os.getenv("CLIP_MAX_DAYS", 7))           # 片段保留天数
+
+    # AI 日报 (任务书 G)
+    LLM_ENABLED = os.getenv("LLM_ENABLED", "true").lower() == "true"
+    LLM_API_URL = os.getenv("LLM_API_URL", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation")
+    LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+    LLM_MODEL = os.getenv("LLM_MODEL", "qwen-turbo")
