@@ -5,6 +5,7 @@
 import os
 import sys
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import numpy as np
 
@@ -119,6 +120,22 @@ def test_setup_rejects_empty_weight_file():
             raise AssertionError("empty fire_smoke.pt should be rejected")
 
 
+def test_setup_falls_back_to_legacy_yolov5_for_old_checkpoint():
+    with TemporaryDirectory() as tmp_dir:
+        weights = os.path.join(tmp_dir, "fire_smoke.pt")
+        with open(weights, "wb") as fh:
+            fh.write(b"legacy-yolov5")
+
+        plugin = FireSmokePlugin(weights_path=weights)
+        legacy_model = _FakeModel(conf=0.7, cls=1)
+        with patch("ultralytics.YOLO", side_effect=TypeError("old yolov5 checkpoint")):
+            with patch.object(plugin, "_load_legacy_yolov5", return_value=legacy_model) as load_legacy:
+                plugin.setup()
+
+        load_legacy.assert_called_once()
+        assert plugin._model is legacy_model
+
+
 if __name__ == "__main__":
     test_feed_requires_full_window_before_alarm()
     test_feed_rejects_single_high_confidence_flash()
@@ -126,3 +143,4 @@ if __name__ == "__main__":
     test_plugin_accepts_smoke_class()
     test_plugin_ignores_non_fire_smoke_classes()
     test_setup_rejects_empty_weight_file()
+    test_setup_falls_back_to_legacy_yolov5_for_old_checkpoint()

@@ -187,6 +187,50 @@
 - Remaining risks:
   - Real MySQL validation was not rerun in this Swagger-only session. The local virtual environment lacks the `mysql-connector-python` driver required by a `mysql+mysqlconnector://` URI.
   - `backend/model_weights/fire_smoke.pt` remains a 0-byte placeholder, so real video/model validation is still blocked.
+
+## Session 2026-07-10 Legacy Fire Smoke Model Graft
+
+- Goal: graft the root `fire-smoke-detect-yolov4-master` fire/smoke model into the current detector system.
+- Baseline:
+  - `.\init.cmd` passed.
+  - The project YOLOv4 `backup_fire/weights` file is 0 bytes.
+  - The usable model is `fire-smoke-detect-yolov4-master/yolov5/best.pt`, with classes `fire` and `smoke`.
+  - Modern `ultralytics.YOLO` rejects this checkpoint because it is an old YOLOv5 pickle.
+- Actions:
+  - Added `backend/app/detectors/legacy_yolov5.py` to load the local legacy YOLOv5 source tree, handle PyTorch `weights_only=False`, preprocess frames, run inference/NMS, and return a result object compatible with `FireSmokePlugin`.
+  - Updated `FireSmokePlugin.setup()` to try current Ultralytics first, then fall back to the legacy YOLOv5 adapter.
+  - Added fire/smoke legacy config knobs to `Config` and `.env.example`.
+  - Copied `fire-smoke-detect-yolov4-master/yolov5/best.pt` to local gitignored `backend/model_weights/fire_smoke.pt`.
+  - Added `scipy`, `tqdm`, and `mysql-connector-python` to backend requirements for legacy model loading and current MySQL URI support.
+  - Added a unit test that verifies old-checkpoint fallback wiring.
+- Validation:
+  - `py_compile` passed for config, fire_smoke, legacy_yolov5, and fire smoke tests.
+  - Real legacy checkpoint load passed; fallback model reported names `['fire', 'smoke']`.
+  - Demo image inference passed on `fire-smoke-detect-yolov4-master/result/result_demo.jpg`: fire confidence about 0.662 and smoke confidence about 0.311; 30-frame debounce emitted `AlarmEvent(type=fire_smoke)`.
+  - Focused fire smoke tests passed: 7 passed.
+  - Related backend regression passed: 44 passed, using a repo-local pytest temp directory because the system temp pytest directory is permission-blocked.
+  - Backend smoke passed with `ALL SMOKE TESTS PASSED`.
+  - Real DB verification passed with `TASK_E_REAL_DB_VERIFY_OK`, using a temporary `DATABASE_URI` built from `.env` `MYSQL_*` values.
+- Remaining risks:
+  - Final C3 acceptance still needs live RTMP/OBS fire-smoke video and negative reflection footage.
+  - Deployment must keep `fire-smoke-detect-yolov4-master/yolov5` available or configure `FIRE_SMOKE_LEGACY_YOLOV5_DIR`.
+  - The model artifact `backend/model_weights/fire_smoke.pt` is intentionally gitignored and must be provided on target machines.
+
+## Session 2026-07-10 Fire Smoke Image Test Scripts
+
+- Goal: wrap the two one-image fire/smoke test snippets into reusable Python scripts.
+- Actions:
+  - Added `backend/scripts/test_fire_smoke_image.py` for raw model detections.
+  - Added `backend/scripts/test_fire_smoke_alarm_image.py` for 30-frame debounce and `AlarmEvent(type=fire_smoke)` output.
+  - Both scripts default to `test_photos/fire_test.jpg` and accept a custom image path.
+  - Suppressed noisy legacy YOLOv5 fallback/log output so script output is easy to read.
+- Validation:
+  - `.\init.cmd` passed.
+  - `py_compile` passed for both scripts.
+  - Raw image script detected fire about 0.757, fire about 0.557, and smoke about 0.256 on `test_photos/fire_test.jpg`.
+  - Alarm image script emitted one `fire_smoke` event after 30 repeated frames.
+- Remaining risks:
+  - These scripts validate single-image behavior only; final C3 acceptance still needs real video/RTMP negative and positive cases.
   
 ## Session 2026-07-09 Task E Post-Merge Validation Repair
 

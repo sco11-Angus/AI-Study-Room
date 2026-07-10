@@ -8,11 +8,13 @@
       "description": "Initialize the local project as a Git repository and push the markdown project documents to GitHub.",
       "required_validation": [
         "./init.sh",
+        ".\\init.cmd",
         "git status --short",
         "git push -u origin main"
       ],
       "evidence": [
         "Created init.sh as the standard smoke-test entry point.",
+        "Added init.ps1 and init.cmd so Windows PowerShell can run the same smoke test through .\\init.cmd without depending on WSL or direct .sh execution.",
         "Created feature_list.json as the feature status source of truth.",
         "PowerShell-equivalent smoke test passed because this Windows host only exposes the WSL bash shim and has no installed WSL distribution.",
         "Merged remote main history without file conflicts.",
@@ -60,10 +62,16 @@
         "Backend related pytest passed: 38 passed for intrusion, fight, fight integration, face, alarm center, and fire smoke tests.",
         "Backend smoke test passed after restoring merge-damaged foundation pieces.",
         "PowerShell-equivalent init smoke passed with 15 markdown docs.",
-        "Added Swagger docs for fire/smoke integration endpoints: cameras, regions, alarms, snapshots, and WebSocket stream/alarm paths. Verified /apispec_1.json contains FireSmoke on 11 required operations."
+        "Added Swagger docs for fire/smoke integration endpoints: cameras, regions, alarms, snapshots, and WebSocket stream/alarm paths. Verified /apispec_1.json contains FireSmoke on 11 required operations.",
+        "Integrated the repository-local fire-smoke-detect-yolov4-master/yolov5 legacy YOLOv5 checkpoint through a backend compatibility adapter after confirming the YOLOv4 weight placeholder is empty and the usable model is yolov5/best.pt with fire/smoke classes.",
+        "Copied yolov5/best.pt locally to backend/model_weights/fire_smoke.pt; the file is non-empty and gitignored as a model artifact.",
+        "Real legacy checkpoint load passed through FireSmokePlugin fallback: Ultralytics YOLOv8 rejected the old YOLOv5 pickle, then LegacyYolov5FireSmokeModel loaded it with names ['fire', 'smoke'].",
+        "Demo image validation passed on fire-smoke-detect-yolov4-master/result/result_demo.jpg: model detected fire with confidence about 0.662 and smoke with confidence about 0.311; 30-frame debouncing produced AlarmEvent(type=fire_smoke).",
+        "Validation passed after integration: py_compile for config/fire_smoke/legacy_yolov5/test_fire_smoke, test_fire_smoke.py -> 7 passed, related backend regression -> 44 passed, backend smoke -> ALL SMOKE TESTS PASSED, real DB verify -> TASK_E_REAL_DB_VERIFY_OK."
       ],
       "blockers": [
-        "backend/model_weights/fire_smoke.pt is currently a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file."
+        "Full real RTMP/video fire-smoke acceptance still needs live camera or OBS footage with smoke/fire and non-fire reflection negative cases.",
+        "Deployment must keep fire-smoke-detect-yolov4-master/yolov5 available or set FIRE_SMOKE_LEGACY_YOLOV5_DIR to the bundled legacy YOLOv5 source directory; the local model weight backend/model_weights/fire_smoke.pt is intentionally gitignored."
       ]
     },
     {

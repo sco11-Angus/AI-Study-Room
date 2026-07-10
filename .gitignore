@@ -7,6 +7,8 @@ __pycache__/
 .venv/
 venv/
 *.db
+.runlogs/
+backend/.runlogs/
 
 # 模型权重与抓拍产物（大文件，不入库）
 backend/model_weights/*.pt
