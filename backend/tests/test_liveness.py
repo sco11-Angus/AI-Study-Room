@@ -250,6 +250,40 @@ class TestLivenessDetectorUnit:
         assert len(d._face_history) == 0
         assert len(d._ear_history) == 0
 
+    def test_frequency_score_range(self, detector):
+        """频域分数应在 [0, 1] 范围内。"""
+        gray = cv2_gray(make_face_crop())
+        score = detector._compute_frequency_score(gray)
+        assert 0.0 <= score <= 1.0, f"频域分数 {score} 超出 [0,1]"
+
+    def test_frequency_score_natural(self, detector):
+        """自然纹理应有较高频域分数。"""
+        gray = cv2_gray(make_face_crop())
+        score = detector._compute_frequency_score(gray)
+        assert score >= 0.5, f"自然纹理频域分={score:.3f}，应 >= 0.5"
+
+    def test_frequency_score_synthetic_lower(self, detector):
+        """合成纹理（带周期性噪声模拟GAN伪影）频域分应低于自然纹理。"""
+        # 自然图像
+        gray_natural = cv2_gray(make_face_crop())
+        score_natural = detector._compute_frequency_score(gray_natural)
+
+        # 叠加强周期性方格噪声模拟GAN网格伪影
+        h, w = gray_natural.shape
+        y, x = np.ogrid[:h, :w]
+        # 高频棋盘格 + 多方向正弦条纹，制造频谱中的异常能量峰
+        grid = (
+            np.sin(x * 0.6) * np.sin(y * 0.6) * 30
+            + np.sin(x * 0.4 + y * 0.3) * 20
+            + np.sin(x * 0.5 - y * 0.35) * 20
+        )
+        gray_synthetic = np.clip(gray_natural.astype(np.float64) + grid, 0, 255).astype(np.uint8)
+        score_synthetic = detector._compute_frequency_score(gray_synthetic)
+
+        assert score_synthetic < score_natural, (
+            f"合成纹理频域分={score_synthetic:.3f} 应 < 自然纹理={score_natural:.3f}"
+        )
+
 
 # ---- FaceDetector 集成测试 ----
 

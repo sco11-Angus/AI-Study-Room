@@ -28,14 +28,57 @@
 import { ref, watch, onMounted, nextTick } from 'vue'
 import VideoPlayer from './VideoPlayer.vue'
 
-const props = defineProps({ streamUrl: String })
+const props = defineProps({ streamUrl: String, previewPolygon: Array })
 const emit = defineEmits(['polygon'])
 const playerRef = ref(null)
 const canvasEl = ref(null)
 const currentPolygon = ref([])
 const polygons = ref([])
+const previewPolygons = ref([])
 const canvasWidth = ref(0)
 const canvasHeight = ref(0)
+
+const getPixelPoints = (normalized) => {
+  if (!normalized || !normalized.length || !canvasWidth.value || !canvasHeight.value) {
+    return []
+  }
+  return normalized.map(([x, y]) => [x * canvasWidth.value, y * canvasHeight.value])
+}
+
+const updatePreviewPolygons = () => {
+  previewPolygons.value = props.previewPolygon ? [getPixelPoints(props.previewPolygon)] : []
+}
+
+const redraw = () => {
+  const canvas = canvasEl.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+
+  const drawPath = (points, options = {}) => {
+    if (!points || !points.length) return
+    ctx.save()
+    ctx.strokeStyle = options.strokeStyle || '#67c23a'
+    ctx.fillStyle = options.fillStyle || 'rgba(103, 195, 58, 0.15)'
+    ctx.lineWidth = options.lineWidth || 2
+    ctx.setLineDash(options.lineDash || [])
+    ctx.beginPath()
+    points.forEach(([x, y], index) => {
+      if (index === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    })
+    if (options.closed) {
+      ctx.closePath()
+      ctx.fill()
+    }
+    ctx.stroke()
+    ctx.restore()
+  }
+
+  previewPolygons.value.forEach((polygon) => drawPath(polygon, { strokeStyle: '#f56c6c', fillStyle: 'rgba(245, 108, 108, 0.18)', lineWidth: 2, closed: true }))
+  polygons.value.forEach((polygon) => drawPath(polygon.points, { closed: true }))
+  drawPath(currentPolygon.value, { strokeStyle: '#409eff', lineDash: [6, 4] })
+}
 
 const updateCanvasSize = () => {
   const canvas = canvasEl.value
@@ -52,6 +95,7 @@ const updateCanvasSize = () => {
   canvas.style.height = '100%'
   canvasWidth.value = width
   canvasHeight.value = height
+  updatePreviewPolygons()
   redraw()
 }
 
@@ -59,6 +103,15 @@ watch(
   () => [playerRef.value?.videoWidth?.value, playerRef.value?.videoHeight?.value],
   updateCanvasSize,
   { immediate: true }
+)
+
+watch(
+  () => props.previewPolygon,
+  () => {
+    updatePreviewPolygons()
+    redraw()
+  },
+  { deep: true, immediate: true }
 )
 
 onMounted(() => {
@@ -106,36 +159,6 @@ const undoLastPoint = () => {
 const clearCurrentPolygon = () => {
   currentPolygon.value = []
   redraw()
-}
-
-const redraw = () => {
-  const canvas = canvasEl.value
-  if (!canvas) return
-  const ctx = canvas.getContext('2d')
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-  const drawPath = (points, options = {}) => {
-    if (!points || !points.length) return
-    ctx.save()
-    ctx.strokeStyle = options.strokeStyle || '#67c23a'
-    ctx.fillStyle = options.fillStyle || 'rgba(103, 195, 58, 0.15)'
-    ctx.lineWidth = options.lineWidth || 2
-    ctx.setLineDash(options.lineDash || [])
-    ctx.beginPath()
-    points.forEach(([x, y], index) => {
-      if (index === 0) ctx.moveTo(x, y)
-      else ctx.lineTo(x, y)
-    })
-    if (options.closed) {
-      ctx.closePath()
-      ctx.fill()
-    }
-    ctx.stroke()
-    ctx.restore()
-  }
-
-  polygons.value.forEach((polygon) => drawPath(polygon.points, { closed: true }))
-  drawPath(currentPolygon.value, { strokeStyle: '#409eff', lineDash: [6, 4] })
 }
 </script>
 
