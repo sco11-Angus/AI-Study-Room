@@ -13,7 +13,10 @@
           <span class="header-title">实时监控</span>
         </div>
         <div class="video-container">
-          <VideoPlayer :stream-url="streamUrl" />
+          <div class="video-overlay-wrapper" ref="videoWrapper">
+            <VideoPlayer :stream-url="streamUrl" />
+            <canvas ref="overlayCanvas" class="overlay-canvas" />
+          </div>
         </div>
       </div>
       
@@ -31,16 +34,30 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useAlarmStore } from '../store/alarm'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
-import { confirmAlarm, getCameras } from '../api'
+import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
+import { ElMessage } from 'element-plus'
 
 const DEFAULT_STREAM_URL = `http://${location.hostname}:8080/live?app=live&stream=test`
 const streamUrl = ref('')
-const alarms = ref([])
 const faceResult = ref(null)
-let wsAlarms, wsFace, reconnectTimer
+const regions = ref([])
+const videoWrapper = ref(null)
+const overlayCanvas = ref(null)
+const flashOn = ref(true)
+let wsAlarms = null
+let wsFace = null
+let reconnectTimer = null
+let flashTimer = null
+let beepTimer = null
+let audioContext = null
+const alarmStore = useAlarmStore()
+
+const alarms = computed(() => alarmStore.alarms)
+const activeRegions = computed(() => alarmStore.activeRegions)
 
 function resolveStreamUrl(rawUrl) {
   if (!rawUrl) {
@@ -56,11 +73,141 @@ function resolveStreamUrl(rawUrl) {
   return DEFAULT_STREAM_URL
 }
 
+function updateOverlaySize() {
+  nextTick(() => {
+    const canvas = overlayCanvas.value
+    const wrapper = videoWrapper.value
+    if (!canvas || !wrapper) return
+
+    const width = wrapper.clientWidth
+    const height = wrapper.clientHeight
+    if (!width || !height) return
+
+    canvas.width = width
+    canvas.height = height
+    canvas.style.width = `${width}px`
+    canvas.style.height = `${height}px`
+    drawOverlay()
+  })
+}
+
+function drawOverlay() {
+  const canvas = overlayCanvas.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  if (!regions.value || !regions.value.length) return
+
+  regions.value.forEach((region) => {
+    if (!Array.isArray(region.polygon) || !region.polygon.length) return
+    const points = region.polygon.map(([x, y]) => [x * canvas.width, y * canvas.height])
+    if (!points.length) return
+
+    const status = alarmStore.activeRegions[region.id] || 'green'
+    ctx.save()
+    ctx.beginPath()
+    points.forEach(([x, y], index) => {
+      if (index === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    })
+    ctx.closePath()
+
+    if (status === 'red') {
+      ctx.strokeStyle = '#f56c6c'
+      ctx.fillStyle = flashOn.value ? 'rgba(245, 108, 108, 0.25)' : 'rgba(245, 108, 108, 0.05)'
+    } else {
+      ctx.strokeStyle = '#67c23a'
+      ctx.fillStyle = 'rgba(103, 195, 58, 0.12)'
+    }
+    ctx.lineWidth = 3
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+
+    const label = region.name || `区域 ${region.id}`
+    const [lx, ly] = points[0]
+    if (typeof lx === 'number' && typeof ly === 'number') {
+      ctx.save()
+      ctx.font = '14px sans-serif'
+      const textWidth = ctx.measureText(label).width + 12
+      const textHeight = 22
+      ctx.fillStyle = status === 'red' ? '#fff2f2' : '#f7fff3'
+      ctx.strokeStyle = status === 'red' ? '#f56c6c' : '#67c23a'
+      ctx.lineWidth = 1.5
+      ctx.fillRect(lx, ly - textHeight, textWidth, textHeight)
+      ctx.strokeRect(lx, ly - textHeight, textWidth, textHeight)
+      ctx.fillStyle = '#303133'
+      ctx.fillText(label, lx + 6, ly - 6)
+      ctx.restore()
+    }
+  })
+}
+
+function initAudioContext() {
+  if (audioContext) return
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)()
+  } catch {
+    audioContext = null
+  }
+}
+
+function playBeep() {
+  if (!audioContext) {
+    initAudioContext()
+  }
+  if (!audioContext) return
+  if (audioContext.state === 'suspended') {
+    audioContext.resume().catch(() => {})
+  }
+
+  const oscillator = audioContext.createOscillator()
+  const gainNode = audioContext.createGain()
+  oscillator.type = 'sine'
+  oscillator.frequency.value = 880
+  gainNode.gain.value = 0.16
+  oscillator.connect(gainNode)
+  gainNode.connect(audioContext.destination)
+  oscillator.start()
+  oscillator.stop(audioContext.currentTime + 0.16)
+}
+
+function startBeepLoop() {
+  if (beepTimer) return
+  playBeep()
+  beepTimer = setInterval(() => {
+    if (Object.values(alarmStore.activeRegions).some((status) => status === 'red')) {
+      playBeep()
+    }
+  }, 1200)
+}
+
+function stopBeepLoop() {
+  if (beepTimer) {
+    clearInterval(beepTimer)
+    beepTimer = null
+  }
+}
+
+function fetchRegionsForCamera(cameraId) {
+  getRegions(cameraId)
+    .then((list) => {
+      regions.value = Array.isArray(list) ? list : []
+      alarmStore.initRegions(regions.value.map((r) => r.id))
+      updateOverlaySize()
+    })
+    .catch(() => {
+      regions.value = []
+    })
+}
+
 function fetchStreamUrl() {
   getCameras()
     .then((list) => {
       if (Array.isArray(list) && list.length) {
-        streamUrl.value = resolveStreamUrl(list[0].stream_url)
+        const camera = list[0]
+        streamUrl.value = resolveStreamUrl(camera.stream_url)
+        fetchRegionsForCamera(camera.id)
       } else {
         streamUrl.value = DEFAULT_STREAM_URL
       }
@@ -85,19 +232,74 @@ function connectFaceWs() {
   }
 }
 
+function connectAlarmWs() {
+  wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
+  wsAlarms.onmessage = (e) => {
+    const alarm = JSON.parse(e.data)
+    alarmStore.push(alarm)
+  }
+  wsAlarms.onclose = () => {
+    reconnectTimer = setTimeout(connectAlarmWs, 3000)
+  }
+}
+
+function onConfirm(id) {
+  confirmAlarm(id)
+    .then(() => {
+      alarmStore.confirm(id)
+    })
+    .catch((error) => {
+      ElMessage.error(error.message || '确认失败')
+    })
+}
+
 onMounted(() => {
   fetchStreamUrl()
-  wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
-  wsAlarms.onmessage = (e) => alarms.value.unshift(JSON.parse(e.data))
+  connectAlarmWs()
   connectFaceWs()
-})
-onUnmounted(() => {
-  wsAlarms && wsAlarms.close()
-  wsFace && wsFace.close()
-  reconnectTimer && clearTimeout(reconnectTimer)
+  getAlarms()
+    .then((list) => {
+      alarmStore.loadAlarms(list)
+    })
+    .catch(() => {
+      // ignore history load failures and rely on live push
+    })
+
+  flashTimer = setInterval(() => {
+    flashOn.value = !flashOn.value
+    drawOverlay()
+  }, 500)
+  window.addEventListener('resize', updateOverlaySize)
 })
 
-const onConfirm = (id) => confirmAlarm(id)
+onUnmounted(() => {
+  if (wsAlarms) wsAlarms.close()
+  if (wsFace) wsFace.close()
+  if (reconnectTimer) clearTimeout(reconnectTimer)
+  if (flashTimer) clearInterval(flashTimer)
+  stopBeepLoop()
+  window.removeEventListener('resize', updateOverlaySize)
+})
+
+watch([
+  () => regions.value,
+  () => alarmStore.activeRegions,
+  () => streamUrl.value,
+], () => {
+  updateOverlaySize()
+}, { deep: true })
+
+watch(
+  () => Object.values(alarmStore.activeRegions),
+  (states) => {
+    if (states.some((status) => status === 'red')) {
+      startBeepLoop()
+    } else {
+      stopBeepLoop()
+    }
+  },
+  { deep: true, immediate: true }
+)
 </script>
 
 <style scoped>
@@ -187,4 +389,18 @@ const onConfirm = (id) => confirmAlarm(id)
   justify-content: center;
   background: linear-gradient(135deg, #faf8f5 0%, #f5f0e8 100%);
 }
-</style>
+
+  .video-overlay-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  .overlay-canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }</style>

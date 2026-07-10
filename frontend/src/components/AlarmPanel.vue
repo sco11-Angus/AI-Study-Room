@@ -3,6 +3,7 @@
   <div class="alarm-panel">
     <el-table
       :data="alarms"
+      :row-class-name="rowClassName"
       style="width: 100%"
       :header-cell-style="{
         background: 'linear-gradient(135deg, #fff9f0 0%, #fff5e6 100%)',
@@ -13,9 +14,24 @@
       :cell-style="{ borderBottom: '1px solid #e8d5c4' }"
     >
       <el-table-column prop="type" label="类型" />
-      <el-table-column prop="region" label="防区/座位" />
+      <el-table-column label="防区/座位">
+        <template #default="{ row }">
+          <span>{{ row.region_id || '-' }}</span>
+          <small v-if="row.level === 0" class="weak-tag">弱提醒</small>
+        </template>
+      </el-table-column>
+      <el-table-column label="等级">
+        <template #default="{ row }">
+          <span>{{ row.level === 0 ? '弱提醒' : '告警' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="face_match" label="人脸匹配" />
-      <el-table-column prop="created_at" label="时间" />
+      <el-table-column label="时间">
+        <template #default="{ row }">
+          {{ formatTime(row.created_at) }}
+        </template>
+      </el-table-column>
+      <el-table-column prop="status" label="状态" />
       <el-table-column label="操作" width="120">
         <template #default="{ row }">
           <el-button
@@ -40,8 +56,20 @@
 </template>
 
 <script setup>
-defineProps({ alarms: { type: Array, default: () => [] } })
-defineEmits(['confirm'])
+import { computed } from 'vue'
+
+const props = defineProps({ alarms: { type: Array, default: () => [] } })
+const emit = defineEmits(['confirm'])
+
+const rowClassName = ({ row }) => {
+  return row.level === 0 ? 'alarm-row-weak' : ''
+}
+
+const formatTime = (value) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  return date.toLocaleString()
+}
 </script>
 
 <style scoped>
@@ -96,4 +124,21 @@ defineEmits(['confirm'])
   color: #909399;
   font-size: 16px;
 }
-</style>
+
+.alarm-row-weak {
+  background: #f7f7f7;
+}
+
+.alarm-row-weak .el-table__cell {
+  color: #909399;
+}
+
+.weak-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(144, 147, 153, 0.12);
+  color: #909399;
+  font-size: 12px;
+}</style>
