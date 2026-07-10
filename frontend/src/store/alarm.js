@@ -7,6 +7,15 @@ export const useAlarmStore = defineStore('alarm', {
     activeRegions: {} // { regionId: 'green' | 'red' }
   }),
   actions: {
+    // 加载历史告警，并为存在未确认的高等级告警设置红色状态
+    loadAlarms(alarms) {
+      this.alarms = Array.isArray(alarms) ? alarms.slice() : []
+      this.alarms.forEach((alarm) => {
+        if (alarm.level !== 0 && alarm.status !== 'confirmed') {
+          this.activeRegions[alarm.region_id] = 'red'
+        }
+      })
+    },
     // 添加告警，对应格子转红闪烁
     push(alarm) {
       this.alarms.unshift(alarm)

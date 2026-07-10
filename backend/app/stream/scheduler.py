@@ -21,17 +21,21 @@ logger = logging.getLogger(__name__)
 
 # FFmpeg 拉流参数（作用于 demuxer + 解码器）
 #  showall + ignore_err：H.264 参考帧缺失时容忍继续解码
+# 增加read_attempts解决packet read max attempts exceeded问题
 os.environ.setdefault(
     "OPENCV_FFMPEG_CAPTURE_OPTIONS",
     "rtsp_transport;tcp"
+    "|rtmp_live;live"
     "|analyzeduration;100000|probesize;50000"
     "|fflags;nobuffer+genpts"
     "|flags;low_delay"
     "|flags2;showall"
     "|err_detect;ignore_err"
     "|strict;unofficial"
-    "|max_delay;2000000",
+    "|max_delay;2000000"
+    "|read_attempts;10000",
 )
+os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "10000")
 
 # 目标分辨率（显示+推理共用）
 TARGET_W, TARGET_H = 640, 360
@@ -86,9 +90,19 @@ class StreamScheduler:
 
     # ---- 摄像头管理 ----
 
-    def add_camera(self, camera_id: int, stream_name: str) -> CameraStream:
-        """添加一路摄像头，返回其流状态对象。"""
-        stream_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name} live=1"
+    def add_camera(self, camera_id: int, stream_name: str, local_camera: int = None) -> CameraStream:
+        """添加一路摄像头，返回其流状态对象。
+        
+        Args:
+            camera_id: 摄像头ID（数据库中的ID）
+            stream_name: RTMP推流名称，如 "test"
+            local_camera: 本地摄像头索引（0=第一个USB摄像头），为None时使用RTMP流
+        """
+        if local_camera is not None:
+            stream_url = f"{local_camera}"
+            stream_name = f"local_{local_camera}"
+        else:
+            stream_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name}"
         cs = CameraStream(
             camera_id=camera_id,
             stream_name=stream_name,
@@ -96,7 +110,7 @@ class StreamScheduler:
         )
         with self._lock:
             self._cameras[camera_id] = cs
-        logger.info(f"[scheduler] 已添加摄像头: camera_id={camera_id}, stream={stream_name}")
+        logger.info(f"[scheduler] 已添加摄像头: camera_id={camera_id}, stream={stream_name}{', local' if local_camera is not None else ''}")
         return cs
 
     def remove_camera(self, camera_id: int) -> None:
@@ -150,103 +164,87 @@ class StreamScheduler:
 
     def _decode_loop(self, cs: CameraStream) -> None:
         """单路解码主循环：拉流 -> 缩放 -> 缓冲 -> 跳帧推理 -> 断流重连。"""
-        cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
-
-        if not cap.isOpened():
-            logger.error(f"[scheduler] camera_id={cs.camera_id} 无法打开流，3s 后重试")
-            logger.error(f"               URL: {cs.stream_url}")
-            cap.release()
-            time.sleep(3)
-            if not cs._stop_event.is_set():
-                cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
-
-        cs.online = cap.isOpened()
-        if cs.online:
-            w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            logger.info(f"[scheduler] camera_id={cs.camera_id} 拉流成功, 原始={w}x{h}")
-        else:
-            logger.error(f"[scheduler] camera_id={cs.camera_id} 重试失败")
-
-        # 超时控制：参考帧缺失时 5s 超时而非 30s
-        cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-
-        decode_ok = 0
-        decode_dropped = 0
-        _last_log_ts = time.time()
-        _consecutive_timeouts = 0
+        cap = None
 
         while not cs._stop_event.is_set():
-            ok, frame = cap.read()
-
-            if not ok:
-                _consecutive_timeouts += 1
-                # ---- 超时/断流：累计 3 次超时才重连 ----
-                if _consecutive_timeouts >= 3:
-                    if cs.online:
-                        logger.warning(
-                            f"[scheduler] camera_id={cs.camera_id} "
-                            f"{_consecutive_timeouts}次超时，重连"
-                        )
-                    cs.online = False
-                    cap.release()
-                    time.sleep(2)
-                    if cs._stop_event.is_set():
-                        return
-                    cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
+            if cap is None or not cap.isOpened():
+                logger.info(f"[scheduler] camera_id={cs.camera_id} 连接流: {cs.stream_url}")
+                cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
+                if cap.isOpened():
                     cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
-                    cs.online = cap.isOpened()
-                    if cs.online:
-                        logger.info(f"[scheduler] camera_id={cs.camera_id} 重连成功")
-                    cs._frame_idx = 0
-                    _consecutive_timeouts = 0
-                decode_dropped += 1
-                continue
+                    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    logger.info(f"[scheduler] camera_id={cs.camera_id} 拉流成功, 原始={w}x{h}")
+                    cs.online = True
+                else:
+                    logger.error(f"[scheduler] camera_id={cs.camera_id} 连接失败，5s后重试")
+                    cs.online = False
+                    if cap:
+                        cap.release()
+                        cap = None
+                    time.sleep(5)
+                    continue
 
+            decode_ok = 0
+            decode_dropped = 0
+            _last_log_ts = time.time()
             _consecutive_timeouts = 0
 
-            # ---- 流恢复 ----
-            if not cs.online:
-                logger.info(f"[scheduler] camera_id={cs.camera_id} 流已恢复, {frame.shape[1]}x{frame.shape[0]}")
-                cs.online = True
+            while not cs._stop_event.is_set() and cap.isOpened():
+                ok, frame = cap.read()
 
-            # ---- 缩放 ----
-            if frame.shape[1] != TARGET_W or frame.shape[0] != TARGET_H:
-                frame = cv2.resize(frame, (TARGET_W, TARGET_H))
+                if not ok:
+                    _consecutive_timeouts += 1
+                    if _consecutive_timeouts >= 5:
+                        if cs.online:
+                            logger.warning(
+                                f"[scheduler] camera_id={cs.camera_id} "
+                                f"{_consecutive_timeouts}次超时，重连"
+                            )
+                        cs.online = False
+                        cap.release()
+                        cap = None
+                        break
+                    decode_dropped += 1
+                    time.sleep(0.1)
+                    continue
 
-            # ---- 环形缓冲（编码为 JPEG 供 WebSocket 推送）----
-            ret, jpg = cv2.imencode(".jpg", frame, cs._encode_params)
-            if ret:
-                with cs._lock:
-                    cs.ring_buffer.append(jpg.tobytes())
-                with cs._new_frame:
-                    cs._new_frame.notify_all()
+                _consecutive_timeouts = 0
 
-            # ---- 跳帧推理 ----
-            if cs._frame_idx % Config.SKIP_N == 0:
-                f = Frame(
-                    image=frame, ts=time.time(),
-                    camera_id=cs.camera_id, frame_idx=cs._frame_idx,
-                )
-                self._engine.dispatch_async(f)
+                if frame.shape[1] != TARGET_W or frame.shape[0] != TARGET_H:
+                    frame = cv2.resize(frame, (TARGET_W, TARGET_H))
 
-            cs._frame_idx += 1
-            decode_ok += 1
+                ret, jpg = cv2.imencode(".jpg", frame, cs._encode_params)
+                if ret:
+                    with cs._lock:
+                        cs.ring_buffer.append(jpg.tobytes())
+                    with cs._new_frame:
+                        cs._new_frame.notify_all()
 
-            # 每 10s 输出解码统计
-            now = time.time()
-            if now - _last_log_ts >= 10:
-                total = decode_ok + decode_dropped
-                drop_pct = (decode_dropped / total * 100) if total else 0
-                logger.info(
-                    f"[scheduler] cam-{cs.camera_id} 解码统计: ok={decode_ok}, "
-                    f"dropped={decode_dropped}, 掉帧率={drop_pct:.1f}%"
-                )
-                decode_ok = 0
-                decode_dropped = 0
-                _last_log_ts = now
+                if cs._frame_idx % Config.SKIP_N == 0:
+                    f = Frame(
+                        image=frame, ts=time.time(),
+                        camera_id=cs.camera_id, frame_idx=cs._frame_idx,
+                    )
+                    self._engine.dispatch_async(f)
 
-        cap.release()
+                cs._frame_idx += 1
+                decode_ok += 1
+
+                now = time.time()
+                if now - _last_log_ts >= 10:
+                    total = decode_ok + decode_dropped
+                    drop_pct = (decode_dropped / total * 100) if total else 0
+                    logger.info(
+                        f"[scheduler] cam-{cs.camera_id} 解码统计: ok={decode_ok}, "
+                        f"dropped={decode_dropped}, 掉帧率={drop_pct:.1f}%"
+                    )
+                    decode_ok = 0
+                    decode_dropped = 0
+                    _last_log_ts = now
+
+        if cap:
+            cap.release()
         cs.online = False
         logger.info(f"[scheduler] camera_id={cs.camera_id} 解码线程退出")
 

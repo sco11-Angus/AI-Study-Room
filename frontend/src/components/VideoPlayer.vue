@@ -1,73 +1,35 @@
 <template>
-  <!-- 低延迟播放 HTTP-FLV 流 (§3.3) -->
   <div class="video-player-wrapper">
-    <video
-      ref="videoEl"
-      controls
-      autoplay
-      muted
-      class="video-player"
-    />
+    <canvas ref="canvasEl" class="video-player" />
 
-    <div v-if="!streamUrl || streamStatus" class="video-placeholder">
+    <div v-if="streamStatus" class="video-placeholder">
       <div class="placeholder-icon">📹</div>
-      <div class="placeholder-text">
-        {{ streamStatus || '等待视频流连接...' }}
-      </div>
+      <div class="placeholder-text">{{ streamStatus }}</div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import flvjs from 'flv.js'
 
 const props = defineProps({ streamUrl: String })
-const videoEl = ref(null)
-const streamStatus = ref('')
-const videoWidth = ref(0)
-const videoHeight = ref(0)
-let player = null
+const canvasEl = ref(null)
+const streamStatus = ref('连接视频流...')
+let ws = null
 let reconnectTimer = null
+let lastFrameTime = 0
 const RECONNECT_DELAY = 3000
+const FRAME_INTERVAL = 1000 / 15
 
-const resetStatus = (message = '') => {
-  streamStatus.value = message
-}
-
-let onLoadedMetadata = null
-let onVideoError = null
-
-const destroyPlayer = () => {
+const destroyWs = () => {
   if (reconnectTimer) {
     clearTimeout(reconnectTimer)
     reconnectTimer = null
   }
-
-  const el = videoEl.value
-  if (el) {
-    if (onLoadedMetadata) {
-      el.removeEventListener('loadedmetadata', onLoadedMetadata)
-      onLoadedMetadata = null
-    }
-    if (onVideoError) {
-      el.removeEventListener('error', onVideoError)
-      onVideoError = null
-    }
+  if (ws) {
+    ws.close()
+    ws = null
   }
-
-  if (!player) {
-    return
-  }
-
-  try {
-    player.unload()
-    player.detachMediaElement()
-    player.destroy()
-  } catch (error) {
-    // ignore destroy errors
-  }
-  player = null
 }
 
 const scheduleReconnect = () => {
@@ -75,94 +37,86 @@ const scheduleReconnect = () => {
     clearTimeout(reconnectTimer)
   }
   reconnectTimer = setTimeout(() => {
-    if (props.streamUrl) {
-      loadPlayer()
-    }
+    connectWs()
   }, RECONNECT_DELAY)
 }
 
-const updateVideoSize = () => {
-  const el = videoEl.value
-  if (!el) return
-  videoWidth.value = el.videoWidth || 0
-  videoHeight.value = el.videoHeight || 0
-}
-
-const handlePlayerError = () => {
-  resetStatus('视频流异常，3s 后重试...')
-  destroyPlayer()
-  scheduleReconnect()
-}
-
-const loadPlayer = () => {
-  destroyPlayer()
+const connectWs = () => {
+  destroyWs()
 
   if (!props.streamUrl) {
-    resetStatus('等待视频流连接...')
+    streamStatus.value = '等待视频流连接...'
     return
   }
 
-  if (!videoEl.value) {
-    resetStatus('等待视频组件挂载...')
-    return
+  const cameraId = props.streamUrl.match(/camera_id=(\d+)/)?.[1] || 5
+  const wsUrl = `ws://${location.host}/ws/video_feed/${cameraId}`
+
+  streamStatus.value = '连接视频流...'
+
+  ws = new WebSocket(wsUrl)
+  ws.binaryType = 'blob'
+
+  ws.onmessage = (event) => {
+    if (event.data instanceof Blob) {
+      const now = Date.now()
+      if (now - lastFrameTime < FRAME_INTERVAL) return
+      lastFrameTime = now
+
+      streamStatus.value = ''
+      const canvas = canvasEl.value
+      if (!canvas) return
+
+      const img = new Image()
+      img.onload = () => {
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        URL.revokeObjectURL(img.src)
+      }
+      img.src = URL.createObjectURL(event.data)
+    } else {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.status === 'offline') {
+          streamStatus.value = '摄像头离线'
+        } else if (data.status === 'no_camera') {
+          streamStatus.value = '摄像头不存在'
+        } else if (data.status === 'no_scheduler') {
+          streamStatus.value = '调度器未启动'
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
   }
 
-  if (!flvjs.isSupported()) {
-    resetStatus('当前浏览器不支持 flv.js')
-    return
+  ws.onclose = () => {
+    streamStatus.value = '视频流断开，3s 后重试...'
+    scheduleReconnect()
   }
 
-  resetStatus('连接视频流...')
-
-  player = flvjs.createPlayer({
-    type: 'flv',
-    isLive: true,
-    url: props.streamUrl,
-  })
-
-  player.attachMediaElement(videoEl.value)
-  player.load()
-
-  player.on(flvjs.Events.ERROR, handlePlayerError)
-
-  onLoadedMetadata = updateVideoSize
-  onVideoError = handlePlayerError
-
-  videoEl.value.addEventListener('loadedmetadata', onLoadedMetadata)
-  videoEl.value.addEventListener('error', onVideoError)
-}
-
-const reconnect = () => {
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer)
-    reconnectTimer = null
+  ws.onerror = () => {
+    streamStatus.value = '视频流异常，3s 后重试...'
+    scheduleReconnect()
   }
-  loadPlayer()
 }
 
 watch(
   () => props.streamUrl,
-  (newUrl, oldUrl) => {
-    if (newUrl !== oldUrl) {
-      loadPlayer()
-    }
+  () => {
+    connectWs()
   }
 )
 
 onMounted(() => {
-  if (props.streamUrl) {
-    loadPlayer()
-  }
+  connectWs()
 })
 
 onUnmounted(() => {
-  destroyPlayer()
+  destroyWs()
 })
 
 defineExpose({
-  videoWidth,
-  videoHeight,
-  reconnect,
   streamStatus,
 })
 </script>

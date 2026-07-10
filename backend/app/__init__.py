@@ -76,7 +76,7 @@ def create_app(config: type[Config] = Config) -> Flask:
                     "camera_id": {"type": "integer", "example": 0},
                     "type": {
                         "type": "string",
-                        "enum": ["intrusion", "fire_smoke", "occupy", "fatigue", "fight"],
+                        "enum": ["intrusion", "fire_smoke", "occupy", "fatigue", "fight", "face_recognition"],
                         "example": "fire_smoke",
                     },
                     "snapshot_url": {"type": "string", "example": "/api/alarms/snapshots/fire_smoke_1.jpg"},

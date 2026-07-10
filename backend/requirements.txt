@@ -8,7 +8,7 @@ numpy>=2.0
 ultralytics==8.*         # YOLOv8n (§5.3, §6.1)
 dlib==19.24.*            # 68 点人脸模型 (§4.3, §7.2)
 SQLAlchemy==2.0.*
-pymysql==1.1.*
-python-dotenv==1.0.*
+PyMySQL==1.1.*             # MySQL/MariaDB driver for DATABASE_URI=mysql+pymysql://...
+python-dotenv==1.0.*       # Optional .env loading helper
 requests==2.31.*         # 钉钉 Webhook (§7.4)
 gunicorn==21.*           # 部署 (§11)

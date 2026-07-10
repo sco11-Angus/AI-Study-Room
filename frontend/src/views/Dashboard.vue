@@ -1,6 +1,5 @@
 <template>
   <div class="page">
-    <!-- 人脸识别结果 — 顶部醒目横幅 -->
     <div v-if="faceResult" class="face-banner" :class="faceResult.type">
       <span v-if="faceResult.type === 'member'">欢迎你, {{ faceResult.name }}</span>
       <span v-else>陌生人</span>
@@ -12,8 +11,9 @@
           <span class="header-icon">📹</span>
           <span class="header-title">实时监控</span>
         </div>
-        <div class="video-container">
-          <VideoPlayer :stream-url="streamUrl" />
+        <div class="video-container" ref="videoWrapper">
+          <VideoPlayer ref="playerRef" :stream-url="streamUrl" />
+          <canvas ref="overlayCanvas" class="overlay-canvas" />
         </div>
       </div>
       
@@ -31,43 +31,171 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
-import { confirmAlarm, getCameras } from '../api'
+import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
+import { useAlarmStore } from '../store/alarm'
 
-const DEFAULT_STREAM_URL = `http://${location.hostname}:8080/live?app=live&stream=test`
-const streamUrl = ref('')
+const streamUrl = ref('camera_id=5')
 const alarms = ref([])
 const faceResult = ref(null)
-let wsAlarms, wsFace, reconnectTimer
+const regions = ref([])
+const videoWrapper = ref(null)
+const overlayCanvas = ref(null)
+const playerRef = ref(null)
+const flashOn = ref(true)
+let wsAlarms, wsFace, reconnectTimer, beepTimer, audioContext
 
-function resolveStreamUrl(rawUrl) {
-  if (!rawUrl) {
-    return DEFAULT_STREAM_URL
-  }
-  if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
-    return rawUrl
-  }
-  const match = rawUrl.match(/\/live\/(.+?)(?:\s|$|\?)/)
-  if (match) {
-    return `http://${location.hostname}:8080/live?app=live&stream=${match[1]}`
-  }
-  return DEFAULT_STREAM_URL
-}
+const alarmStore = useAlarmStore()
 
 function fetchStreamUrl() {
   getCameras()
     .then((list) => {
       if (Array.isArray(list) && list.length) {
-        streamUrl.value = resolveStreamUrl(list[0].stream_url)
+        const cloudCamera = list.find(c => c.stream_url.includes('49.233.71.82'))
+        if (cloudCamera) {
+          streamUrl.value = `camera_id=${cloudCamera.id}`
+          fetchRegionsForCamera(cloudCamera.id)
+        } else {
+          streamUrl.value = `camera_id=${list[0].id}`
+          fetchRegionsForCamera(list[0].id)
+        }
       } else {
-        streamUrl.value = DEFAULT_STREAM_URL
+        streamUrl.value = 'camera_id=5'
       }
     })
     .catch(() => {
-      streamUrl.value = DEFAULT_STREAM_URL
+      streamUrl.value = 'camera_id=5'
     })
+}
+
+function fetchRegionsForCamera(cameraId) {
+  getRegions(cameraId)
+    .then((list) => {
+      regions.value = Array.isArray(list) ? list : []
+      alarmStore.initRegions(regions.value.map((r) => r.id))
+      updateOverlaySize()
+    })
+    .catch(() => {
+      regions.value = []
+    })
+}
+
+function updateOverlaySize() {
+  nextTick(() => {
+    const canvas = overlayCanvas.value
+    const wrapper = videoWrapper.value
+    if (!canvas || !wrapper) return
+
+    const width = wrapper.clientWidth
+    const height = wrapper.clientHeight
+    if (!width || !height) return
+
+    canvas.width = width
+    canvas.height = height
+    canvas.style.width = `${width}px`
+    canvas.style.height = `${height}px`
+    drawOverlay()
+  })
+}
+
+function drawOverlay() {
+  const canvas = overlayCanvas.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  if (!regions.value || !regions.value.length) return
+
+  regions.value.forEach((region) => {
+    if (!Array.isArray(region.polygon) || !region.polygon.length) return
+    const points = region.polygon.map(([x, y]) => [x * canvas.width, y * canvas.height])
+    if (!points.length) return
+
+    const status = alarmStore.activeRegions[region.id] || 'green'
+    ctx.save()
+    ctx.beginPath()
+    points.forEach(([x, y], index) => {
+      if (index === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    })
+    ctx.closePath()
+
+    if (status === 'red') {
+      ctx.strokeStyle = '#f56c6c'
+      ctx.fillStyle = flashOn.value ? 'rgba(245, 108, 108, 0.25)' : 'rgba(245, 108, 108, 0.05)'
+    } else {
+      ctx.strokeStyle = '#67c23a'
+      ctx.fillStyle = 'rgba(103, 195, 58, 0.12)'
+    }
+    ctx.lineWidth = 3
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+
+    const label = region.name || `区域 ${region.id}`
+    const [lx, ly] = points[0]
+    if (typeof lx === 'number' && typeof ly === 'number') {
+      ctx.save()
+      ctx.font = '14px sans-serif'
+      const textWidth = ctx.measureText(label).width + 12
+      const textHeight = 22
+      ctx.fillStyle = status === 'red' ? '#fff2f2' : '#f7fff3'
+      ctx.strokeStyle = status === 'red' ? '#f56c6c' : '#67c23a'
+      ctx.lineWidth = 1.5
+      ctx.fillRect(lx, ly - textHeight, textWidth, textHeight)
+      ctx.strokeRect(lx, ly - textHeight, textWidth, textHeight)
+      ctx.fillStyle = '#303133'
+      ctx.fillText(label, lx + 6, ly - 6)
+      ctx.restore()
+    }
+  })
+}
+
+function initAudioContext() {
+  if (audioContext) return
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)()
+  } catch {
+    audioContext = null
+  }
+}
+
+function playBeep() {
+  if (!audioContext) {
+    initAudioContext()
+  }
+  if (!audioContext) return
+  if (audioContext.state === 'suspended') {
+    audioContext.resume().catch(() => {})
+  }
+
+  const oscillator = audioContext.createOscillator()
+  const gainNode = audioContext.createGain()
+  oscillator.type = 'sine'
+  oscillator.frequency.value = 880
+  gainNode.gain.value = 0.16
+  oscillator.connect(gainNode)
+  gainNode.connect(audioContext.destination)
+  oscillator.start()
+  oscillator.stop(audioContext.currentTime + 0.16)
+}
+
+function startBeepLoop() {
+  if (beepTimer) return
+  playBeep()
+  beepTimer = setInterval(() => {
+    if (Object.values(alarmStore.activeRegions).some((status) => status === 'red')) {
+      playBeep()
+    }
+  }, 1200)
+}
+
+function stopBeepLoop() {
+  if (beepTimer) {
+    clearInterval(beepTimer)
+    beepTimer = null
+  }
 }
 
 function connectFaceWs() {
@@ -85,19 +213,60 @@ function connectFaceWs() {
   }
 }
 
+watch(
+  () => alarmStore.activeRegions,
+  () => {
+    drawOverlay()
+    const hasRed = Object.values(alarmStore.activeRegions).some((status) => status === 'red')
+    if (hasRed) {
+      startBeepLoop()
+    } else {
+      stopBeepLoop()
+    }
+  },
+  { deep: true }
+)
+
+watch(flashOn, () => {
+  drawOverlay()
+})
+
+let flashTimer = setInterval(() => {
+  flashOn.value = !flashOn.value
+}, 500)
+
 onMounted(() => {
   fetchStreamUrl()
+  getAlarms().then((list) => {
+    alarms.value = Array.isArray(list) ? list : []
+    alarmStore.loadAlarms(alarms.value)
+  })
   wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
-  wsAlarms.onmessage = (e) => alarms.value.unshift(JSON.parse(e.data))
+  wsAlarms.onmessage = (e) => {
+    const alarm = JSON.parse(e.data)
+    alarms.value.unshift(alarm)
+    alarmStore.push(alarm)
+  }
   connectFaceWs()
+  window.addEventListener('resize', updateOverlaySize)
 })
+
 onUnmounted(() => {
   wsAlarms && wsAlarms.close()
   wsFace && wsFace.close()
   reconnectTimer && clearTimeout(reconnectTimer)
+  stopBeepLoop()
+  flashTimer && clearInterval(flashTimer)
+  window.removeEventListener('resize', updateOverlaySize)
+  if (audioContext) {
+    audioContext.close()
+  }
 })
 
-const onConfirm = (id) => confirmAlarm(id)
+const onConfirm = (id) => {
+  confirmAlarm(id)
+  alarmStore.confirm(id)
+}
 </script>
 
 <style scoped>
@@ -186,5 +355,13 @@ const onConfirm = (id) => confirmAlarm(id)
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #faf8f5 0%, #f5f0e8 100%);
+  position: relative;
+}
+
+.overlay-canvas {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  pointer-events: none;
 }
 </style>

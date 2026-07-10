@@ -64,7 +64,7 @@ pipeline {
                     cd backend
                     python3 -m venv ${VENV_DIR}
                     . ${VENV_DIR}/bin/activate
-                    pip install --no-cache-dir -r requirements.txt
+                    pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
                 '''
                 // 模型权重不入库，CI 额外下载
                 sh '''
