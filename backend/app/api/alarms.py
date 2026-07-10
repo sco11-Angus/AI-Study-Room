@@ -8,7 +8,7 @@ from flasgger import swag_from
 from ..config import Config
 
 bp = Blueprint("alarms", __name__, url_prefix="/api/alarms")
-ALLOWED_ALARM_TYPES = {"intrusion", "fire_smoke", "occupy", "fatigue", "fight"}
+ALLOWED_ALARM_TYPES = {"intrusion", "fire_smoke", "occupy", "fatigue", "fight", "face_recognition"}
 
 
 @bp.get("")

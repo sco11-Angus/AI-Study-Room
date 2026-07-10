@@ -35,15 +35,13 @@ const streaming = ref(false);
 let ws = null;
 let reconnectTimer = null;
 
-const WS_BASE = "ws://localhost:5000";
-
 const connect = () => {
   if (ws) {
     ws.close();
     ws = null;
   }
 
-  const url = `${WS_BASE}/ws/video_feed/${cameraId.value}`;
+  const url = `ws://${location.host}/ws/video_feed/${cameraId.value}`;
   statusText.value = "连接中...";
   streaming.value = false;
 

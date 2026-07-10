@@ -1,6 +1,5 @@
 <template>
   <div class="page">
-    <!-- 人脸识别结果 — 顶部醒目横幅 -->
     <div v-if="faceResult" class="face-banner" :class="faceResult.type">
       <span v-if="faceResult.type === 'member'">欢迎你, {{ faceResult.name }}</span>
       <span v-else>陌生人</span>
@@ -12,11 +11,9 @@
           <span class="header-icon">📹</span>
           <span class="header-title">实时监控</span>
         </div>
-        <div class="video-container">
-          <div class="video-overlay-wrapper" ref="videoWrapper">
-            <VideoPlayer :stream-url="streamUrl" />
-            <canvas ref="overlayCanvas" class="overlay-canvas" />
-          </div>
+        <div class="video-container" ref="videoWrapper">
+          <VideoPlayer ref="playerRef" :stream-url="streamUrl" />
+          <canvas ref="overlayCanvas" class="overlay-canvas" />
         </div>
       </div>
       
@@ -34,43 +31,55 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { useAlarmStore } from '../store/alarm'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
-import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
-import { ElMessage } from 'element-plus'
+import { confirmAlarm, getCameras, getRegions } from '../api'
+import { useAlarmStore } from '../store/alarm'
 
-const DEFAULT_STREAM_URL = `http://${location.hostname}:8080/live?app=live&stream=test`
-const streamUrl = ref('')
+const streamUrl = ref('camera_id=5')
+const alarms = ref([])
 const faceResult = ref(null)
 const regions = ref([])
 const videoWrapper = ref(null)
 const overlayCanvas = ref(null)
+const playerRef = ref(null)
 const flashOn = ref(true)
-let wsAlarms = null
-let wsFace = null
-let reconnectTimer = null
-let flashTimer = null
-let beepTimer = null
-let audioContext = null
+let wsAlarms, wsFace, reconnectTimer, beepTimer, audioContext
+
 const alarmStore = useAlarmStore()
 
-const alarms = computed(() => alarmStore.alarms)
-const activeRegions = computed(() => alarmStore.activeRegions)
+function fetchStreamUrl() {
+  getCameras()
+    .then((list) => {
+      if (Array.isArray(list) && list.length) {
+        const cloudCamera = list.find(c => c.stream_url.includes('49.233.71.82'))
+        if (cloudCamera) {
+          streamUrl.value = `camera_id=${cloudCamera.id}`
+          fetchRegionsForCamera(cloudCamera.id)
+        } else {
+          streamUrl.value = `camera_id=${list[0].id}`
+          fetchRegionsForCamera(list[0].id)
+        }
+      } else {
+        streamUrl.value = 'camera_id=5'
+      }
+    })
+    .catch(() => {
+      streamUrl.value = 'camera_id=5'
+    })
+}
 
-function resolveStreamUrl(rawUrl) {
-  if (!rawUrl) {
-    return DEFAULT_STREAM_URL
-  }
-  if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) {
-    return rawUrl
-  }
-  const match = rawUrl.match(/\/live\/(.+?)(?:\s|$|\?)/)
-  if (match) {
-    return `http://${location.hostname}:8080/live?app=live&stream=${match[1]}`
-  }
-  return DEFAULT_STREAM_URL
+function fetchRegionsForCamera(cameraId) {
+  getRegions(cameraId)
+    .then((list) => {
+      regions.value = Array.isArray(list) ? list : []
+      alarmStore.initRegions(regions.value.map((r) => r.id))
+      updateOverlaySize()
+    })
+    .catch(() => {
+      regions.value = []
+    })
 }
 
 function updateOverlaySize() {
@@ -189,34 +198,6 @@ function stopBeepLoop() {
   }
 }
 
-function fetchRegionsForCamera(cameraId) {
-  getRegions(cameraId)
-    .then((list) => {
-      regions.value = Array.isArray(list) ? list : []
-      alarmStore.initRegions(regions.value.map((r) => r.id))
-      updateOverlaySize()
-    })
-    .catch(() => {
-      regions.value = []
-    })
-}
-
-function fetchStreamUrl() {
-  getCameras()
-    .then((list) => {
-      if (Array.isArray(list) && list.length) {
-        const camera = list[0]
-        streamUrl.value = resolveStreamUrl(camera.stream_url)
-        fetchRegionsForCamera(camera.id)
-      } else {
-        streamUrl.value = DEFAULT_STREAM_URL
-      }
-    })
-    .catch(() => {
-      streamUrl.value = DEFAULT_STREAM_URL
-    })
-}
-
 function connectFaceWs() {
   wsFace = new WebSocket(`ws://${location.host}/ws/face_recognition`)
   wsFace.onmessage = (e) => {
@@ -232,74 +213,56 @@ function connectFaceWs() {
   }
 }
 
-function connectAlarmWs() {
-  wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
-  wsAlarms.onmessage = (e) => {
-    const alarm = JSON.parse(e.data)
-    alarmStore.push(alarm)
-  }
-  wsAlarms.onclose = () => {
-    reconnectTimer = setTimeout(connectAlarmWs, 3000)
-  }
-}
-
-function onConfirm(id) {
-  confirmAlarm(id)
-    .then(() => {
-      alarmStore.confirm(id)
-    })
-    .catch((error) => {
-      ElMessage.error(error.message || '确认失败')
-    })
-}
-
-onMounted(() => {
-  fetchStreamUrl()
-  connectAlarmWs()
-  connectFaceWs()
-  getAlarms()
-    .then((list) => {
-      alarmStore.loadAlarms(list)
-    })
-    .catch(() => {
-      // ignore history load failures and rely on live push
-    })
-
-  flashTimer = setInterval(() => {
-    flashOn.value = !flashOn.value
-    drawOverlay()
-  }, 500)
-  window.addEventListener('resize', updateOverlaySize)
-})
-
-onUnmounted(() => {
-  if (wsAlarms) wsAlarms.close()
-  if (wsFace) wsFace.close()
-  if (reconnectTimer) clearTimeout(reconnectTimer)
-  if (flashTimer) clearInterval(flashTimer)
-  stopBeepLoop()
-  window.removeEventListener('resize', updateOverlaySize)
-})
-
-watch([
-  () => regions.value,
-  () => alarmStore.activeRegions,
-  () => streamUrl.value,
-], () => {
-  updateOverlaySize()
-}, { deep: true })
-
 watch(
-  () => Object.values(alarmStore.activeRegions),
-  (states) => {
-    if (states.some((status) => status === 'red')) {
+  () => alarmStore.activeRegions,
+  () => {
+    drawOverlay()
+    const hasRed = Object.values(alarmStore.activeRegions).some((status) => status === 'red')
+    if (hasRed) {
       startBeepLoop()
     } else {
       stopBeepLoop()
     }
   },
-  { deep: true, immediate: true }
+  { deep: true }
 )
+
+watch(flashOn, () => {
+  drawOverlay()
+})
+
+let flashTimer = setInterval(() => {
+  flashOn.value = !flashOn.value
+}, 500)
+
+onMounted(() => {
+  fetchStreamUrl()
+  wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
+  wsAlarms.onmessage = (e) => {
+    const alarm = JSON.parse(e.data)
+    alarms.value.unshift(alarm)
+    alarmStore.push(alarm)
+  }
+  connectFaceWs()
+  window.addEventListener('resize', updateOverlaySize)
+})
+
+onUnmounted(() => {
+  wsAlarms && wsAlarms.close()
+  wsFace && wsFace.close()
+  reconnectTimer && clearTimeout(reconnectTimer)
+  stopBeepLoop()
+  flashTimer && clearInterval(flashTimer)
+  window.removeEventListener('resize', updateOverlaySize)
+  if (audioContext) {
+    audioContext.close()
+  }
+})
+
+const onConfirm = (id) => {
+  confirmAlarm(id)
+  alarmStore.confirm(id)
+}
 </script>
 
 <style scoped>
@@ -388,19 +351,13 @@ watch(
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #faf8f5 0%, #f5f0e8 100%);
+  position: relative;
 }
 
-  .video-overlay-wrapper {
-    position: relative;
-    width: 100%;
-    height: 100%;
-  }
-
-  .overlay-canvas {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-  }</style>
+.overlay-canvas {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  pointer-events: none;
+}
+</style>

@@ -201,3 +201,34 @@
 
 - 下一步最佳动作：提供真实 `fire_smoke.pt` 后运行后端服务，用打火机/烟雾视频和反光视频完成 C3 真实视频验收。
 
+### Session 006
+
+- 日期：2026-07-10
+
+- 本轮目标：测试任务 E 抓拍功能，修复 scheduler camera_id 与数据库外键不匹配问题。
+
+- 已完成：
+  - 启动后端服务，验证 API `/api/alarms` 正常响应。
+  - 发现 `backend/run.py` 中 scheduler 使用 `camera_id=0`，但数据库 `camera.id` 从 1 开始，且 `AlarmEvent.camera_id` 是外键约束，导致抓拍告警无法持久化。
+  - 修复 `backend/run.py` 将 `scheduler.add_camera(camera_id=0, ...)` 修改为 `camera_id=5`，匹配数据库中指向云服务器 RTMP 流的摄像头记录。
+  - 重新启动后端服务，验证 scheduler 使用正确的 camera_id。
+  - 运行完整后端测试套件：43 passed，无回归问题。
+
+- 运行过的验证：
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`：43 passed。
+  - API 验证：`GET /api/alarms` 返回 200，包含 20 条历史告警记录。
+
+- 已记录证据：已修复 `backend/run.py` 的 camera_id 配置问题。
+
+- 提交记录：`3552cb2 fix: use correct camera_id=5 for scheduler to match database`
+
+- 更新过的文件或工件：
+  - `backend/run.py`
+  - `openspec/progress/progress.md`
+
+- 已知风险或未解决问题：
+  - RTMP 云服务器流（49.233.71.82:9090）连接超时，需要 OBS 推流才能验证真实抓拍功能。
+  - fire_smoke 权重文件仍为 0 字节占位。
+
+- 下一步最佳动作：启动 OBS 推流到云服务器后，调用 `POST /api/alarms/test-capture` 验证真实抓拍功能。
+
