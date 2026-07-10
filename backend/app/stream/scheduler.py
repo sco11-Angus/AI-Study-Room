@@ -149,8 +149,16 @@ class StreamScheduler:
     # ---- 解码主循环 ----
 
     def _decode_loop(self, cs: CameraStream) -> None:
-        """单路解码主循环：拉流 -> 缩放 -> 缓冲 -> 跳帧推理 -> 断流重连。"""
-        cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
+        """单路解码主循环：拉流 -> 缩放 -> 缓冲 -> 跳帧推理 -> 断流重连。
+
+        重连策略：指数退避，初始 1s，翻倍到最大 30s，成功后重置。
+        """
+        # RTMP URL 追加握手超时限制
+        stream_url = cs.stream_url
+        if " stimeout=" not in stream_url:
+            stream_url += " stimeout=5"
+
+        cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
 
         if not cap.isOpened():
             logger.error(f"[scheduler] camera_id={cs.camera_id} 无法打开流，3s 后重试")
@@ -158,7 +166,7 @@ class StreamScheduler:
             cap.release()
             time.sleep(3)
             if not cs._stop_event.is_set():
-                cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
+                cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
 
         cs.online = cap.isOpened()
         if cs.online:
@@ -168,42 +176,64 @@ class StreamScheduler:
         else:
             logger.error(f"[scheduler] camera_id={cs.camera_id} 重试失败")
 
-        # 超时控制：参考帧缺失时 5s 超时而非 30s
+        # 超时控制：读取 5s、打开 5s（默认 30s 太长）
         cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+        try:
+            cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+        except Exception:
+            pass  # 部分 OpenCV 版本不支持此属性
 
         decode_ok = 0
         decode_dropped = 0
         _last_log_ts = time.time()
         _consecutive_timeouts = 0
 
+        # 指数退避状态
+        _reconnect_delay = 1  # 当前重连延迟（秒），成功后重置
+
         while not cs._stop_event.is_set():
             ok, frame = cap.read()
 
             if not ok:
                 _consecutive_timeouts += 1
-                # ---- 超时/断流：累计 3 次超时才重连 ----
-                if _consecutive_timeouts >= 3:
+                # ---- 连续超时达阈值 → 重连 ----
+                if _consecutive_timeouts >= 5:
                     if cs.online:
                         logger.warning(
                             f"[scheduler] camera_id={cs.camera_id} "
-                            f"{_consecutive_timeouts}次超时，重连"
+                            f"{_consecutive_timeouts}次超时, {_reconnect_delay}s后重连"
                         )
                     cs.online = False
                     cap.release()
-                    time.sleep(2)
+                    time.sleep(_reconnect_delay)
                     if cs._stop_event.is_set():
                         return
-                    cap = cv2.VideoCapture(cs.stream_url, cv2.CAP_FFMPEG)
+                    cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
                     cap.set(cv2.CAP_PROP_READ_TIMEOUT_MSEC, 5000)
+                    try:
+                        cap.set(cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 5000)
+                    except Exception:
+                        pass
                     cs.online = cap.isOpened()
                     if cs.online:
-                        logger.info(f"[scheduler] camera_id={cs.camera_id} 重连成功")
+                        logger.info(
+                            f"[scheduler] camera_id={cs.camera_id} "
+                            f"重连成功 (尝试间隔={_reconnect_delay}s)"
+                        )
+                        _reconnect_delay = 1  # 成功后重置退避
+                    else:
+                        logger.debug(
+                            f"[scheduler] camera_id={cs.camera_id} "
+                            f"重连失败, 下次={min(_reconnect_delay * 2, 30)}s"
+                        )
+                        _reconnect_delay = min(_reconnect_delay * 2, 30)
                     cs._frame_idx = 0
                     _consecutive_timeouts = 0
                 decode_dropped += 1
                 continue
 
             _consecutive_timeouts = 0
+            _reconnect_delay = 1  # 正常读取时重置退避
 
             # ---- 流恢复 ----
             if not cs.online:

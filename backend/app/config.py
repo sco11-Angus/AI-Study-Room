@@ -84,8 +84,15 @@ class Config:
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "snapshots")),
     )
 
-    # 活体检测
+    # 活体检测（主动/被动信号分离融合）
     LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "true").lower() == "true"
-    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.5))
+    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.50))
     LIVENESS_HISTORY_SIZE = int(os.getenv("LIVENESS_HISTORY_SIZE", 30))
     LIVENESS_EAR_BLINK_THRESH = float(os.getenv("LIVENESS_EAR_BLINK_THRESH", 0.25))
+
+    # EMA 平滑系数（0~1，越大响应越快，越小越平滑）
+    LIVENESS_EMA_ALPHA = float(os.getenv("LIVENESS_EMA_ALPHA", 0.3))
+
+    # 反欺骗模型 Ensemble 权重
+    ANTISPOOF_WEIGHT_ONNX = float(os.getenv("ANTISPOOF_WEIGHT_ONNX", 0.5))
+    ANTISPOOF_WEIGHT_PTH = float(os.getenv("ANTISPOOF_WEIGHT_PTH", 0.5))
