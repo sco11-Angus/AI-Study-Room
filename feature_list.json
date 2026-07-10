@@ -8,11 +8,13 @@
       "description": "Initialize the local project as a Git repository and push the markdown project documents to GitHub.",
       "required_validation": [
         "./init.sh",
+        ".\\init.cmd",
         "git status --short",
         "git push -u origin main"
       ],
       "evidence": [
         "Created init.sh as the standard smoke-test entry point.",
+        "Added init.ps1 and init.cmd so Windows PowerShell can run the same smoke test through .\\init.cmd without depending on WSL or direct .sh execution.",
         "Created feature_list.json as the feature status source of truth.",
         "PowerShell-equivalent smoke test passed because this Windows host only exposes the WSL bash shim and has no installed WSL distribution.",
         "Merged remote main history without file conflicts.",

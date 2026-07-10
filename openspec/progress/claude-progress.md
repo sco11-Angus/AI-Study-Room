@@ -174,3 +174,25 @@ taskC_firesmoke
 - Remaining risks:
   - Real MySQL validation was not rerun in this Swagger-only session. The local virtual environment lacks the `mysql-connector-python` driver required by a `mysql+mysqlconnector://` URI.
   - `backend/model_weights/fire_smoke.pt` remains a 0-byte placeholder, so real video/model validation is still blocked.
+
+## Session 2026-07-10 Windows Init Entry
+
+- Goal: fix the Windows PowerShell startup validation entry after `./init.sh` failed with access denied.
+- Baseline:
+  - `./init.sh` from PowerShell failed with `Access denied`.
+  - `.sh` was associated with Git Bash, but PowerShell still could not directly execute the script file.
+  - Git's shell at `C:\Program Files\Git\bin\sh.exe` could run `./init.sh` successfully.
+- Actions:
+  - Added `init.ps1` with the same required-file and markdown-count smoke checks as `init.sh`.
+  - Added `init.cmd` as the Windows direct entry point; it invokes `init.ps1` with `-ExecutionPolicy Bypass`.
+  - Updated `init.sh` to require the new Windows entry files.
+  - Updated `AGENTS.md` and `README.md` to document `.\init.cmd` for Windows PowerShell and `./init.sh` for shell-capable environments.
+  - Updated `feature_list.json` with evidence for the Windows startup entry.
+- Validation:
+  - `.\init.cmd` passed: `Smoke test passed: required files present; markdown docs found.`
+  - `cmd /c init.cmd` passed with the same smoke-test output.
+  - `C:\Program Files\Git\bin\sh.exe ./init.sh` passed with the same smoke-test output.
+  - Direct `.\init.ps1` is still blocked by this host's PowerShell execution policy, which is why `init.cmd` is the documented Windows entry.
+- Remaining risks:
+  - Literal `./init.sh` in Windows PowerShell cannot be made reliable from inside the repository without system-level launcher changes or replacing the shell script with a Windows executable.
+  - `backend/model_weights/fire_smoke.pt` remains a 0-byte placeholder, so real fire/smoke YOLO validation is still blocked.
