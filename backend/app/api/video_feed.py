@@ -17,11 +17,13 @@ bp = Blueprint("video_feed", __name__)
 logger = logging.getLogger(__name__)
 
 # 无新帧时的轮询间隔（秒）
-_IDLE_INTERVAL = 0.05
+_IDLE_INTERVAL = 0.1
 # 等待新帧的超时（秒）
 _FRAME_TIMEOUT = 1.0
 # 超时后最多重试次数（避免短暂卡顿触发"缓冲中"）
 _MAX_RETRIES = 2
+# 推送帧率限制（每秒最多推送帧数）
+_MAX_FPS = 12
 
 
 def register_ws_routes(sock: Sock) -> None:
@@ -31,6 +33,8 @@ def register_ws_routes(sock: Sock) -> None:
     def ws_video_feed(ws, camera_id: int):
         """WebSocket 端点：事件驱动推送最新 JPEG 帧。"""
         logger.info(f"[video_feed_ws] 客户端已连接 camera_id={camera_id}")
+        last_send_time = 0
+        frame_interval = 1.0 / _MAX_FPS
 
         try:
             while True:
@@ -60,9 +64,12 @@ def register_ws_routes(sock: Sock) -> None:
                         break
 
                 if got_frame:
-                    jpg = cs.latest_frame()
-                    if jpg is not None:
-                        _safe_send(ws, jpg)
+                    now = time.time()
+                    if now - last_send_time >= frame_interval:
+                        jpg = cs.latest_frame()
+                        if jpg is not None:
+                            _safe_send(ws, jpg)
+                            last_send_time = now
                 else:
                     _safe_send(ws, json.dumps({"status": "waiting"}))
                     time.sleep(_IDLE_INTERVAL)

@@ -34,7 +34,7 @@
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
-import { confirmAlarm, getCameras, getRegions } from '../api'
+import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
 import { useAlarmStore } from '../store/alarm'
 
 const streamUrl = ref('camera_id=5')
@@ -237,6 +237,10 @@ let flashTimer = setInterval(() => {
 
 onMounted(() => {
   fetchStreamUrl()
+  getAlarms().then((list) => {
+    alarms.value = Array.isArray(list) ? list : []
+    alarmStore.loadAlarms(alarms.value)
+  })
   wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
   wsAlarms.onmessage = (e) => {
     const alarm = JSON.parse(e.data)

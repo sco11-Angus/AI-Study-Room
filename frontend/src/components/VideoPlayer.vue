@@ -17,7 +17,9 @@ const canvasEl = ref(null)
 const streamStatus = ref('连接视频流...')
 let ws = null
 let reconnectTimer = null
+let lastFrameTime = 0
 const RECONNECT_DELAY = 3000
+const FRAME_INTERVAL = 1000 / 15
 
 const destroyWs = () => {
   if (reconnectTimer) {
@@ -57,16 +59,19 @@ const connectWs = () => {
 
   ws.onmessage = (event) => {
     if (event.data instanceof Blob) {
+      const now = Date.now()
+      if (now - lastFrameTime < FRAME_INTERVAL) return
+      lastFrameTime = now
+
       streamStatus.value = ''
       const canvas = canvasEl.value
       if (!canvas) return
 
       const img = new Image()
       img.onload = () => {
-        canvas.width = img.width
-        canvas.height = img.height
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0)
+        URL.revokeObjectURL(img.src)
       }
       img.src = URL.createObjectURL(event.data)
     } else {

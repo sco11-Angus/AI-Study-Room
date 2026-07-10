@@ -76,7 +76,7 @@ CREATE TABLE IF NOT EXISTS alarm_event (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '告警ID',
     region_id INT NOT NULL COMMENT '触发防区/座位，外键region.id',
     camera_id INT NOT NULL COMMENT '触发摄像头(便于查询)，外键camera.id',
-    type TEXT NOT NULL COMMENT 'intrusion/fire_smoke/occupy/fatigue/fight',
+    type TEXT NOT NULL COMMENT 'intrusion/fire_smoke/occupy/fatigue/fight/face_recognition',
     snapshot_url TEXT NOT NULL COMMENT '抓拍图路径',
     face_match TEXT NOT NULL COMMENT '会员匹配结果：member:<id>/stranger',
     level INT NOT NULL COMMENT '0=弱提醒(私有)；1=普通；2+=升级、高优先(如打架)',
