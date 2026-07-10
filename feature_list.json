@@ -95,17 +95,24 @@
         "backend/requirements.txt includes PyMySQL for mysql+pymysql DATABASE_URI values.",
         "backend/tests/smoke_test.py passed after restoring StreamScheduler ring_buffer maxlen to 5.",
         "PowerShell-equivalent init smoke passed with 16 markdown docs.",
-        
         "Real DingTalk text webhook connectivity was verified with errcode=0 after DINGTALK_WEBHOOK was added to .env.",
         "Added DingTalk signed webhook support via DINGTALK_SECRET and DINGTALK_LEADER_SECRET, plus public ActionCard confirm/snapshot URLs via PUBLIC_BASE_URL.",
         "Added GET /api/alarms/{id}/confirm for DingTalk ActionCard button confirmation while preserving the existing POST confirm API.",
         "Regression after DingTalk real-integration prep passed: 28 task-E-related tests, backend smoke test with ALL SMOKE TESTS PASSED, and real MySQL verify script.",
         "Real DingTalk ActionCard smoke send through DingTalkNotifier returned errcode=0; click-confirm still awaits PUBLIC_BASE_URL.",
-        "After pulling origin/main on 2026-07-09, removed duplicate ws.register_ws_routes(sock) registration in backend/app/__init__.py and verified python tests/smoke_test.py passed again."
+        "After pulling origin/main on 2026-07-09, removed duplicate ws.register_ws_routes(sock) registration in backend/app/__init__.py and verified python tests/smoke_test.py passed again.",
+        "Post-merge validation repaired duplicate WebSocket registration, duplicate Guard ORM definition, missing AlarmService helper methods, and FaceMatcher immediate AlarmEvent compatibility; validation passed with bash ./init.sh, 39 pytest cases including fire_smoke, smoke test, and real MySQL verify.",
+        "Real DingTalk close-loop send test passed on 2026-07-09: primary ActionCard returned errcode=0, a 5-second unconfirmed timer escalated the alarm to status=escalated/level=2, and the escalated ActionCard also returned errcode=0.",
+        "The real escalation test wrote notification_log rows for guard role primary and guard role leader, confirming DB-level guard selection for primary/escalated stages.",
+        "Fixed local DingTalk confirm-button testing by changing .env PUBLIC_BASE_URL from an RTMP stream URL to http://127.0.0.1:5000; a new ActionCard for alarm 16 was sent successfully with an HTTP confirm URL.",
+        "Enhanced DingTalk alarm cards to show actor, behavior, alarm type, handler, location, camera, snapshot, and score context; added a separate text @ message to mention the selected guard by guard.dingtalk_id.",
+        "Real DingTalk actor/handler smoke passed for alarm 17: ActionCard returned errcode=0 with HTTP confirm URL and the follow-up text message with at payload also returned errcode=0."
       ],
       "blockers": [
-        "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed.",
-        "Full DingTalk ActionCard click-confirm verification still needs PUBLIC_BASE_URL pointing at a public tunnel to the backend."
+        "bash ./init.sh now passes after Ubuntu WSL was installed; WSL still prints a localhost proxy warning in NAT mode.",
+        "Full DingTalk ActionCard click-confirm verification still needs PUBLIC_BASE_URL pointing at a public tunnel to the backend.",
+        "DINGTALK_LEADER_WEBHOOK is not configured, so escalation currently reuses the primary group robot; true separate leader-group delivery needs a leader webhook.",
+        "The @ mention payload is now sent, but real human notification still depends on guard.dingtalk_id being a DingTalk user ID or mobile accepted by the robot."
       ]
     }
   ]

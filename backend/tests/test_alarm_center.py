@@ -208,6 +208,92 @@ def test_dingtalk_signed_action_card_uses_public_confirm_url(monkeypatch, db):
     assert "https://example.test/api/alarms/snapshots/12.jpg" in calls[0]["json"]["actionCard"]["text"]
 
 
+def test_dingtalk_card_describes_actor_behavior_and_mentions_guard(db):
+    from app.models.entities import AlarmEvent, Camera, Guard, Region
+    from app.services.dingtalk import DingTalkNotifier
+
+    session = db()
+    try:
+        session.add_all([
+            Guard(
+                id=31,
+                name="Primary Guard",
+                dingtalk_id="guard-userid-001",
+                role="primary",
+                priority=0,
+            ),
+            Camera(
+                id=32,
+                name="Reading Room Camera",
+                stream_url="rtmp://local/test",
+                resolution="1920*1080",
+                status="online",
+                created_at=datetime.utcnow(),
+            ),
+            Region(
+                id=33,
+                camera_id=32,
+                user_id=None,
+                name="Seat A1",
+                type="danger_zone",
+                polygon="[]",
+                x_distance=10,
+                y_stay_time=3,
+                created_at=datetime.utcnow(),
+            ),
+            AlarmEvent(
+                id=34,
+                region_id=33,
+                camera_id=32,
+                type="fight",
+                level=2,
+                status="pending",
+                face_match="member:7",
+                snapshot_url="/api/alarms/snapshots/34.jpg",
+                extra=json.dumps({
+                    "actor": "Li Ming",
+                    "behavior": "pushed another student",
+                    "fuse": 0.91,
+                }),
+                created_at=datetime.utcnow(),
+            ),
+        ])
+        session.commit()
+    finally:
+        session.close()
+
+    calls = []
+
+    def fake_post(url, json, timeout):
+        calls.append({"url": url, "json": json, "timeout": timeout})
+
+    notifier = DingTalkNotifier(
+        webhook="https://oapi.dingtalk.com/robot/send?access_token=test-token",
+        public_base_url="https://example.test",
+        timeout=0,
+        session_factory=db,
+        http_post=fake_post,
+    )
+
+    notifier.notify(34)
+
+    assert len(calls) == 2
+    card = calls[0]["json"]["actionCard"]
+    assert card["singleTitle"] == "确认处理"
+    assert card["singleURL"] == "https://example.test/api/alarms/34/confirm"
+    assert "Li Ming" in card["text"]
+    assert "pushed another student" in card["text"]
+    assert "Primary Guard" in card["text"]
+    assert "Seat A1" in card["text"]
+    assert "fuse=0.91" in card["text"]
+
+    mention = calls[1]["json"]
+    assert mention["msgtype"] == "text"
+    assert mention["at"] == {"atUserIds": ["guard-userid-001"], "isAtAll": False}
+    assert "Primary Guard" in mention["text"]["content"]
+    assert "Alarm ID: 34" in mention["text"]["content"]
+
+
 def test_alarm_api_lists_and_confirms(monkeypatch, db):
     from app.api.alarms import bp
     from app.models.entities import AlarmEvent

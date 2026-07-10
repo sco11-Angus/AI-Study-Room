@@ -1,11 +1,4 @@
-"""告警服务 — 闭环动作编排 (系统设计说明书 §7.1)。
-
-真实告警产生时：
-  ① 现场抓拍 -> 裁剪面部 -> 人脸识别匹配
-  ② 看板异动 -> WebSocket 推送前端(绿->红闪+蜂鸣)
-  ③ 钉钉逐级上报(见 dingtalk.py)
-同防区同类型在冷却窗口内合并去重 (§10.2)。
-"""
+"""Alarm service orchestration for persistence, snapshots, push, and notification."""
 from __future__ import annotations
 
 import json
@@ -24,10 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 class AlarmService:
-    """告警中心主入口。
-
-    检测器产出的 AlarmEvent 到这里才真正变成可追踪、可通知、可确认的告警。
-    """
+    """Main alarm-center entry point used by detectors and integration tests."""
 
     def __init__(
         self,
@@ -59,27 +49,28 @@ class AlarmService:
         type_: str | None = None,
         extra: dict | None = None,
     ) -> dict | None:
-        """触发告警闭环。
+        """Trigger the full alarm close loop.
 
-        新代码应传入 AlarmEvent；region_id/type_ 参数保留给旧调用点兼容。
-        face_recognition 只走轻量推送通道，不入库、不触发钉钉。
+        New code should pass an AlarmEvent. region_id/type_ are kept for older
+        callers. face_recognition uses only the lightweight frontend channel.
         """
         if type_ == "face_recognition":
             from ..api.ws import set_face_result
+
             if extra:
                 msg = {"type": "stranger"}
                 if extra.get("face_match", "").startswith("member:"):
                     msg = {
                         "type": "member",
                         "member_id": extra.get("member_id"),
-                        "name": extra.get("name", "未知"),
+                        "name": extra.get("name", "unknown"),
                     }
                 set_face_result(msg)
             return None
 
-        event = self._normalize_event(event, region_id, type_)
+        event = self._normalize_event(event, region_id, type_, extra)
         if not self._dedup(event.region_id, event.type):
-            logger.info("[alarm] 告警去重 region=%s type=%s", event.region_id, event.type)
+            logger.info("[alarm] dedup region=%s type=%s", event.region_id, event.type)
             return None
 
         if frame is None:
@@ -95,7 +86,7 @@ class AlarmService:
             self._broadcast(payload)
             self._notify(record.id)
         else:
-            logger.info("[alarm] level=0 弱提醒仅保留私有端/查询记录 alarm_id=%s", record.id)
+            logger.info("[alarm] private level=0 alarm_id=%s", record.id)
 
         return payload
 
@@ -104,31 +95,51 @@ class AlarmService:
         event: AlarmEvent | None,
         region_id: int | None,
         type_: str | None,
+        extra: dict | None = None,
     ) -> AlarmEvent:
-        if event is not None:
-            return event
-        if region_id is None or type_ is None:
-            raise ValueError("raise_alarm() requires AlarmEvent or region_id/type_")
-        return AlarmEvent(type=type_, region_id=region_id)
+        if event is None:
+            if region_id is None or type_ is None:
+                raise ValueError("raise_alarm() requires AlarmEvent or region_id/type_")
+            event = AlarmEvent(type=type_, region_id=region_id)
+        else:
+            if region_id is not None:
+                event.region_id = region_id
+            if type_ is not None:
+                event.type = type_
+
+        if event.ts == 0:
+            event.ts = time.time()
+        if event.extra is None:
+            event.extra = {}
+        if extra:
+            event.extra.update(extra)
+        if "level" in event.extra and event.level == 1:
+            event.level = int(event.extra["level"])
+        return event
 
     def _save_snapshot(self, event: AlarmEvent, frame) -> str:
         if frame is None:
-            return ""
+            return event.snapshot_url or ""
 
         os.makedirs(self.snapshot_dir, exist_ok=True)
-        filename = f"{event.type}_{event.region_id}_{int(time.time() * 1000)}.jpg"
+        ts_ms = int((event.ts or time.time()) * 1000)
+        filename = f"alarm_{ts_ms}_{event.region_id}_{event.type}.jpg"
         path = os.path.join(self.snapshot_dir, filename)
 
         saved = False
         if isinstance(frame, np.ndarray):
             try:
                 import cv2
+
                 saved = bool(cv2.imwrite(path, frame))
             except Exception:
-                logger.exception("[alarm] 抓拍保存失败，写入占位文件 path=%s", path)
+                logger.exception("[alarm] failed to save snapshot with cv2 path=%s", path)
         if not saved:
             with open(path, "wb") as fh:
-                fh.write(b"")
+                try:
+                    fh.write(np.asarray(frame).tobytes())
+                except Exception:
+                    fh.write(b"")
         return f"/api/alarms/snapshots/{filename}"
 
     def _match_face(self, event: AlarmEvent, frame) -> str:
@@ -136,36 +147,55 @@ class AlarmService:
             return event.face_match
         if event.extra.get("face_match"):
             return str(event.extra["face_match"])
-        # C/E 告警链路先保底为 stranger；人脸精匹配由 B9 FaceMatcher 可用时增强。
-        return "stranger"
+        if event.type not in {"intrusion", "occupy"}:
+            return "stranger"
+
+        face_img = event.face_crop if event.face_crop is not None else frame
+        if face_img is None:
+            return "stranger"
+
+        try:
+            from ..detectors.face import FaceMatcher
+
+            matcher = FaceMatcher()
+            feature = matcher.encode(face_img)
+            if feature is None:
+                return "stranger"
+            return matcher.match(feature)
+        except Exception:
+            logger.exception("[alarm] face matching failed")
+            return "stranger"
 
     def _persist(self, event: AlarmEvent):
         from ..models.database import SessionLocal
         from ..models.entities import AlarmEvent as AlarmRecord
 
-        created_at = datetime.fromtimestamp(event.ts) if event.ts else datetime.now(timezone.utc).replace(tzinfo=None)
-        record = AlarmRecord(
-            region_id=event.region_id,
-            camera_id=event.camera_id,
-            type=event.type,
-            snapshot_url=event.snapshot_url or "",
-            face_match=event.face_match or "stranger",
-            level=event.level,
-            status="pending",
-            extra=json.dumps(event.extra or {}, ensure_ascii=False),
-            created_at=created_at,
-            confirmed_at=None,
+        created_at = (
+            datetime.fromtimestamp(event.ts, timezone.utc).replace(tzinfo=None)
+            if event.ts
+            else datetime.now(timezone.utc).replace(tzinfo=None)
         )
-
         session = SessionLocal()
         try:
+            record = AlarmRecord(
+                region_id=event.region_id,
+                camera_id=event.camera_id,
+                type=event.type,
+                snapshot_url=event.snapshot_url or "",
+                face_match=event.face_match or "stranger",
+                level=event.level,
+                status="pending",
+                extra=json.dumps(event.extra or {}, ensure_ascii=False),
+                created_at=created_at,
+                confirmed_at=None,
+            )
             session.add(record)
             session.commit()
             session.refresh(record)
             return record
         except Exception:
             session.rollback()
-            logger.exception("[alarm] 告警落库失败 event=%s", event)
+            logger.exception("[alarm] failed to persist event=%s", event)
             raise
         finally:
             session.close()
@@ -191,17 +221,18 @@ class AlarmService:
             "confirmed_at": record.confirmed_at.isoformat() if record.confirmed_at else None,
         }
 
-    def _broadcast(self, payload: dict) -> None:
+    def _broadcast(self, payload: dict) -> int:
         if self._broadcaster is not None:
-            self._broadcaster(payload)
-            return
+            return self._broadcaster(payload) or 0
         from ..api.ws import broadcast_alarm
-        broadcast_alarm(payload)
+
+        return broadcast_alarm(payload)
 
     def _notify(self, alarm_id: int) -> None:
         notifier = self._notifier
         if notifier is None:
             from .dingtalk import get_notifier
+
             notifier = get_notifier()
         notifier.notify(alarm_id)
 
