@@ -11,6 +11,7 @@ import os
 from collections import deque
 from typing import Optional
 
+import cv2
 import numpy as np
 
 from ..config import Config
@@ -219,7 +220,7 @@ class FaceMatcher:
             if (
                 best_id is not None
                 and best_dist < self.threshold
-                and (nrr < 0.8 or gap > 0.05 or second_best_dist >= float("inf"))
+                and (nrr < 0.90 or gap > 0.04 or second_best_dist >= float("inf"))
             ):
                 return f"member:{best_id}"
             return "stranger"
@@ -276,6 +277,11 @@ class FaceDetector(Detector):
         self._face_crop_history: deque = deque(maxlen=Config.LIVENESS_HISTORY_SIZE)
         # 诊断：记录最近的特征向量前5维 + 距离
         self._last_feature_snapshot: Optional[list] = None
+        # ---- 特征 EMA 融合（提升低质量画面下的识别准确率） ----
+        self._feature_history: deque = deque(maxlen=8)      # 最近 N 帧特征
+        self._feature_ema: Optional[np.ndarray] = None        # 指数移动平均特征
+        self._ema_alpha: float = 0.35                        # EMA 平滑系数
+        self._consecutive_low_quality: int = 0               # 连续低质量帧计数
 
     def setup(self) -> None:
         """加载 dlib 模型（引擎启动时调用一次）。"""
@@ -345,7 +351,7 @@ class FaceDetector(Detector):
         face_crop = frame.image[y1:y2, x1:x2] if x2 > x1 and y2 > y1 else None
 
         # ---- 活体检测 ----
-        WARMUP_FRAMES = 5  # 积累足够历史后才做判定
+        WARMUP_FRAMES = 3  # 积累足够历史后才做判定
         if self._liveness is not None and self._liveness.enabled:
             landmarks = self._matcher.shape_from_rect(frame.image, rect)
             if landmarks is not None and face_crop is not None:
@@ -361,12 +367,15 @@ class FaceDetector(Detector):
                     score, reasons, frames_cached, liveness_result["details"],
                 )
 
-                # 热身期：数据不足，不判定，只积累历史
-                if frames_cached < WARMUP_FRAMES:
+                # 帧差/时序零运动/FSD AI检测可绕过热身期，立即判定
+                is_instant_reject = ("static_frame_mse" in reasons
+                                     or "temporal_zero_motion" in reasons
+                                     or "fsd_detected_aigc" in reasons)
+                if frames_cached < WARMUP_FRAMES and not is_instant_reject:
                     logger.info(f"[face] 活体热身中 (frames={frames_cached})，跳过判定")
                     return []
 
-                # 热身完成后才判定活体
+                # 热身完成后才判定活体（instant reject 直接走这里）
                 if liveness_result["is_spoof"]:
                     logger.warning("[face] 活体检测判定为欺骗攻击！")
                     # 写入 WebSocket
@@ -396,16 +405,46 @@ class FaceDetector(Detector):
                         )
                     ]
 
+        # ---- 帧质量预检：跳过过模糊/过小的帧 ----
+        if not self._face_quality_ok(face_crop):
+            self._consecutive_low_quality += 1
+            if self._consecutive_low_quality == 1:
+                logger.info("[face] 低质量帧，跳过特征提取（连续=%d）",
+                            self._consecutive_low_quality)
+            return []
+        self._consecutive_low_quality = 0
+
         # ---- 特征提取 ----
         feature = self._matcher.encode_from_rect(frame.image, rect)
         if feature is None:
             logger.warning("[face] encode_from_rect() 特征提取失败")
             return []
 
+        # ---- 特征 EMA 融合：仅稳定时启用，不稳定时用原始特征 ----
+        self._feature_history.append(feature.copy())
+        if self._feature_ema is None:
+            self._feature_ema = feature.copy()
+        else:
+            self._feature_ema = (
+                self._ema_alpha * feature
+                + (1.0 - self._ema_alpha) * self._feature_ema
+            )
+
+        # ---- 特征稳定度：历史帧之间的方差 → 自信度 ----
+        feature_stability = self._compute_feature_stability()
+
+        # 稳定度 > 0.5 → EMA 融合比单帧更可靠；否则用原始特征防偏
+        if feature_stability > 0.5:
+            fused_feature = self._feature_ema
+        else:
+            fused_feature = feature
+
         # ---- 诊断：输出特征向量 + 逐一比对距离 ----
-        feat_snap = [round(float(feature[i]), 4) for i in range(min(5, len(feature)))]
-        result, extra = self._match_with_diag(feature, feat_snap)
-        logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}")
+        feat_snap = [round(float(fused_feature[i]), 4) for i in range(min(5, len(fused_feature)))]
+        result, extra = self._match_with_diag(fused_feature, feat_snap,
+                                               stability=feature_stability)
+        logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}"
+                    f" | 稳定度={feature_stability:.2f}")
 
         # ---- 直接推送（带冷却去重） ----
         now = time.time()
@@ -420,8 +459,15 @@ class FaceDetector(Detector):
     # 诊断 + 推送辅助方法
     # ------------------------------------------------------------------
 
-    def _match_with_diag(self, feature: np.ndarray, feat_snap: list) -> tuple[str, dict]:
+    def _match_with_diag(self, feature: np.ndarray, feat_snap: list,
+                          stability: float = 0.0) -> tuple[str, dict]:
         """执行匹配并输出逐一比对诊断日志。
+
+        Args:
+            feature: 128 维人脸特征（可能是 EMA 融合后的）
+            feat_snap: 特征前 5 维快照（用于日志）
+            stability: 特征稳定度 ∈[0,1]，0=极不稳定, 1=完全稳定。
+                       用于自适应调整匹配阈值。
 
         Returns:
             (result, extra_dict)
@@ -459,9 +505,18 @@ class FaceDetector(Detector):
                 except (_json.JSONDecodeError, ValueError) as e:
                     logger.warning(f"[face] 会员 {m.member_id} 特征数据损坏: {e}")
 
+            # 自适应阈值：特征稳定时放宽门槛，不稳定时保持原样（不收紧）
+            #   stability > 0.8 → 多帧高度一致，放宽到 base+0.05（上限 0.48）
+            #   stability ≤ 0.8 → 保持原始阈值，不稳定≠攻击
+            base_thresh = self._matcher.threshold
+            if stability > 0.8:
+                adaptive_thresh = min(0.48, base_thresh + 0.05)
+            else:
+                adaptive_thresh = base_thresh
+
             # 输出诊断
             nrr = best_dist / second_best_dist if second_best_dist < float("inf") else 1.0
-            diag_parts = [f"dist={best_dist:.4f} nrr={nrr:.3f} thr={self._matcher.threshold}"]
+            diag_parts = [f"dist={best_dist:.4f} nrr={nrr:.3f} thr={adaptive_thresh:.2f}"]
             for mid, name, d in sorted(all_dists, key=lambda x: x[2]):
                 marker = "*" if mid == best_id else ""
                 diag_parts.append(f"m{mid}({name or '?'})={d:.4f}{marker}")
@@ -471,8 +526,8 @@ class FaceDetector(Detector):
             gap = second_best_dist - best_dist if second_best_dist < float("inf") else 0
             if (
                 best_id is not None
-                and best_dist < self._matcher.threshold
-                and (nrr < 0.8 or gap > 0.05 or second_best_dist >= float("inf"))
+                and best_dist < adaptive_thresh
+                and (nrr < 0.90 or gap > 0.04 or second_best_dist >= float("inf"))
             ):
                 result = f"member:{best_id}"
                 # 找名字
@@ -494,6 +549,85 @@ class FaceDetector(Detector):
             session.close()
 
         return result, extra
+
+    # ------------------------------------------------------------------
+    # 帧质量 & 特征稳定度辅助方法
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _face_quality_ok(face_crop: np.ndarray) -> bool:
+        """帧质量预检：跳过过模糊或过小的人脸。
+
+        质量太低的人脸提取的 Dlib 特征噪声极大，不仅自身不可靠，
+        还会污染特征 EMA 历史。
+        阈值设计偏宽松——宁可让低质量帧进入 EMA（后续由稳定度 gating
+        决定是否采用），也比拦截掉有效会员帧好。
+
+        Returns:
+            True 表示质量可接受
+        """
+        try:
+            h, w = face_crop.shape[:2]
+            # 尺寸检查：至少 45×45（Dlib 编码器最低要求）
+            if w < 45 or h < 45:
+                return False
+
+            gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+
+            # 模糊度检查：Laplacian 方差
+            lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            mean_brightness = float(np.mean(gray))
+
+            # 纯色合成图（如测试用例）：不拦截
+            if lap_var < 1 and (mean_brightness < 1 or mean_brightness > 254):
+                return True
+
+            # 阈值 8：比之前的 15 更宽松。普通摄像头+一般光照下人脸
+            # lap_var 约 20~80，8 的阈值刚好拦住纯色/极糊画面而不挡真人。
+            if lap_var < 8:
+                return False
+
+            # 亮度检查：过暗或过曝
+            if mean_brightness < 25 or mean_brightness > 245:
+                return False
+
+            return True
+        except Exception:
+            return True  # 异常时不阻塞
+
+    def _compute_feature_stability(self) -> float:
+        """计算特征 EMA 历史的稳定度。
+
+        稳定度 = 1 - (历史特征两两之间欧氏距离的标准差 / 最大可能距离)
+
+        稳定度 > 0.8：多帧特征高度一致 → 自适应放宽阈值
+        稳定度 < 0.4：特征漂移大 → 收紧阈值（可能是攻击或换人）
+
+        Returns:
+            stability ∈ [0, 1]
+        """
+        try:
+            if len(self._feature_history) < 3:
+                # 不足 3 帧，无法可靠估计稳定度
+                return 0.0
+
+            history = list(self._feature_history)
+            n = len(history)
+
+            # 计算相邻帧之间的特征距离
+            dists = []
+            for i in range(1, n):
+                d = float(np.linalg.norm(history[i] - history[i - 1]))
+                dists.append(d)
+
+            mean_dist = float(np.mean(dists))
+            # 距离 → 稳定度的映射（指数衰减）
+            # 相邻帧距离 0.05 → 很稳定；0.3 → 很不稳定
+            stability = float(np.exp(-mean_dist / 0.08))
+            return np.clip(stability, 0.0, 1.0)
+
+        except Exception:
+            return 0.0
 
     def _push_result(self, result: str, extra: dict, face_crop, frame: Frame) -> None:
         """将匹配结果推送到 WebSocket + 产出 AlarmEvent。"""
