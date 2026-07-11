@@ -486,4 +486,24 @@
   - A full pytest run including `tests/test_liveness.py` still has one independent liveness assertion mismatch: identical frames are classified earlier as `static_frame_mse` spoof instead of the test's allowed `prolonged_no_blink`/`spoof_streak` reasons.
   - Public access to snapshots and MP4 clips is a deployment/network responsibility; backend can serve correct URLs, but other users cannot open local `127.0.0.1` or private-LAN addresses from DingTalk.
 
+## Session 2026-07-11 Fire Smoke Legacy Loader Default
 
+- Goal: fix local fire/smoke test scripts stalling while importing Ultralytics/Torch before falling back to the grafted legacy YOLOv5 model.
+- Baseline:
+  - User command `.venv\Scripts\python.exe backend\scripts\test_fire_smoke_image.py` was interrupted while importing `ultralytics -> torch -> platform.machine()`.
+  - The same environment had already proven the local checkpoint is an old YOLOv5 model and the legacy adapter can load it.
+- Actions:
+  - Added `FIRE_SMOKE_MODEL_LOADER`, defaulting to `legacy`.
+  - Updated `FireSmokePlugin.setup()` to load the legacy YOLOv5 adapter directly by default, while preserving `FIRE_SMOKE_MODEL_LOADER=ultralytics` as an explicit opt-in path with legacy fallback.
+  - Cleaned the fire/smoke detector and unit-test files to ASCII to avoid brittle mojibake string matching.
+  - Updated `.env.example` with `FIRE_SMOKE_MODEL_LOADER=legacy`.
+- Validation:
+  - `py_compile` passed for fire/smoke config, detector, tests, and helper scripts.
+  - Raw image script passed on `test_photos/fire_test.jpg`: detected fire 0.757, fire 0.557, and smoke 0.256.
+  - Alarm image script passed: 30 frames produced one `AlarmEvent(type=fire_smoke)`.
+  - Focused pytest passed: `tests/test_fire_smoke.py tests/test_alarm_center.py --basetemp=.pytest_tmp` -> 19 passed.
+  - `.\init.cmd` passed.
+- Remaining risks:
+  - Full C3 acceptance still needs live RTMP/OBS positive and negative footage.
+  - Deployment still must include `backend/model_weights/fire_smoke.pt` and the legacy YOLOv5 source directory, or configure `FIRE_SMOKE_LEGACY_YOLOV5_DIR`.
+  - If a new Ultralytics-compatible model is introduced later, set `FIRE_SMOKE_MODEL_LOADER=ultralytics`.

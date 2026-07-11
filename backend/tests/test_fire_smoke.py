@@ -1,9 +1,7 @@
-"""烟火检测单元测试 (任务书 C3).
-
-用 fake YOLO 结果验证插件框架和 30 帧滑动窗口逻辑，不依赖真实权重。
-"""
+"""Fire/smoke detector unit tests for task C3."""
 import os
 import sys
+import types
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
@@ -115,12 +113,12 @@ def test_setup_rejects_empty_weight_file():
         try:
             plugin.setup()
         except RuntimeError as exc:
-            assert "模型权重为空文件" in str(exc)
+            assert "model weights file is empty" in str(exc)
         else:
             raise AssertionError("empty fire_smoke.pt should be rejected")
 
 
-def test_setup_falls_back_to_legacy_yolov5_for_old_checkpoint():
+def test_setup_uses_legacy_yolov5_by_default():
     with TemporaryDirectory() as tmp_dir:
         weights = os.path.join(tmp_dir, "fire_smoke.pt")
         with open(weights, "wb") as fh:
@@ -128,9 +126,30 @@ def test_setup_falls_back_to_legacy_yolov5_for_old_checkpoint():
 
         plugin = FireSmokePlugin(weights_path=weights)
         legacy_model = _FakeModel(conf=0.7, cls=1)
-        with patch("ultralytics.YOLO", side_effect=TypeError("old yolov5 checkpoint")):
+        with patch.object(Config, "FIRE_SMOKE_MODEL_LOADER", "legacy"):
             with patch.object(plugin, "_load_legacy_yolov5", return_value=legacy_model) as load_legacy:
                 plugin.setup()
+
+        load_legacy.assert_called_once()
+        assert plugin._model is legacy_model
+
+
+def test_setup_can_fall_back_from_ultralytics_to_legacy():
+    with TemporaryDirectory() as tmp_dir:
+        weights = os.path.join(tmp_dir, "fire_smoke.pt")
+        with open(weights, "wb") as fh:
+            fh.write(b"legacy-yolov5")
+
+        def fail_load(_path):
+            raise TypeError("old checkpoint")
+
+        plugin = FireSmokePlugin(weights_path=weights)
+        legacy_model = _FakeModel(conf=0.7, cls=1)
+        fake_ultralytics = types.SimpleNamespace(YOLO=fail_load)
+        with patch.object(Config, "FIRE_SMOKE_MODEL_LOADER", "ultralytics"):
+            with patch.dict(sys.modules, {"ultralytics": fake_ultralytics}):
+                with patch.object(plugin, "_load_legacy_yolov5", return_value=legacy_model) as load_legacy:
+                    plugin.setup()
 
         load_legacy.assert_called_once()
         assert plugin._model is legacy_model
@@ -143,4 +162,5 @@ if __name__ == "__main__":
     test_plugin_accepts_smoke_class()
     test_plugin_ignores_non_fire_smoke_classes()
     test_setup_rejects_empty_weight_file()
-    test_setup_falls_back_to_legacy_yolov5_for_old_checkpoint()
+    test_setup_uses_legacy_yolov5_by_default()
+    test_setup_can_fall_back_from_ultralytics_to_legacy()

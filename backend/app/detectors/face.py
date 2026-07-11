@@ -416,12 +416,25 @@ class FaceDetector(Detector):
         result, extra = self._match_with_diag(feature, feat_snap)
         logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}")
 
-        # ---- 直接推送（带冷却去重） ----
-        now = time.time()
-        if result != self._last_result or (now - self._last_result_ts) > self._cooldown:
-            self._last_result = result
-            self._last_result_ts = now
-            self._push_result(result, extra, face_crop, frame)
+     # ---- 直接推送（带冷却去重） ----
+now = time.time()
+if result != self._last_result or (now - self._last_result_ts) > self._cooldown:
+    self._last_result = result
+    self._last_result_ts = now
+    self._push_result(result, extra, face_crop, frame)
+    return [
+        AlarmEvent(
+            region_id=frame.camera_id,
+            camera_id=frame.camera_id,
+            type="face_recognition",
+            confidence=1.0,
+            snapshot=frame.image,
+            face_crop=face_crop,
+            extra=extra,
+        )
+    ]
+
+return []
 
         return []
 

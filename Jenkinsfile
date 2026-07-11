@@ -136,9 +136,13 @@ pipeline {
                         --label "build=${env.BUILD_NUMBER}" \
                         .
                 '''
-                // 推送到镜像仓库（需要 Docker login，在 Jenkins Credentials 配置）
-                withDockerRegistry([credentialsId: 'docker-hub-creds', url: "https://${DOCKER_REGISTRY}"]) {
-                    sh "docker push ${BACKEND_IMAGE}"
+                // 推送到镜像仓库（使用 withCredentials 注入 Docker Hub 账密）
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''
+                        echo "${DOCKER_PASS}" | docker login ${DOCKER_REGISTRY} -u "${DOCKER_USER}" --password-stdin
+                        docker push ${BACKEND_IMAGE}
+                        docker logout
+                    '''
                 }
             }
         }

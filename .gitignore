@@ -15,7 +15,9 @@ backend/model_weights/*.onnx
 backend/model_weights/*.dat
 backend/snapshots/*.jpg
 backend/snapshots/*.png
+backend/clips/*.mp4
 backend/clips/
+backend/snapshots/clips/
 backend/reports/
 backend/logs/
 
