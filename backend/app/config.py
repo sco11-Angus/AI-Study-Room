@@ -85,6 +85,8 @@ class Config:
     FIRE_SMOKE_IOU = float(os.getenv("FIRE_SMOKE_IOU", 0.45))
     FIRE_SMOKE_DEVICE = os.getenv("FIRE_SMOKE_DEVICE", "cpu")
     FIRE_SMOKE_REGION_ID = int(os.getenv("FIRE_SMOKE_REGION_ID", 0))
+    # 强制走 legacy YOLOv5 加载器（嫁接的 best.pt 与 ultralytics YOLOv8 不兼容）
+    FIRE_SMOKE_FORCE_LEGACY = os.getenv("FIRE_SMOKE_FORCE_LEGACY", "true").lower() == "true"
 
     # 音视频融合打架检测 (任务书 D)
     FIGHT_FUSE_THRESH = float(os.getenv("FIGHT_FUSE_THRESH", 0.6))  # 融合分告警阈值

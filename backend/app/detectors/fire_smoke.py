@@ -64,6 +64,14 @@ class FireSmokePlugin(Detector):
         if weights.stat().st_size <= 0:
             raise RuntimeError(f"[fire_smoke] 模型权重为空文件: {weights}")
 
+        # 强制 legacy：嫁接的 YOLOv5 权重与 ultralytics(YOLOv8) 不兼容，
+        # 且 ultralytics 加载有时"看似成功"却在推理时报 visualize 参数错误
+        # （依赖 sys.modules 状态，不稳定）。显式走 legacy 加载器最可靠。
+        if Config.FIRE_SMOKE_FORCE_LEGACY:
+            self._model = self._load_legacy_yolov5(weights)
+            logger.info("[fire_smoke] legacy YOLOv5 权重加载完成(强制): %s", weights)
+            return
+
         try:
             from ultralytics import YOLO
 
