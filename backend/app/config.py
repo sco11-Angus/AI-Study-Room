@@ -58,6 +58,9 @@ def _default_database_uri() -> str:
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
+    # 推理帧尺寸：防区多边形以归一化坐标 [0,1] 入库，加载时 × 该尺寸还原为像素
+    FRAME_WIDTH = int(os.getenv("FRAME_WIDTH", 640))
+    FRAME_HEIGHT = int(os.getenv("FRAME_HEIGHT", 480))
     RTMP_SERVER = os.getenv("RTMP_SERVER", "49.233.71.82")
     RTMP_PORT = int(os.getenv("RTMP_PORT", 9090))
     STREAM_CAMERA_ID = int(os.getenv("STREAM_CAMERA_ID", os.getenv("CAMERA_ID", 5)))

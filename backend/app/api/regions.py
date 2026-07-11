@@ -54,14 +54,15 @@ def _validate_payload(payload: dict, partial: bool = False) -> tuple[dict, str |
         polygon = payload.get("polygon")
         if not isinstance(polygon, list) or len(polygon) < 3:
             return {}, "polygon must contain at least 3 points"
+        # 前端以归一化坐标 [0,1] 提交，保留 float，不截断为整数
         normalized = []
         for point in polygon:
             if not isinstance(point, (list, tuple)) or len(point) != 2:
                 return {}, "polygon point must be [x, y]"
             try:
-                normalized.append([int(point[0]), int(point[1])])
+                normalized.append([float(point[0]), float(point[1])])
             except (TypeError, ValueError):
-                return {}, "polygon coordinates must be integers"
+                return {}, "polygon coordinates must be numbers"
         data["polygon"] = json.dumps(normalized)
 
     if not partial or "x_distance" in payload:
