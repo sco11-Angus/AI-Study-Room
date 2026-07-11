@@ -18,6 +18,7 @@ def start_services():
     from app.detectors.fight import FightPlugin
     from app.detectors.fatigue import FatiguePlugin
     from app.detectors.intrusion import IntrusionPlugin
+    from app.detectors.person_source import SharedContextProvider
     from app.config import Config
     from app.stream.engine import InferenceEngine
     from app.stream.scheduler import StreamScheduler, set_scheduler
@@ -30,7 +31,8 @@ def start_services():
     engine.register(FaceDetector(skip_frames=10, cooldown=1.0))
     engine.register(FatiguePlugin())
     engine.register(FireSmokePlugin())
-    engine.register(FightPlugin())
+    # 打架检测复用入侵检测写入 shared_ctx 的全身人体框（人员框只算一次）
+    engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
     engine.setup_all()
     print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 
