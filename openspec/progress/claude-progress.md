@@ -507,3 +507,21 @@
   - Full C3 acceptance still needs live RTMP/OBS positive and negative footage.
   - Deployment still must include `backend/model_weights/fire_smoke.pt` and the legacy YOLOv5 source directory, or configure `FIRE_SMOKE_LEGACY_YOLOV5_DIR`.
   - If a new Ultralytics-compatible model is introduced later, set `FIRE_SMOKE_MODEL_LOADER=ultralytics`.
+
+## Session 2026-07-11 PR Merge
+
+- Goal: merge the latest PR changes into local `main`.
+- Baseline:
+  - `pwd` confirmed `D:\1\大二暑期实训\App`.
+  - `git` was not available on PowerShell PATH; used `C:\Program Files\Git\cmd\git.exe`.
+  - Local `main` was behind `origin/main` by 3 commits.
+  - Pre-existing local changes remained in `backend/app/stream/scheduler.py` and `.claude/settings.local.json`.
+- Actions:
+  - Fetched `origin`.
+  - Fast-forwarded local `main` from `be64b72` to `ea4dfb8`, incorporating `Merge pull request #39 from sco11-Angus/taskE`.
+- Validation:
+  - Standard Windows smoke passed through the PowerShell executable directly: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\init.ps1`.
+  - Latest history now starts with `ea4dfb8 Merge pull request #39 from sco11-Angus/taskE`.
+- Remaining risks:
+  - `.\init.cmd` still fails in this shell because `powershell.exe` is not on PATH, although the equivalent full-path PowerShell command passes.
+  - The working tree still contains pre-existing uncommitted local files unrelated to the PR merge.

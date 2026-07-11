@@ -178,8 +178,8 @@ def create_app(config: type[Config] = Config) -> Flask:
 
     @app.errorhandler(Exception)
     def handle_exception(e):
-"""未捕获异常统一返回 {code:500,...}，不泄漏堆栈给前端，但把完整堆栈打到服务端日志。"""
-logger.exception("[500] 未捕获异常 %s %s -> %s", request.method, request.path, e)
+        """未捕获异常统一返回 {code:500,...}，不泄漏堆栈给前端，但把完整堆栈打到服务端日志。"""
+        logger.exception("[500] 未捕获异常 %s %s -> %s", request.method, request.path, e)
         return jsonify({
             "code": 500,
             "message": "Internal Server Error",
