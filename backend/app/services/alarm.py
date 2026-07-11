@@ -54,19 +54,49 @@ class AlarmService:
         New code should pass an AlarmEvent. region_id/type_ are kept for older
         callers. face_recognition uses only the lightweight frontend channel.
         """
-        if type_ == "face_recognition":
+        event_type = type_ if type_ else (event.type if event else None)
+        if event_type == "face_recognition":
             from ..api.ws import set_face_result
 
-            if extra:
-                msg = {"type": "stranger"}
-                if extra.get("face_match", "").startswith("member:"):
-                    msg = {
-                        "type": "member",
-                        "member_id": extra.get("member_id"),
-                        "name": extra.get("name", "unknown"),
-                    }
-                set_face_result(msg)
+            msg = {"type": "stranger"}
+            if event and event.extra and event.extra.get("face_match", "").startswith("member:"):
+                msg = {
+                    "type": "member",
+                    "member_id": event.extra.get("member_id"),
+                    "name": event.extra.get("name", "unknown"),
+                }
+            elif extra and extra.get("face_match", "").startswith("member:"):
+                msg = {
+                    "type": "member",
+                    "member_id": extra.get("member_id"),
+                    "name": extra.get("name", "unknown"),
+                }
+            set_face_result(msg)
             return None
+
+        if event_type == "face_spoof":
+            from ..api.ws import broadcast_face_result
+
+            extra_dict = event.extra if event and event.extra else (extra if isinstance(extra, dict) else {})
+            if extra_dict:
+                msg = {
+                    "type": "face_spoof",
+                    "confidence": extra_dict.get("confidence"),
+                    "reasons": extra_dict.get("reasons"),
+                }
+                broadcast_face_result(msg)
+            event = self._normalize_event(event, region_id, type_, extra)
+            event.level = 2
+            frame = frame or event.snapshot
+            if frame is not None:
+                event.snapshot_url = event.snapshot_url or self._save_snapshot(event, frame)
+            record = self._persist(event)
+            self._last_fired[(event.region_id, event.type)] = (time.time(), record.id)
+            payload = self._serialize_record(record)
+            self._broadcast(payload)
+            self._notify(record.id)
+            self._log_alarm_event(record, event)
+            return payload
 
         event = self._normalize_event(event, region_id, type_, extra)
         if not self._dedup(event.region_id, event.type):
@@ -297,6 +327,7 @@ class AlarmService:
             "fatigue": "疲劳提醒",
             "fight": "打架告警",
             "face_recognition": "人脸识别",
+            "face_spoof": "欺骗攻击告警",
         }.get(event.type, f"{event.type}告警")
 
         if actor and behavior:
@@ -318,6 +349,14 @@ class AlarmService:
             if fuse is not None:
                 parts.append(f"融合分{fuse}")
             return "，".join(parts)
+        
+        elif event.type == "face_spoof":
+            liveness_score = extra.get("liveness_score")
+            reasons = extra.get("reasons", [])
+            reason_text = "、".join(reasons) if reasons else "未知原因"
+            if liveness_score is not None:
+                return f"检测到欺骗攻击（活体分数={liveness_score:.3f}），原因：{reason_text}"
+            return f"检测到欺骗攻击，原因：{reason_text}"
         
         elif event.type == "intrusion":
             if face_match.startswith("member:"):

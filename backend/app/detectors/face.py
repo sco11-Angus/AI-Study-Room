@@ -350,7 +350,8 @@ class FaceDetector(Detector):
 
                     return [
                         AlarmEvent(
-                            region_id=0,
+                            region_id=frame.camera_id,
+                            camera_id=frame.camera_id,
                             type="face_spoof",
                             confidence=1.0 - score,
                             snapshot=frame.image,
@@ -378,37 +379,31 @@ class FaceDetector(Detector):
         # ---- 诊断：输出特征向量 + 逐一比对距离 ----
         feat_snap = [round(float(feature[i]), 4) for i in range(min(5, len(feature)))]
         result, extra = self._match_with_diag(feature, feat_snap)
-        now = time.time()
-        if (now - self._last_result_ts) < self._cooldown:
-            return []
-        self._last_result = result
-        self._last_result_ts = now
-        self._push_result(result, extra, face_crop, frame)
-
-        return [
-            AlarmEvent(
-                region_id=0,
-                type="face_recognition",
-                confidence=1.0,
-                snapshot=frame.image,
-                face_crop=face_crop,
-                extra=extra,
-            )
-        ]
         logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}")
 
         # ---- 滑动窗口投票（去抖动） ----
         self._vote_window.append(result)
-        # 窗口满后才做决策
         if len(self._vote_window) == self._vote_window.maxlen:
             unique = set(self._vote_window)
             if len(unique) == 1:
                 consensus = list(unique)[0]
                 if consensus != self._stable_result:
                     self._stable_result = consensus
-                    self._last_result = consensus
-                    self._last_result_ts = time.time()
-                    self._push_result(consensus, extra, face_crop, frame)
+                    now = time.time()
+                    if (now - self._last_result_ts) >= self._cooldown:
+                        self._last_result = consensus
+                        self._last_result_ts = now
+                        self._push_result(consensus, extra, face_crop, frame)
+                        return [
+                            AlarmEvent(
+                                region_id=0,
+                                type="face_recognition",
+                                confidence=1.0,
+                                snapshot=frame.image,
+                                face_crop=face_crop,
+                                extra=extra,
+                            )
+                        ]
             else:
                 logger.info(f"[face] 窗口未一致，跳过: {list(self._vote_window)}")
 
