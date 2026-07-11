@@ -15,7 +15,11 @@ backend/model_weights/*.onnx
 backend/model_weights/*.dat
 backend/snapshots/*.jpg
 backend/snapshots/*.png
+backend/clips/*.mp4
+
+# 告警视频片段（运行时产物，不入库）
 backend/clips/
+backend/snapshots/clips/
 backend/reports/
 backend/logs/
 
