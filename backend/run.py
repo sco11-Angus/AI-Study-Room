@@ -25,7 +25,7 @@ def start_services():
     from app.services.storage_manager import get_storage_manager
 
     print("[run] ===== 启动推理引擎 =====", flush=True)
-    engine = InferenceEngine()
+    engine = InferenceEngine(max_workers=2)
     # Intrusion writes person boxes into shared_ctx so fight detection can reuse them.
     engine.register(IntrusionPlugin(shared_ctx=engine.shared_ctx))
     engine.register(FaceDetector(skip_frames=10, cooldown=1.0))
@@ -74,4 +74,5 @@ if __name__ == "__main__":
     start_services()
     port = int(os.getenv("PORT", 5000))
     print(f"[run] ===== 启动Web服务 (端口: {port}) =====", flush=True)
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # threaded=True: 避免 3 条 WebSocket 长连接(video_feed/alarms/face)互相阻塞
+    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)

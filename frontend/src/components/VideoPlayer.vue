@@ -62,7 +62,7 @@ const connectWs = () => {
   ws = new WebSocket(wsUrl)
   ws.binaryType = 'blob'
 
-  ws.onmessage = (event) => {
+  ws.onmessage = async (event) => {
     if (event.data instanceof Blob) {
       const now = Date.now()
       if (now - lastFrameTime < FRAME_INTERVAL) return
@@ -72,22 +72,30 @@ const connectWs = () => {
       const canvas = canvasEl.value
       if (!canvas) return
 
-      const img = new Image()
-      img.onload = () => {
-        // 让 canvas 绘图缓冲区匹配视频帧真实尺寸，否则默认 300x150 会导致裁剪+变形
-        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
-          canvas.width = img.naturalWidth
-          canvas.height = img.naturalHeight
-          // 向父组件上报视频真实尺寸，用于设置框的宽高比
-          if (img.naturalWidth && img.naturalHeight) {
-            emit('dimensions', { width: img.naturalWidth, height: img.naturalHeight })
-          }
-        }
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(img, 0, 0)
-        URL.revokeObjectURL(img.src)
+      // createImageBitmap 比 new Image()+createObjectURL 解码更快、无异步乱序
+      let bitmap
+      try {
+        bitmap = await createImageBitmap(event.data)
+      } catch (e) {
+        return
       }
-      img.src = URL.createObjectURL(event.data)
+      // 组件可能已在等待期间卸载
+      if (!canvasEl.value) {
+        bitmap.close()
+        return
+      }
+      // 让 canvas 绘图缓冲区匹配视频帧真实尺寸，否则默认 300x150 会导致裁剪+变形
+      if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+        canvas.width = bitmap.width
+        canvas.height = bitmap.height
+        // 向父组件上报视频真实尺寸，用于设置框的宽高比
+        if (bitmap.width && bitmap.height) {
+          emit('dimensions', { width: bitmap.width, height: bitmap.height })
+        }
+      }
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(bitmap, 0, 0)
+      bitmap.close()
     } else {
       try {
         const data = JSON.parse(event.data)
