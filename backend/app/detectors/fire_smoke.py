@@ -11,9 +11,6 @@ from .base import AlarmEvent, Detector, Frame
 
 logger = logging.getLogger(__name__)
 
-class FireSmokePlugin(Detector):
-    name = "fire_smoke"
-
 class FireSmokeDetector:
     """对 fire/smoke 置信度做滑动窗口确认."""
 
@@ -166,6 +163,34 @@ class FireSmokePlugin(Detector):
             if candidate.exists():
                 return candidate
         return candidates[-1]
+
+    def raw_detections(self, image: Any) -> list[dict[str, Any]]:
+        """Return fire/smoke detections for direct API calls without debouncing."""
+        if self._model is None:
+            self.setup()
+
+        detections: list[dict[str, Any]] = []
+        results = self._infer(image)
+        for result in _iter_results(results):
+            boxes = getattr(result, "boxes", None)
+            if boxes is None:
+                continue
+
+            confs = _to_list(getattr(boxes, "conf", []))
+            classes = _to_list(getattr(boxes, "cls", []))
+            names = getattr(result, "names", None) or getattr(self._model, "names", {})
+            for cls_id, conf in zip(classes, confs):
+                class_name = _class_name(names, cls_id)
+                if class_name.lower() not in self._target_classes:
+                    continue
+                detections.append({
+                    "class": class_name,
+                    "confidence": round(float(conf), 3),
+                })
+        return detections
+
+    def reset_window(self) -> None:
+        self._debouncer = FireSmokeDetector()
 
     def _max_fire_smoke_conf(self, results: Any) -> tuple[float, str | None]:
         best_conf = 0.0

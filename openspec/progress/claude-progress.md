@@ -384,3 +384,27 @@
 - Remaining issues:
   - Network instability: RTMP stream shows frequent packet mismatch errors, causing intermittent frame drops.
   - When the stream is stable, `test-capture` can successfully grab frames from the scheduler's ring buffer.
+
+## Session 2026-07-11 Fire Smoke Backend Callable API
+
+- Goal: make the directly-started backend able to call the grafted open-source fire/smoke detector instead of only using standalone test scripts.
+- Baseline:
+  - `pwd` confirmed `C:\Users\ASUS\AI-Study-Room`.
+  - `.\init.cmd` passed before the change.
+  - `feature_list.json` still tracks Task C3 as blocked only by full live RTMP/video acceptance.
+- Actions:
+  - Added `FireSmokePlugin.raw_detections(image)` and `reset_window()` for direct backend requests.
+  - Added `backend/app/services/fire_smoke.py` as a shared, locked service facade around the grafted legacy YOLOv5 detector.
+  - Added `POST /api/alarms/fire-smoke/detect` in `backend/app/api/alarms.py`.
+  - The endpoint accepts multipart field `image` or JSON/form `image_path`, supports `camera_id`, `region_id`, `frames`, and optional `raise_alarm=true`.
+  - Added API regression coverage in `backend/tests/test_alarm_center.py` for uploaded image decoding and parameter forwarding.
+- Validation:
+  - `py_compile` passed for `backend/app/detectors/fire_smoke.py`, `backend/app/services/fire_smoke.py`, `backend/app/api/alarms.py`, and related tests.
+  - Focused pytest passed from `backend/`: `18 passed` for `tests/test_fire_smoke.py tests/test_alarm_center.py --basetemp=.pytest_tmp`.
+  - Real backend service call passed on `test_photos/fire_test.jpg`: legacy YOLOv5 fallback loaded `backend/model_weights/fire_smoke.pt`, detected fire/smoke, and produced one `fire_smoke` event after 30 frames.
+  - Related backend regression passed from `backend/`: `45 passed` for intrusion, fight, fight integration, face, alarm center, and fire smoke tests.
+  - Backend smoke passed with `ALL SMOKE TESTS PASSED`.
+  - `.\init.cmd` passed after the change.
+- Remaining risks:
+  - Full Task C3 acceptance still needs live RTMP/OBS positive fire-smoke footage and negative reflection/non-fire cases.
+  - Deployment still must include `backend/model_weights/fire_smoke.pt` and the legacy YOLOv5 source directory, or configure `FIRE_SMOKE_LEGACY_YOLOV5_DIR`.

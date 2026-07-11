@@ -67,7 +67,11 @@
         "Copied yolov5/best.pt locally to backend/model_weights/fire_smoke.pt; the file is non-empty and gitignored as a model artifact.",
         "Real legacy checkpoint load passed through FireSmokePlugin fallback: Ultralytics YOLOv8 rejected the old YOLOv5 pickle, then LegacyYolov5FireSmokeModel loaded it with names ['fire', 'smoke'].",
         "Demo image validation passed on fire-smoke-detect-yolov4-master/result/result_demo.jpg: model detected fire with confidence about 0.662 and smoke with confidence about 0.311; 30-frame debouncing produced AlarmEvent(type=fire_smoke).",
-        "Validation passed after integration: py_compile for config/fire_smoke/legacy_yolov5/test_fire_smoke, test_fire_smoke.py -> 7 passed, related backend regression -> 44 passed, backend smoke -> ALL SMOKE TESTS PASSED, real DB verify -> TASK_E_REAL_DB_VERIFY_OK."
+        "Validation passed after integration: py_compile for config/fire_smoke/legacy_yolov5/test_fire_smoke, test_fire_smoke.py -> 7 passed, related backend regression -> 44 passed, backend smoke -> ALL SMOKE TESTS PASSED, real DB verify -> TASK_E_REAL_DB_VERIFY_OK.",
+        "Added backend service facade app.services.fire_smoke.detect_fire_smoke_image() so direct backend startup can call the grafted legacy YOLOv5 fire/smoke model without relying on standalone scripts.",
+        "Added POST /api/alarms/fire-smoke/detect, accepting multipart image upload or JSON/form image_path, with frames support for the 30-frame debounce window and optional raise_alarm=true persistence/broadcast.",
+        "Real backend service validation passed on test_photos/fire_test.jpg: legacy YOLOv5 fallback loaded backend/model_weights/fire_smoke.pt, detected fire/smoke, and emitted one fire_smoke event after 30 frames.",
+        "Validation after backend-callable integration passed: py_compile for fire_smoke detector/service/API/tests, focused pytest 18 passed, related backend regression 45 passed, backend smoke test ALL SMOKE TESTS PASSED, and init.cmd smoke passed."
       ],
       "blockers": [
         "Full real RTMP/video fire-smoke acceptance still needs live camera or OBS footage with smoke/fire and non-fire reflection negative cases.",

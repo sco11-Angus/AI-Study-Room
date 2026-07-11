@@ -1,7 +1,10 @@
 """Alarm query, snapshot, and DingTalk confirmation APIs."""
 import json
 import os
+from pathlib import Path
 
+import cv2
+import numpy as np
 from flask import Blueprint, Response, jsonify, request, send_from_directory
 from flasgger import swag_from
 
@@ -233,6 +236,80 @@ def create_test_capture_alarm():
     return jsonify(code=0, message="ok", data=result)
 
 
+@bp.post("/fire-smoke/detect")
+def detect_fire_smoke_image():
+    """Run the grafted fire/smoke model through the backend.
+    ---
+    tags:
+      - Alarm
+      - FireSmoke
+    summary: Detect fire/smoke in one image
+    description: >
+      Backend-facing integration endpoint for the grafted legacy YOLOv5
+      fire/smoke model. Upload an image file with multipart/form-data field
+      "image", or send JSON with image_path. Set frames to FIRE_WINDOW when
+      you want to exercise the 30-frame debounce logic; set raise_alarm=true
+      to persist and broadcast produced fire_smoke AlarmEvents.
+    consumes:
+      - multipart/form-data
+      - application/json
+    parameters:
+      - name: image
+        in: formData
+        type: file
+        required: false
+      - name: body
+        in: body
+        required: false
+        schema:
+          type: object
+          properties:
+            image_path:
+              type: string
+              example: test_photos/fire_test.jpg
+            camera_id:
+              type: integer
+              default: 5
+            region_id:
+              type: integer
+              default: 0
+            frames:
+              type: integer
+              default: 1
+            raise_alarm:
+              type: boolean
+              default: false
+    responses:
+      200:
+        description: Detection result.
+      400:
+        description: Invalid image or request parameters.
+    """
+    payload = request.get_json(silent=True) or {}
+    try:
+        image = _read_request_image(payload)
+        camera_id = _parse_int(_request_value(payload, "camera_id", 5), "camera_id")
+        region_id = _optional_int(_request_value(payload, "region_id", None), "region_id")
+        frames = _parse_int(_request_value(payload, "frames", 1), "frames")
+        should_raise = _parse_bool(_request_value(payload, "raise_alarm", False))
+    except ValueError as exc:
+        return jsonify(code=400, message=str(exc), data=None), 400
+
+    from ..services.fire_smoke import detect_fire_smoke_image as run_detection
+
+    try:
+        data = run_detection(
+            image,
+            camera_id=camera_id,
+            region_id=region_id,
+            frames=frames,
+            raise_alarm=should_raise,
+        )
+    except Exception as exc:
+        return jsonify(code=500, message=f"fire_smoke detection failed: {exc}", data=None), 500
+    return jsonify(code=0, message="ok", data=data)
+
+
 @bp.post("/<int:alarm_id>/confirm")
 def confirm_alarm(alarm_id: int):
     """Confirm an alarm from an API client.
@@ -457,6 +534,49 @@ def _parse_float(value, field_name: str) -> float:
     if result <= 0:
         raise ValueError(f"{field_name} must be positive")
     return result
+
+
+def _request_value(payload: dict, key: str, default):
+    if key in request.form:
+        return request.form.get(key)
+    return payload.get(key, default)
+
+
+def _read_request_image(payload: dict) -> np.ndarray:
+    upload = request.files.get("image")
+    if upload is not None:
+        data = upload.read()
+        if not data:
+            raise ValueError("uploaded image is empty")
+        array = np.frombuffer(data, dtype=np.uint8)
+        image = cv2.imdecode(array, cv2.IMREAD_COLOR)
+        if image is None:
+            raise ValueError("uploaded image could not be decoded")
+        return image
+
+    image_path = str(payload.get("image_path") or request.form.get("image_path") or "").strip()
+    if not image_path:
+        raise ValueError("image file or image_path is required")
+    path = Path(image_path)
+    if not path.is_absolute():
+        path = Path(__file__).resolve().parents[3] / path
+    image = cv2.imread(str(path))
+    if image is None:
+        raise ValueError(f"image_path could not be read: {path}")
+    return image
+
+
+def _parse_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off", ""}:
+        return False
+    raise ValueError("raise_alarm must be a boolean")
 
 
 def _serialize_alarm(record) -> dict:

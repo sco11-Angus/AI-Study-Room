@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+from io import BytesIO
 from datetime import datetime
 
 import numpy as np
@@ -339,6 +340,63 @@ def test_alarm_api_lists_and_confirms(monkeypatch, db):
     missing_page = client.get("/api/alarms/404/confirm")
     assert missing_page.status_code == 404
     assert b"Alarm 404 not found" in missing_page.data
+
+
+def test_fire_smoke_detect_endpoint_accepts_uploaded_image(monkeypatch):
+    from app.api.alarms import bp
+
+    called = {}
+
+    def fake_detect(image, camera_id, region_id, frames, raise_alarm):
+        called.update({
+            "shape": image.shape,
+            "camera_id": camera_id,
+            "region_id": region_id,
+            "frames": frames,
+            "raise_alarm": raise_alarm,
+        })
+        return {
+            "detections": [{"class": "fire", "confidence": 0.9}],
+            "events": [],
+            "alarms": [],
+            "frames": frames,
+            "window": 30,
+            "threshold": 0.45,
+        }
+
+    monkeypatch.setattr("app.services.fire_smoke.detect_fire_smoke_image", fake_detect)
+
+    app = Flask(__name__)
+    app.register_blueprint(bp)
+    client = app.test_client()
+
+    import cv2
+
+    ok, encoded = cv2.imencode(".jpg", np.zeros((8, 8, 3), dtype=np.uint8))
+    assert ok
+
+    resp = client.post(
+        "/api/alarms/fire-smoke/detect",
+        data={
+            "image": (BytesIO(encoded.tobytes()), "frame.jpg"),
+            "camera_id": "5",
+            "region_id": "7",
+            "frames": "30",
+            "raise_alarm": "true",
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["data"]["detections"] == [{"class": "fire", "confidence": 0.9}]
+    assert called == {
+        "shape": (8, 8, 3),
+        "camera_id": 5,
+        "region_id": 7,
+        "frames": 30,
+        "raise_alarm": True,
+    }
 
 
 def test_stream_capture_reads_frame_after_warmup(monkeypatch):
