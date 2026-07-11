@@ -432,8 +432,8 @@ def _render_confirm_page(alarm_id: int) -> str:
     if not alarm:
         return _render_not_found_page(alarm_id)
 
-    snapshot_url = _public_http_url(alarm.get("snapshot_url", ""))
-    clip_url = _public_http_url(alarm.get("clip_url", ""))
+    snapshot_url = alarm.get("snapshot_url", "")
+    clip_url = alarm.get("clip_url", "")
     message = alarm.get("message") or _fallback_message(alarm)
     extra = alarm.get("extra") or {}
 
@@ -701,6 +701,62 @@ def get_daily_report():
     
     report = service.generate_report(report_date)
     return jsonify(code=0, message="ok", data=report)
+
+
+@bp.get("/storage-status")
+def get_storage_status():
+    """Get storage usage statistics.
+    ---
+    tags:
+      - Alarm
+    summary: Get storage status
+    description: >
+      Returns disk usage, snapshot count/size, clip count/size, and log count/size.
+      Useful for monitoring storage health on small servers.
+    responses:
+      200:
+        description: Storage statistics
+        schema:
+          type: object
+          properties:
+            code:
+              type: integer
+              example: 0
+            message:
+              type: string
+              example: ok
+            data:
+              type: object
+              properties:
+                disk_usage_percent:
+                  type: integer
+                  example: 45
+                snapshot_count:
+                  type: integer
+                  example: 128
+                clip_count:
+                  type: integer
+                  example: 15
+                log_count:
+                  type: integer
+                  example: 7
+                snapshot_size_mb:
+                  type: number
+                  example: 15.6
+                clip_size_mb:
+                  type: number
+                  example: 45.2
+                log_size_mb:
+                  type: number
+                  example: 0.8
+    """
+    from ..services.storage_manager import get_storage_manager
+    
+    try:
+        stats = get_storage_manager().get_storage_stats()
+        return jsonify(code=0, message="ok", data=stats)
+    except Exception as e:
+        return jsonify(code=500, message=f"failed to get storage status: {str(e)}"), 500
 
 
 def _serialize_alarm(record) -> dict:

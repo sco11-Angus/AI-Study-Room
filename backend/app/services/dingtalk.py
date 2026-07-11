@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -252,9 +253,10 @@ class DingTalkNotifier:
             if alarm.message:
                 lines.append(f"- \u544a\u8b66\u8bf4\u660e: {alarm.message}")
             if alarm.snapshot_url:
+                snapshot_b64 = self._snapshot_to_base64(alarm.snapshot_url)
+                if snapshot_b64:
+                    lines.append(f"![\u544a\u8b66\u6293\u62cd](data:image/jpeg;base64,{snapshot_b64})")
                 snapshot_url = self._public_url(alarm.snapshot_url)
-                if snapshot_url.startswith(("http://", "https://")):
-                    lines.append(f"![\u544a\u8b66\u6293\u62cd]({snapshot_url})")
                 lines.append(f"- \u6293\u62cd: {snapshot_url}")
             if alarm.clip_url:
                 lines.append(f"- \u56de\u653e: {self._public_url(alarm.clip_url)}")
@@ -284,7 +286,11 @@ class DingTalkNotifier:
         secret = self.leader_secret if guard_stage == "escalated" else self.secret
         if webhook:
             try:
-                self._http_post(self._webhook_url(webhook, secret), json=payload, timeout=5)
+                resp = self._http_post(self._webhook_url(webhook, secret), json=payload, timeout=5)
+                logger.info("[dingtalk] ActionCard sent stage=%s alarm_id=%s status=%s",
+                           guard_stage, alarm_id, resp.status_code)
+                if resp.status_code != 200:
+                    logger.warning("[dingtalk] ActionCard response: %s", resp.text)
             except Exception:
                 logger.exception(
                     "[dingtalk] failed to send ActionCard stage=%s alarm_id=%s",
@@ -438,6 +444,47 @@ class DingTalkNotifier:
             raise
         finally:
             session.close()
+
+    def _snapshot_to_base64(self, snapshot_url: str) -> str | None:
+        """将抓拍图片转换为Base64，用于直接嵌入钉钉消息。"""
+        try:
+            import cv2
+            import numpy as np
+
+            if snapshot_url.startswith("/"):
+                snapshot_path = os.path.join(
+                    os.path.dirname(__file__), "..", "..", "snapshots",
+                    os.path.basename(snapshot_url)
+                )
+            else:
+                snapshot_path = snapshot_url
+
+            if not os.path.exists(snapshot_path):
+                logger.warning("[dingtalk] snapshot file not found: %s", snapshot_path)
+                return None
+
+            img = cv2.imread(snapshot_path)
+            if img is None:
+                logger.warning("[dingtalk] failed to read snapshot: %s", snapshot_path)
+                return None
+
+            max_width = 640
+            max_height = 480
+            height, width = img.shape[:2]
+            if width > max_width or height > max_height:
+                scale = min(max_width / width, max_height / height)
+                new_width = int(width * scale)
+                new_height = int(height * scale)
+                img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+            _, buffer = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
+            b64_str = base64.b64encode(buffer).decode("utf-8")
+
+            logger.info("[dingtalk] snapshot converted to base64, size=%d bytes", len(b64_str))
+            return b64_str
+        except Exception:
+            logger.exception("[dingtalk] failed to convert snapshot to base64")
+            return None
 
     def _public_url(self, path_or_url: str) -> str:
         if not path_or_url:
