@@ -187,6 +187,50 @@
 - Remaining risks:
   - Real MySQL validation was not rerun in this Swagger-only session. The local virtual environment lacks the `mysql-connector-python` driver required by a `mysql+mysqlconnector://` URI.
   - `backend/model_weights/fire_smoke.pt` remains a 0-byte placeholder, so real video/model validation is still blocked.
+
+## Session 2026-07-10 Legacy Fire Smoke Model Graft
+
+- Goal: graft the root `fire-smoke-detect-yolov4-master` fire/smoke model into the current detector system.
+- Baseline:
+  - `.\init.cmd` passed.
+  - The project YOLOv4 `backup_fire/weights` file is 0 bytes.
+  - The usable model is `fire-smoke-detect-yolov4-master/yolov5/best.pt`, with classes `fire` and `smoke`.
+  - Modern `ultralytics.YOLO` rejects this checkpoint because it is an old YOLOv5 pickle.
+- Actions:
+  - Added `backend/app/detectors/legacy_yolov5.py` to load the local legacy YOLOv5 source tree, handle PyTorch `weights_only=False`, preprocess frames, run inference/NMS, and return a result object compatible with `FireSmokePlugin`.
+  - Updated `FireSmokePlugin.setup()` to try current Ultralytics first, then fall back to the legacy YOLOv5 adapter.
+  - Added fire/smoke legacy config knobs to `Config` and `.env.example`.
+  - Copied `fire-smoke-detect-yolov4-master/yolov5/best.pt` to local gitignored `backend/model_weights/fire_smoke.pt`.
+  - Added `scipy`, `tqdm`, and `mysql-connector-python` to backend requirements for legacy model loading and current MySQL URI support.
+  - Added a unit test that verifies old-checkpoint fallback wiring.
+- Validation:
+  - `py_compile` passed for config, fire_smoke, legacy_yolov5, and fire smoke tests.
+  - Real legacy checkpoint load passed; fallback model reported names `['fire', 'smoke']`.
+  - Demo image inference passed on `fire-smoke-detect-yolov4-master/result/result_demo.jpg`: fire confidence about 0.662 and smoke confidence about 0.311; 30-frame debounce emitted `AlarmEvent(type=fire_smoke)`.
+  - Focused fire smoke tests passed: 7 passed.
+  - Related backend regression passed: 44 passed, using a repo-local pytest temp directory because the system temp pytest directory is permission-blocked.
+  - Backend smoke passed with `ALL SMOKE TESTS PASSED`.
+  - Real DB verification passed with `TASK_E_REAL_DB_VERIFY_OK`, using a temporary `DATABASE_URI` built from `.env` `MYSQL_*` values.
+- Remaining risks:
+  - Final C3 acceptance still needs live RTMP/OBS fire-smoke video and negative reflection footage.
+  - Deployment must keep `fire-smoke-detect-yolov4-master/yolov5` available or configure `FIRE_SMOKE_LEGACY_YOLOV5_DIR`.
+  - The model artifact `backend/model_weights/fire_smoke.pt` is intentionally gitignored and must be provided on target machines.
+
+## Session 2026-07-10 Fire Smoke Image Test Scripts
+
+- Goal: wrap the two one-image fire/smoke test snippets into reusable Python scripts.
+- Actions:
+  - Added `backend/scripts/test_fire_smoke_image.py` for raw model detections.
+  - Added `backend/scripts/test_fire_smoke_alarm_image.py` for 30-frame debounce and `AlarmEvent(type=fire_smoke)` output.
+  - Both scripts default to `test_photos/fire_test.jpg` and accept a custom image path.
+  - Suppressed noisy legacy YOLOv5 fallback/log output so script output is easy to read.
+- Validation:
+  - `.\init.cmd` passed.
+  - `py_compile` passed for both scripts.
+  - Raw image script detected fire about 0.757, fire about 0.557, and smoke about 0.256 on `test_photos/fire_test.jpg`.
+  - Alarm image script emitted one `fire_smoke` event after 30 repeated frames.
+- Remaining risks:
+  - These scripts validate single-image behavior only; final C3 acceptance still needs real video/RTMP negative and positive cases.
   
 ## Session 2026-07-09 Task E Post-Merge Validation Repair
 
@@ -419,29 +463,4 @@
   - Fight MP4 evidence is currently video-only in the OpenCV encoder path; precise audio muxing remains a future enhancement if required.
   - If live RTMP capture fails again, first check for duplicate Python processes on port 5000 before changing stream code.
 
-## Session 2026-07-10 Alarm Center Backend Boundary Refinement
 
-- Goal: keep the user's responsibility scoped to the alarm-center backend and verify the interfaces other modules call.
-- Baseline:
-  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
-  - `feature_list.json` already marked Task E and Task G as completed, but still needed clearer backend evidence for confirmation detail pages, public DingTalk snapshots, scheduled daily report generation, and clip retention.
-  - `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL only printed the localhost proxy warning.
-- Actions:
-  - Kept the boundary backend-only: the alarm center consumes `AlarmEvent`, frame/snapshot data, `extra`, and optional `clip_url` rather than implementing other modules' detection, audio, or frontend internals.
-  - Enhanced `AlarmService._describe_alarm()` so detector-provided `extra.actor` and `extra.behavior` become a persisted message such as "Li Ming因pushed another student触发打架告警".
-  - Enhanced DingTalk ActionCards to include the persisted alarm message, a public snapshot markdown image when `PUBLIC_BASE_URL` makes it HTTP/HTTPS, and a clip playback URL when available.
-  - Enhanced `GET /api/alarms/{id}/confirm` so clicking a DingTalk confirm button now confirms the alarm and returns a detail page with message, status, snapshot, clip video/link, timestamps, face match, and extra context.
-  - Added `DailyReportService.generate_artifacts()` and `backend/scripts/daily_report.py` so the monitoring daily report can be generated by a scheduled backend job as JSON and Markdown files.
-  - Added `ClipRecorder.cleanup_old_clips()` using `CLIP_MAX_DAYS`, and call it before new clip recordings.
-  - Synced root `init.sql` with `alarm_event.clip_url` and `alarm_event.message`.
-- Validation:
-  - From `backend/`: `python -m py_compile app/api/alarms.py app/services/alarm.py app/services/dingtalk.py app/services/clip_recorder.py app/services/daily_report.py scripts/daily_report.py tests/test_alarm_center.py tests/test_task_g.py` passed.
-  - From `backend/`: `python -m pytest tests/test_alarm_center.py tests/test_task_g.py -q` passed: 20 passed, 13 warnings.
-  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_fire_smoke.py tests/test_alarm_center.py tests/test_task_g.py -q` passed: 53 passed, 20 warnings.
-  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
-  - From repo root: `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed with only the WSL localhost proxy warning.
-- Remaining risks:
-  - Frontend playback and display synchronization are Task F concerns; backend exposes REST/WS state and clip/snapshot URLs.
-  - Fight clips produced by the current alarm-center OpenCV fallback are video-only. If audio evidence is mandatory, A/D should provide a muxed clip or audio stream interface; alarm center can persist and expose the resulting `clip_url`.
-  - DingTalk group-visible snapshots still require `PUBLIC_BASE_URL` to be a public HTTP/HTTPS URL. `127.0.0.1` only works on the same machine.
-  - Changes were validated but not committed in this session because the user asked not to submit yet.

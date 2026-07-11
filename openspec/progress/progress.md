@@ -4,19 +4,43 @@
 
 - 仓库根目录：`C:\Users\ASUS\AI-Study-Room`
 
-- 标准启动路径：shell-capable 环境运行 `./init.sh`；本 Windows 会话中 `bash ./init.sh` 仍返回 WSL 无可用发行版提示，使用 PowerShell 等价检查。
+- 标准启动路径：shell-capable 环境运行 `./init.sh`；Windows PowerShell 运行 `.\init.cmd`。`init.cmd` 会用 `ExecutionPolicy Bypass` 调用 `init.ps1`，避免 PowerShell 直接执行 `.sh` 或受 `.ps1` 执行策略阻塞。
 
 - 标准验证路径：
   - `python backend/scripts/verify_task_e_real_db.py`（在仓库根目录，使用 `.env` 中 `DATABASE_URI` 验证真实 MySQL 任务 E 链路）
   - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`（在 `backend/` 下）
   - `python tests/smoke_test.py`（在 `backend/` 下）
-  - PowerShell-equivalent `init.sh` smoke
+  - `.\init.cmd`（Windows PowerShell smoke）
 
-- 当前最高优先级未完成功能：`task-c3-fire-smoke-detection` 已完成代码和 mock 验证，真实视频验收阻塞于非空 YOLO 烟火权重。
+- 当前最高优先级未完成功能：`task-c3-fire-smoke-detection` 已接入本地旧 YOLOv5 烟火权重并通过 demo 图推理；真实 RTMP/视频验收仍待用 live camera 或 OBS 素材完成。
 
 - 当前 blocker：
-  - `backend/model_weights/fire_smoke.pt` 是 0 字节占位文件，真实 YOLO 推理/视频验收需替换为训练好的非空权重。
-  - 本会话 `bash ./init.sh` 仍返回 WSL 无可用发行版提示；PowerShell 等价 smoke 已通过。
+  - 完整真实视频验收仍需 live camera 或 OBS 烟火/反光负样本素材。
+  - 部署时需保留 `fire-smoke-detect-yolov4-master/yolov5`，或通过 `FIRE_SMOKE_LEGACY_YOLOV5_DIR` 指向旧 YOLOv5 源码目录；`backend/model_weights/fire_smoke.pt` 是本地 gitignored 权重工件。
+
+### Session 006
+
+- 日期：2026-07-10
+
+- 本轮目标：修复 Windows PowerShell 下直接运行 `./init.sh` 被拒绝访问导致的启动验证入口问题。
+
+- 已完成：
+  - 新增 `init.ps1`，复用 `init.sh` 的必需文件和 markdown 文档数量检查。
+  - 新增 `init.cmd`，在 Windows PowerShell/cmd 下通过 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File init.ps1` 运行 smoke test。
+  - 更新 `AGENTS.md` 和 `README.md`，明确 Windows 下使用 `.\init.cmd`，shell-capable 环境继续使用 `./init.sh`。
+  - 更新 `init.sh`，让 shell 入口也检查 `init.ps1` 和 `init.cmd` 是否存在。
+
+- 运行过的验证：
+  - `.\init.cmd`：通过，输出 `Smoke test passed: required files present; markdown docs found.`
+  - `cmd /c init.cmd`：通过，输出 `Smoke test passed: required files present; markdown docs found.`
+  - `C:\Program Files\Git\bin\sh.exe ./init.sh`：通过，输出 `Smoke test passed: required files present; markdown docs found.`
+  - `.\init.ps1`：本机被 PowerShell execution policy 拦截，因此保留 `init.cmd` 作为 Windows 直接入口。
+
+- 已记录证据：已更新 `feature_list.json` 的初始化入口 evidence。
+
+- 已知风险或未解决问题：
+  - PowerShell 语法 `./init.sh` 在 Windows 上仍不能可靠支持，除非把 `init.sh` 替换为 Windows 原生可执行文件或修改系统级 shell launcher；仓库标准 Windows 入口改为 `.\init.cmd`。
+  - `backend/model_weights/fire_smoke.pt` 仍是 0 字节占位文件，真实 YOLO 推理/视频验收仍需训练权重。
 
 ## 会话记录
 
@@ -272,7 +296,7 @@
 
 - 已知风险或未解决问题：
   - 公网IP `156.224.79.175:5000` 返回502 Bad Gateway，校园网网关未配置端口映射。建议使用ngrok内网穿透解决外部访问问题。
-  - fire_smoke 权重文件仍为0字节占位。
+  - fire_smoke 权重文件为本地模型工件，按 `.gitignore` 不入库。
 
 - 下一步最佳动作：配置ngrok内网穿透，实现公网可访问的确认页面和回放功能。
 
@@ -366,4 +390,3 @@
   - fire_smoke 权重文件为本地模型工件，按 `.gitignore` 不入库。
 
 - 下一步最佳动作：测试人员验证欺骗攻击和陌生人告警推送功能是否正常。
-

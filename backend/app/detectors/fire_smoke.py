@@ -11,9 +11,6 @@ from .base import AlarmEvent, Detector, Frame
 
 logger = logging.getLogger(__name__)
 
-class FireSmokePlugin(Detector):
-    name = "fire_smoke"
-
 class FireSmokeDetector:
     """对 fire/smoke 置信度做滑动窗口确认."""
 
@@ -67,10 +64,15 @@ class FireSmokePlugin(Detector):
         if weights.stat().st_size <= 0:
             raise RuntimeError(f"[fire_smoke] 模型权重为空文件: {weights}")
 
-        from ultralytics import YOLO
+        try:
+            from ultralytics import YOLO
 
-        self._model = YOLO(str(weights))
-        logger.info("[fire_smoke] YOLO 权重加载完成: %s", weights)
+            self._model = YOLO(str(weights))
+            logger.info("[fire_smoke] YOLO 权重加载完成: %s", weights)
+        except Exception as exc:
+            logger.warning("[fire_smoke] Ultralytics YOLO 加载失败，尝试旧 YOLOv5 适配: %s", exc)
+            self._model = self._load_legacy_yolov5(weights)
+            logger.info("[fire_smoke] legacy YOLOv5 权重加载完成: %s", weights)
 
     def detect(self, frame: Frame) -> list[AlarmEvent]:
         if self._model is None:
@@ -133,6 +135,62 @@ class FireSmokePlugin(Detector):
             if candidate.exists():
                 return candidate
         return candidates[1]
+
+    def _load_legacy_yolov5(self, weights: Path) -> Any:
+        from .legacy_yolov5 import LegacyYolov5FireSmokeModel
+
+        return LegacyYolov5FireSmokeModel(
+            weights_path=weights,
+            source_dir=self._resolve_legacy_yolov5_dir(),
+            image_size=Config.FIRE_SMOKE_IMG_SIZE,
+            conf_thres=Config.FIRE_SMOKE_DETECT_CONF,
+            iou_thres=Config.FIRE_SMOKE_IOU,
+            device=Config.FIRE_SMOKE_DEVICE,
+        )
+
+    def _resolve_legacy_yolov5_dir(self) -> Path:
+        configured = Path(Config.FIRE_SMOKE_LEGACY_YOLOV5_DIR)
+        if configured.is_absolute():
+            return configured
+
+        backend_root = Path(__file__).resolve().parents[2]
+        repo_root = backend_root.parent
+        candidates = [
+            backend_root / configured,
+            repo_root / configured,
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+        return candidates[-1]
+
+    def raw_detections(self, image: Any) -> list[dict[str, Any]]:
+        """Return fire/smoke detections for direct API calls without debouncing."""
+        if self._model is None:
+            self.setup()
+
+        detections: list[dict[str, Any]] = []
+        results = self._infer(image)
+        for result in _iter_results(results):
+            boxes = getattr(result, "boxes", None)
+            if boxes is None:
+                continue
+
+            confs = _to_list(getattr(boxes, "conf", []))
+            classes = _to_list(getattr(boxes, "cls", []))
+            names = getattr(result, "names", None) or getattr(self._model, "names", {})
+            for cls_id, conf in zip(classes, confs):
+                class_name = _class_name(names, cls_id)
+                if class_name.lower() not in self._target_classes:
+                    continue
+                detections.append({
+                    "class": class_name,
+                    "confidence": round(float(conf), 3),
+                })
+        return detections
+
+    def reset_window(self) -> None:
+        self._debouncer = FireSmokeDetector()
 
     def _max_fire_smoke_conf(self, results: Any) -> tuple[float, str | None]:
         best_conf = 0.0

@@ -2,7 +2,12 @@
 import os
 from pathlib import Path
 from urllib.parse import quote_plus
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
 
 env_path = Path(__file__).parent.parent / ".env"
@@ -33,6 +38,23 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
+def _default_database_uri() -> str:
+    """Use SQLite locally unless DB_* settings explicitly request MySQL."""
+    has_mysql_env = any(
+        os.getenv(key)
+        for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")
+    )
+    if not has_mysql_env:
+        return "sqlite:///study_room.db"
+
+    host = os.getenv("DB_HOST", "localhost")
+    port = os.getenv("DB_PORT", "3306")
+    user = os.getenv("DB_USER", "root")
+    password = os.getenv("DB_PASSWORD", "")
+    name = os.getenv("DB_NAME", "study_room")
+    return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}?charset=utf8mb4"
+
+
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
@@ -48,11 +70,20 @@ class Config:
     EAR_THRESH = float(os.getenv("EAR_THRESH", 0.2))  # 闭眼阈值
     EAR_DURATION = float(os.getenv("EAR_DURATION", 2))  # 闭眼持续(秒)
     MAR_THRESH = float(os.getenv("MAR_THRESH", 0.6))  # 打哈欠阈值
+    FATIGUE_ALERT_LEVEL = int(os.getenv("FATIGUE_ALERT_LEVEL", 1))
 
     # 烟火检测 (§6.2)
     FIRE_WINDOW = int(os.getenv("FIRE_WINDOW", 30))   # 滑动窗口帧数
     FIRE_CONF = float(os.getenv("FIRE_CONF", 0.45))   # 平均置信度阈值
     FIRE_SMOKE_WEIGHTS = os.getenv("FIRE_SMOKE_WEIGHTS", "fire_smoke.pt")
+    FIRE_SMOKE_LEGACY_YOLOV5_DIR = os.getenv(
+        "FIRE_SMOKE_LEGACY_YOLOV5_DIR",
+        "fire-smoke-detect-yolov4-master/yolov5",
+    )
+    FIRE_SMOKE_IMG_SIZE = int(os.getenv("FIRE_SMOKE_IMG_SIZE", 640))
+    FIRE_SMOKE_DETECT_CONF = float(os.getenv("FIRE_SMOKE_DETECT_CONF", 0.25))
+    FIRE_SMOKE_IOU = float(os.getenv("FIRE_SMOKE_IOU", 0.45))
+    FIRE_SMOKE_DEVICE = os.getenv("FIRE_SMOKE_DEVICE", "cpu")
     FIRE_SMOKE_REGION_ID = int(os.getenv("FIRE_SMOKE_REGION_ID", 0))
 
     # 音视频融合打架检测 (任务书 D)
@@ -62,8 +93,9 @@ class Config:
     FIGHT_DURATION = float(os.getenv("FIGHT_DURATION", 3))  # 候选持续确认(秒)
     FIGHT_ALIGN_TOL = float(os.getenv("FIGHT_ALIGN_TOL", 2))  # 音视频时间对齐容差(秒)
     FIGHT_LEVEL = int(os.getenv("FIGHT_LEVEL", 2))        # 告警分级(人身安全高优先)
-    # 人员框来源: shared=复用 B 的引擎共享上下文(生产, 合规); 不重复加载 YOLO
-    FIGHT_PERSON_SOURCE = os.getenv("FIGHT_PERSON_SOURCE", "shared")
+    # 人员框来源: face=复用 B 的 dlib 人脸检测(默认, 零新依赖即可跑通);
+    #            shared=复用 B 的引擎共享上下文(需 B 写入才生效, 合规首选)
+    FIGHT_PERSON_SOURCE = os.getenv("FIGHT_PERSON_SOURCE", "face")
 
     # 音频管线 (任务书 D1)
     AUDIO_WINDOW = float(os.getenv("AUDIO_WINDOW", 1.0))  # 分析窗口(秒)
@@ -92,6 +124,7 @@ class Config:
         f"{DB_HOST}:{DB_PORT}/{DB_NAME}?charset={DB_CHARSET}"
     )
 
+
     # 模型权重 / 抓拍
     MODEL_DIR = os.getenv("MODEL_DIR", "model_weights")
     SNAPSHOT_DIR = os.getenv(
@@ -99,11 +132,18 @@ class Config:
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "snapshots")),
     )
 
-    # 活体检测
+    # 活体检测（主动/被动信号分离融合）
     LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "true").lower() == "true"
-    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.5))
+    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.50))
     LIVENESS_HISTORY_SIZE = int(os.getenv("LIVENESS_HISTORY_SIZE", 30))
     LIVENESS_EAR_BLINK_THRESH = float(os.getenv("LIVENESS_EAR_BLINK_THRESH", 0.25))
+
+    # EMA 平滑系数（0~1，越大响应越快，越小越平滑）
+    LIVENESS_EMA_ALPHA = float(os.getenv("LIVENESS_EMA_ALPHA", 0.3))
+
+    # 反欺骗模型 Ensemble 权重
+    ANTISPOOF_WEIGHT_ONNX = float(os.getenv("ANTISPOOF_WEIGHT_ONNX", 0.5))
+    ANTISPOOF_WEIGHT_PTH = float(os.getenv("ANTISPOOF_WEIGHT_PTH", 0.5))
 
     # 违规抓拍回放 (任务书 G)
     CLIP_PRE_SECONDS = int(os.getenv("CLIP_PRE_SECONDS", 5))    # 违规前录制秒数

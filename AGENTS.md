@@ -12,7 +12,7 @@
 
 4. 用 `git log --oneline -5` 看最近提交。
 
-5. 运行 `./init.sh`。
+5. 运行标准启动验证：shell-capable 环境用 `./init.sh`；Windows PowerShell 用 `.\init.cmd`。
 
 6. 在开始新功能前，先跑必需的 smoke test 或端到端验证。
 
@@ -36,7 +36,7 @@
 
 - `openspec/progress/progress.md`：会话进度和当前已验证状态
 
-- `init.sh`：统一的启动与验证入口
+- `init.sh` / `init.ps1` / `init.cmd`：统一的启动与验证入口（分别用于 shell、PowerShell 实现、Windows 直接入口）
 
 - `session-handoff.md`：较长会话可选的交接摘要
 
@@ -64,7 +64,7 @@
 
 4. 在工作处于安全状态后，用清晰的提交信息提交
 
-5. 保证下一轮会话可以直接运行 `./init.sh`
+5. 保证下一轮会话可以直接运行标准启动入口（shell 用 `./init.sh`；Windows PowerShell 用 `.\init.cmd`）
 
 
 

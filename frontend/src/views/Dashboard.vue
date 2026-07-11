@@ -1,8 +1,47 @@
 <template>
   <div class="page">
-    <div v-if="faceResult" class="face-banner" :class="faceResult.type">
-      <span v-if="faceResult.type === 'member'">欢迎你, {{ faceResult.name }}</span>
-      <span v-else>陌生人</span>
+    <!-- 人脸识别横幅 — 支持活体检测多状态 -->
+    <div v-if="faceResult" class="face-banner" :class="[faceResult.type, { 'with-liveness': faceResult.liveness_passed !== undefined }]">
+      <!-- member 成功识别 -->
+      <div v-if="faceResult.type === 'member'" class="banner-content">
+        <span class="banner-icon">✅</span>
+        <div class="banner-text">
+          <div class="banner-title">欢迎你, {{ faceResult.name }}</div>
+          <div v-if="faceResult.liveness_passed" class="banner-meta">活体已验证 • 伪影评分: {{ (faceResult.artifact_score || 0).toFixed(2) }}</div>
+        </div>
+      </div>
+      <!-- 陌生人 -->
+      <div v-else-if="faceResult.type === 'stranger'" class="banner-content">
+        <span class="banner-icon">⚠️</span>
+        <div class="banner-text">
+          <div class="banner-title">陌生人</div>
+          <div class="banner-meta">无法识别的用户</div>
+        </div>
+      </div>
+      <!-- 伪造/反光/屏幕回放 -->
+      <div v-else-if="faceResult.type === 'face_spoof'" class="banner-content">
+        <span class="banner-icon">❌</span>
+        <div class="banner-text">
+          <div class="banner-title">检测到可疑媒体</div>
+          <div class="banner-meta">{{ reasonMap[faceResult.reason] || faceResult.reason || '请勿使用虚假媒体' }}</div>
+        </div>
+      </div>
+      <!-- 检测中 -->
+      <div v-else-if="faceResult.type === 'detecting'" class="banner-content">
+        <span class="banner-icon spinning">🔍</span>
+        <div class="banner-text">
+          <div class="banner-title">{{ faceResult.message || '检测中' }}</div>
+          <div v-if="faceResult.stage" class="banner-meta">阶段: {{ stageMap[faceResult.stage] || faceResult.stage }}</div>
+        </div>
+      </div>
+      <!-- 重试 -->
+      <div v-else-if="faceResult.type === 'retry'" class="banner-content">
+        <span class="banner-icon spinning">🔄</span>
+        <div class="banner-text">
+          <div class="banner-title">重新检测中</div>
+          <div class="banner-meta">请保持摄像头可见</div>
+        </div>
+      </div>
     </div>
 
     <div class="dashboard">
@@ -48,6 +87,23 @@ const flashOn = ref(true)
 let wsAlarms, wsFace, reconnectTimer, beepTimer, audioContext
 
 const alarmStore = useAlarmStore()
+
+// 伪影原因映射表
+const reasonMap = {
+  'detected_reflection': '检测到反光/屏幕反射',
+  'screen_texture': '检测到屏幕纹理',
+  'eye_movement_insufficient': '眼球微动不足（可能是视频回放）',
+  'blink_insufficient': '眨眼频率异常',
+  'motion_spoof': '检测到异常运动模式'
+}
+
+// 检测阶段映射表
+const stageMap = {
+  'liveness_check': '活体检测中',
+  'artifact_check': '媒体伪影检测中',
+  'matching': '会员匹配中',
+  'extracting': '特征提取中'
+}
 
 function fetchStreamUrl() {
   getCameras()
@@ -283,13 +339,31 @@ const onConfirm = (id) => {
 }
 
 .face-banner {
-  text-align: center;
-  padding: 16px 0;
-  font-size: 18px;
-  font-weight: 600;
+  padding: 16px 20px;
   border-radius: 12px;
   margin-bottom: 20px;
   animation: slideDown 0.5s ease;
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.banner-icon {
+  font-size: 32px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.banner-icon.spinning {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 @keyframes slideDown {
@@ -303,6 +377,23 @@ const onConfirm = (id) => {
   }
 }
 
+.banner-text {
+  text-align: left;
+  flex: 1;
+}
+
+.banner-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.banner-meta {
+  font-size: 12px;
+  opacity: 0.85;
+  font-weight: 400;
+}
+
 .face-banner.member {
   background: linear-gradient(135deg, #95d475 0%, #67c23a 100%);
   color: #fff;
@@ -310,9 +401,27 @@ const onConfirm = (id) => {
 }
 
 .face-banner.stranger {
-  background: linear-gradient(135deg, #c0c4cc 0%, #909399 100%);
+  background: linear-gradient(135deg, #e6a23c 0%, #f3c96e 100%);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(144, 147, 153, 0.3);
+  box-shadow: 0 4px 12px rgba(230, 162, 60, 0.3);
+}
+
+.face-banner.detecting {
+  background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+}
+
+.face-banner.retry {
+  background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+}
+
+.face-banner.face_spoof {
+  background: linear-gradient(135deg, #f56c6c 0%, #ff6b6b 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(245, 108, 108, 0.3);
 }
 
 .dashboard {

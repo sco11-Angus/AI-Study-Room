@@ -8,11 +8,13 @@
       "description": "Initialize the local project as a Git repository and push the markdown project documents to GitHub.",
       "required_validation": [
         "./init.sh",
+        ".\\init.cmd",
         "git status --short",
         "git push -u origin main"
       ],
       "evidence": [
         "Created init.sh as the standard smoke-test entry point.",
+        "Added init.ps1 and init.cmd so Windows PowerShell can run the same smoke test through .\\init.cmd without depending on WSL or direct .sh execution.",
         "Created feature_list.json as the feature status source of truth.",
         "PowerShell-equivalent smoke test passed because this Windows host only exposes the WSL bash shim and has no installed WSL distribution.",
         "Merged remote main history without file conflicts.",
@@ -60,10 +62,20 @@
         "Backend related pytest passed: 38 passed for intrusion, fight, fight integration, face, alarm center, and fire smoke tests.",
         "Backend smoke test passed after restoring merge-damaged foundation pieces.",
         "PowerShell-equivalent init smoke passed with 15 markdown docs.",
-        "Added Swagger docs for fire/smoke integration endpoints: cameras, regions, alarms, snapshots, and WebSocket stream/alarm paths. Verified /apispec_1.json contains FireSmoke on 11 required operations."
+        "Added Swagger docs for fire/smoke integration endpoints: cameras, regions, alarms, snapshots, and WebSocket stream/alarm paths. Verified /apispec_1.json contains FireSmoke on 11 required operations.",
+        "Integrated the repository-local fire-smoke-detect-yolov4-master/yolov5 legacy YOLOv5 checkpoint through a backend compatibility adapter after confirming the YOLOv4 weight placeholder is empty and the usable model is yolov5/best.pt with fire/smoke classes.",
+        "Copied yolov5/best.pt locally to backend/model_weights/fire_smoke.pt; the file is non-empty and gitignored as a model artifact.",
+        "Real legacy checkpoint load passed through FireSmokePlugin fallback: Ultralytics YOLOv8 rejected the old YOLOv5 pickle, then LegacyYolov5FireSmokeModel loaded it with names ['fire', 'smoke'].",
+        "Demo image validation passed on fire-smoke-detect-yolov4-master/result/result_demo.jpg: model detected fire with confidence about 0.662 and smoke with confidence about 0.311; 30-frame debouncing produced AlarmEvent(type=fire_smoke).",
+        "Validation passed after integration: py_compile for config/fire_smoke/legacy_yolov5/test_fire_smoke, test_fire_smoke.py -> 7 passed, related backend regression -> 44 passed, backend smoke -> ALL SMOKE TESTS PASSED, real DB verify -> TASK_E_REAL_DB_VERIFY_OK.",
+        "Added backend service facade app.services.fire_smoke.detect_fire_smoke_image() so direct backend startup can call the grafted legacy YOLOv5 fire/smoke model without relying on standalone scripts.",
+        "Added POST /api/alarms/fire-smoke/detect, accepting multipart image upload or JSON/form image_path, with frames support for the 30-frame debounce window and optional raise_alarm=true persistence/broadcast.",
+        "Real backend service validation passed on test_photos/fire_test.jpg: legacy YOLOv5 fallback loaded backend/model_weights/fire_smoke.pt, detected fire/smoke, and emitted one fire_smoke event after 30 frames.",
+        "Validation after backend-callable integration passed: py_compile for fire_smoke detector/service/API/tests, focused pytest 18 passed, related backend regression 45 passed, backend smoke test ALL SMOKE TESTS PASSED, and init.cmd smoke passed."
       ],
       "blockers": [
-        "backend/model_weights/fire_smoke.pt is currently a 0-byte placeholder. Real YOLO/video validation requires replacing it with a trained non-empty fire/smoke weight file."
+        "Full real RTMP/video fire-smoke acceptance still needs live camera or OBS footage with smoke/fire and non-fire reflection negative cases.",
+        "Deployment must keep fire-smoke-detect-yolov4-master/yolov5 available or set FIRE_SMOKE_LEGACY_YOLOV5_DIR to the bundled legacy YOLOv5 source directory; the local model weight backend/model_weights/fire_smoke.pt is intentionally gitignored."
       ]
     },
     {
@@ -165,6 +177,111 @@
         "Task G backend capture/playback/report flow is complete; frontend playback UI is owned by Task F and existing staged frontend files were not changed in this backend verification pass.",
         "Fight clips produced by the current alarm-center OpenCV fallback are video-only. If the team requires audio evidence, A/D should provide a muxed clip or audio stream interface; the alarm center can persist and expose the resulting clip_url.",
         "If live capture fails again, first check for duplicate Python processes listening on port 5000 before changing RTMP code."
+      ]
+    },
+    {
+      "id": "task-b-fatigue-companion",
+      "name": "Implement Task B fatigue detection and study companion",
+      "priority": 6,
+      "status": "completed",
+      "description": "Implement Dlib-landmark EAR/MAR fatigue detection, the FatiguePlugin, seat status persistence and hot reload, and configurable fatigue alarm level for DingTalk reminders.",
+      "required_validation": [
+        "python -m py_compile backend/app/detectors/fatigue.py backend/app/api/seat_status.py backend/app/models/entities.py backend/app/config.py backend/app/services/alarm.py backend/app/detectors/face.py backend/app/__init__.py backend/app/stream/scheduler.py backend/run.py backend/tests/test_fatigue.py",
+        "python -m pytest tests/test_fatigue.py tests/test_alarm_center.py tests/test_face.py tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py",
+        "python tests/smoke_test.py",
+        "PowerShell-equivalent init.sh smoke test",
+        "bash ./init.sh"
+      ],
+      "evidence": [
+        "Created branch codex/task-b-fatigue-companion from latest origin/main after stashing pre-existing local dirty work.",
+        "Fixed init.sh to validate root PRD.md after the PRD was moved out of openspec/specs.",
+        "Implemented FatigueDetector EAR/MAR state machine with sleepy/yawn outcomes and corrected inner-mouth 60-67 MAR indexing.",
+        "Implemented FatiguePlugin with Dlib landmark loading, active studying-seat reload, per-region state, hot update handling, and configurable AlarmEvent(type=fatigue) reminders.",
+        "Implemented POST /api/seat-status validation, seat-region requirement, application-level upsert, and fatigue plugin hot reload through the live StreamScheduler engine.",
+        "Registered FatiguePlugin in backend/run.py and exposed StreamScheduler.engine for API-triggered hot updates.",
+        "Fixed baseline blockers discovered by regression: duplicate Guard ORM model, missing AlarmService helper methods, FaceDetector mock fallback, duplicate WebSocket route registration, and local default DATABASE_URI fallback.",
+        "Added backend/tests/test_fatigue.py covering EAR duration, reset, yawn, level=0 fatigue events, resting disable, seat-status validation/upsert, hot reload, and multi-seat enable behavior.",
+        "py_compile passed for modified backend files and the new fatigue test.",
+        "pytest passed: 41 passed for fatigue, alarm center, face, intrusion, fight, and fight integration tests.",
+        "backend/tests/smoke_test.py passed.",
+        "PowerShell-equivalent init smoke passed with 15 markdown docs.",
+        "Docker dev runtime prepared: backend uses stable image ai-study-room-backend-env:dev, mounts ../backend and ../backend/model_weights, and runs gunicorn --reload for code reload without image rebuild.",
+        "Container runtime verified: dlib 19.24.9, cv2 4.9.0, shape_predictor_68_face_landmarks.dat present, demo seat region 5 set to studying, and POST /api/seat-status returned success.",
+        "RTMP pipeline debug verified with a temporary local test stream; after user clarification, Docker runtime defaults were corrected to the cloud RTMP server 49.233.71.82:9090.",
+        "Cloud RTMP runtime verified: backend pulled rtmp://49.233.71.82:9090/live/test successfully and persisted level=0 fatigue alarms with extra.kind=sleepy.",
+        "Fixed AlarmService camera_id persistence so camera_id=0 is stored as 0 instead of NULL; focused alarm/fatigue tests passed.",
+        "Pulled latest frontend files from origin/main and integrated /api/cameras so the dashboard can resolve the cloud RTMP camera stream into an HTTP-FLV playback URL; frontend production build passed.",
+        "Changed fatigue alerts to use configurable FATIGUE_ALERT_LEVEL, defaulting to 1 so studying-seat sleepy/yawn events enter the existing DingTalk notification path.",
+        "pytest passed: 15 passed for tests/test_fatigue.py and tests/test_alarm_center.py after adding coverage that level=1 fatigue alarms notify.",
+        "Docker backend was recreated without image rebuild; container config confirmed FATIGUE_ALERT_LEVEL=1 and DINGTALK_WEBHOOK unset.",
+        "Container smoke alarm id 48 persisted as type=fatigue level=1 status=notified with a primary notification_log record, proving the DingTalk notifier path is invoked; real external DingTalk send remains blocked until DINGTALK_WEBHOOK is configured."
+      ],
+      "blockers": [
+        "bash ./init.sh still cannot run on this Windows host because bash.exe is the WSL shim and no WSL distribution is installed; PowerShell-equivalent smoke was used and passed.",
+        "Runtime Dlib fatigue inference requires backend/model_weights/shape_predictor_68_face_landmarks.dat or MODEL_DIR to point at that file; this workspace currently has the file, deployments must also provide it.",
+        "./init.sh cannot be executed directly from this PowerShell session due OS permission/WSL shim behavior; py_compile and Docker runtime checks were used for this Docker-focused pass.",
+        "Real DingTalk external send is not verified because DINGTALK_WEBHOOK is not set in the current Docker environment."
+      ]
+    },
+    {
+      "id": "task-b-intrusion-e2e",
+      "name": "Verify Task B danger-zone intrusion end to end",
+      "priority": 7,
+      "status": "completed",
+      "description": "Verify frontend danger-zone save API, backend hot reload, intrusion detection, alarm persistence, snapshot creation, and alarm query visibility.",
+      "required_validation": [
+        "POST /api/regions with a danger_zone polygon",
+        "GET /api/regions?camera_id=0",
+        "docker compose logs show intrusion active danger zones updated",
+        "docker compose exec backend PYTHONPATH=/app python scripts/verify_intrusion_e2e.py",
+        "GET /api/alarms?status=notified",
+        "python -m py_compile backend/scripts/verify_intrusion_e2e.py backend/app/detectors/intrusion.py backend/app/api/regions.py backend/run.py",
+        "python -m pytest tests/test_intrusion.py tests/test_alarm_center.py",
+        "npm.cmd --prefix frontend run build"
+      ],
+      "evidence": [
+        "Implemented database-backed /api/regions CRUD with validation for polygon >= 3 points, x_distance >= 0, y_stay_time >= 0, and type in danger_zone/seat.",
+        "Implemented IntrusionPlugin registration in backend/run.py and restored PersonDetector + per-region IntrusionDetector runtime loading from the region table.",
+        "POST /api/regions created danger_zone id=6 named E2E Intrusion Zone for camera_id=0 with polygon [[0,0],[640,0],[640,360],[0,360]].",
+        "GET /api/regions?camera_id=0 returned region id=6 with type=danger_zone and the saved polygon, matching the frontend draw/save data shape.",
+        "Backend logs showed [engine] registered detector intrusion and [intrusion] active danger zones: [6], proving hot reload consumed the saved region.",
+        "Container verification script scripts/verify_intrusion_e2e.py simulated a person box entering region 6 through IntrusionPlugin and persisted alarm id=103.",
+        "GET /api/alarms?status=notified returned alarm id=103 with type=intrusion, region_id=6, camera_id=0, status=notified, face_match=stranger, and person_box evidence.",
+        "Snapshot file /app/snapshots/alarm_6_intrusion_1783691102938.jpg exists for alarm id=103.",
+        "Focused backend tests passed: python -m pytest tests/test_intrusion.py tests/test_alarm_center.py -> 9 passed.",
+        "Frontend production build passed via npm.cmd --prefix frontend run build."
+      ],
+      "blockers": [
+        "Live cloud RTMP rtmp://49.233.71.82:9090/live/test was unavailable during this verification window: direct container OpenCV check returned opened False/read False, so the person-entry trigger was verified with a deterministic mocked person box instead of a live human camera frame.",
+        "Direct npm.cmd run build from inside the Chinese-character frontend path failed with a Vite/Rollup absolute-path emitted asset error; npm.cmd --prefix frontend run build from the repository root passed."
+      ]
+    },
+    {
+      "id": "task-b-seat-identity-mvp",
+      "name": "Implement simple seat identity check",
+      "priority": 8,
+      "status": "completed",
+      "description": "For active studying seats, compare the face match of a person entering the seat polygon against the reserved seat_status.user_id and raise occupy for mismatches.",
+      "required_validation": [
+        "python -m py_compile backend/app/detectors/intrusion.py backend/app/api/seat_status.py backend/tests/test_intrusion_identity.py backend/tests/test_fatigue.py",
+        "python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_fatigue.py tests/test_alarm_center.py",
+        "docker compose logs show active reserved seats"
+      ],
+      "evidence": [
+        "Extended IntrusionPlugin to load active studying seat regions from seat_status joined with region type=seat.",
+        "When a person enters an active reserved seat, IntrusionPlugin crops the person box, runs FaceMatcher, and compares the result to member:<seat_status.user_id>.",
+        "If the face match equals the reserved user, no alarm is produced.",
+        "If the face match differs or falls back to stranger, IntrusionPlugin raises AlarmEvent(type=occupy) with extra.kind=unauthorized_seat, expected_user_id, actual_face_match, and person_box.",
+        "POST /api/seat-status now hot-updates both fatigue and intrusion plugins, so reservation/status changes are picked up without backend restart.",
+        "Added backend/tests/test_intrusion_identity.py covering reserved-user no-alarm and unreserved-user occupy alarm.",
+        "Focused tests passed: python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_fatigue.py tests/test_alarm_center.py -> 20 passed.",
+        "Backend container logs showed [intrusion] active reserved seats: [5], confirming runtime loaded active studying seats.",
+        "After placing dlib_face_recognition_resnet_model_v1.dat, Docker runtime verified /app/model_weights/dlib_face_recognition_resnet_model_v1.dat exists with size 22466066 and FaceMatcher.dlib_loaded=True.",
+        "Backend restart logs showed [face] FaceMatcher initialized and [face] FaceDetector ready."
+      ],
+      "blockers": [
+        "Real reserved-user no-alarm testing still requires enrolled member.feature records for the same user_id as seat_status. Current Docker database has seat_status region_id=5 user_id=1001 status=studying, but the member table is empty.",
+        "Cloud RTMP live stream remains external-state dependent; direct container OpenCV check on rtmp://49.233.71.82:9090/live/test returned opened=False/read=False."
       ]
     }
   ]

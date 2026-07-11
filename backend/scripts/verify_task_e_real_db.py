@@ -62,7 +62,7 @@ def seed_minimum(engine) -> tuple[int, int]:
                 ),
                 {
                     "name": "TaskE Verify Camera",
-                    "stream_url": "rtmp://127.0.0.1:1935/live/task-e",
+                    "stream_url": "rtmp://49.233.71.82:9090/live/task-e",
                     "resolution": "640x360",
                     "status": "online",
                 },

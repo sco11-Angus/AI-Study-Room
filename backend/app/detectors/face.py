@@ -1,13 +1,14 @@
 """人脸识别 — Dlib 128 维特征匹配（任务书 B9）。
 
 - encode(face_img) -> 128 维向量（Dlib ResNet 模型）
-- match(feature) -> "member:<id>" / "stranger"：欧氏距离最近邻，>0.6 判 stranger
+- match(feature) -> "member:<id>" / "stranger"：欧氏距离最近邻，>0.4 判 stranger
 - FaceDetector: 实现 Detector 接口，接入推理引擎做端到端人脸识别
 - 集成 LivenessDetector 活体检测：防御静态照片/视频回放/AI换脸
 """
 import json
 import logging
 import os
+import threading
 from collections import deque
 from typing import Optional
 
@@ -30,13 +31,13 @@ class FaceMatcher:
 
     _instance: Optional["FaceMatcher"] = None
 
-    def __new__(cls, threshold: float = 0.6):
+    def __new__(cls, threshold: float = 0.4):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self, threshold: float = 0.6):
+    def __init__(self, threshold: float = 0.4):
         
         if self._initialized:
             return
@@ -45,6 +46,9 @@ class FaceMatcher:
         self._shape_predictor = None
         self._face_encoder = None
         self._dlib_loaded = False
+        # dlib 原生对象非线程安全：引擎线程池并发调用（face_recognition + fight
+        # 共用同一单例）会导致 C 层段错误，用锁串行化所有 dlib 调用。
+        self._dlib_lock = threading.Lock()
         self._try_load_models()
         self._initialized = True
 
@@ -77,8 +81,25 @@ class FaceMatcher:
         """
         if not self._dlib_loaded:
             return []
-        rgb = image[..., ::-1].copy()
-        return self._detector(rgb, 1)
+        # 防护：RTMP 重连后可能出现损坏帧（非 8bit / 通道数异常 / 内存布局异常）
+        try:
+            if image is None or not isinstance(image, np.ndarray):
+                return []
+            # BGRA → BGR（部分 RTMP 编码器带 alpha 通道）
+            if image.ndim == 3 and image.shape[2] == 4:
+                image = image[:, :, :3]
+            if image.dtype != np.uint8 or image.ndim != 3 or image.shape[2] != 3:
+                logger.warning(
+                    "[face] detect_faces() 跳过异常帧: dtype=%s ndim=%d shape=%s",
+                    image.dtype, image.ndim, image.shape if hasattr(image, 'shape') else '?',
+                )
+                return []
+            # 强制 RGB + 连续内存复制，避免 dlib 内存布局兼容问题
+            rgb = image[..., ::-1].copy()
+            with self._dlib_lock:
+                return self._detector(rgb, 2)
+        except Exception:
+            return []
 
     # ---- 特征提取 ----
 
@@ -96,11 +117,12 @@ class FaceMatcher:
             return None
 
         rgb = face_img[..., ::-1].copy()  # BGR → RGB（dlib 要求，copy 确保内存连续）
-        faces = self._detector(rgb, 1)
-        if len(faces) == 0:
-            return None
-        shape = self._shape_predictor(rgb, faces[0])
-        descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
+        with self._dlib_lock:
+            faces = self._detector(rgb, 1)
+            if len(faces) == 0:
+                return None
+            shape = self._shape_predictor(rgb, faces[0])
+            descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
         return np.array(descriptor)
 
     def shape_from_rect(self, image: np.ndarray, rect):
@@ -116,7 +138,8 @@ class FaceMatcher:
         if not self._dlib_loaded:
             return None
         rgb = image[..., ::-1].copy()
-        return self._shape_predictor(rgb, rect)
+        with self._dlib_lock:
+            return self._shape_predictor(rgb, rect)
 
     def encode_from_rect(self, image: np.ndarray, rect) -> Optional[np.ndarray]:
         """从已检测到的人脸矩形直接提取特征（不重复检测，更稳定）。
@@ -140,8 +163,9 @@ class FaceMatcher:
                 return None
             return self.encode(image[y1:y2, x1:x2])
         rgb = image[..., ::-1].copy()
-        shape = self._shape_predictor(rgb, rect)
-        descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
+        with self._dlib_lock:
+            shape = self._shape_predictor(rgb, rect)
+            descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
         return np.array(descriptor)
 
     # ---- 会员匹配 ----
@@ -203,7 +227,7 @@ class FaceMatcher:
             if (
                 best_id is not None
                 and best_dist < self.threshold
-                and (nrr < 0.9 or gap > 0.05 or second_best_dist >= float("inf"))
+                and (nrr < 0.8 or gap > 0.05 or second_best_dist >= float("inf"))
             ):
                 return f"member:{best_id}"
             return "stranger"
@@ -258,9 +282,6 @@ class FaceDetector(Detector):
         self._last_result_ts: float = 0.0
         # 人脸裁剪历史（供活体检测微动分析）
         self._face_crop_history: deque = deque(maxlen=Config.LIVENESS_HISTORY_SIZE)
-        # 滑动窗口投票：去抖动，只有连续 N 帧一致才推送
-        self._vote_window: deque = deque(maxlen=3)
-        self._stable_result: Optional[str] = None
         # 诊断：记录最近的特征向量前5维 + 距离
         self._last_feature_snapshot: Optional[list] = None
 
@@ -302,8 +323,20 @@ class FaceDetector(Detector):
         # 检测人脸
         face_rects = self._matcher.detect_faces(frame.image)
         if not face_rects:
-            if self._frame_count % 30 == 0:
-                logger.debug("[face] detect() 未检测到人脸")
+            if self._frame_count == self._skip_frames:
+                logger.info(
+                    "[face] 首次检测: 无人脸 (frame.shape=%s, dtype=%s)",
+                    frame.image.shape, frame.image.dtype,
+                )
+                # 保存 debug 帧供人工检查
+                try:
+                    _debug_path = os.path.join(os.getcwd(), "debug_frame.jpg")
+                    cv2.imwrite(_debug_path, frame.image)
+                    logger.info("[face] 调试帧已保存: %s", _debug_path)
+                except Exception as _e:
+                    logger.warning("[face] 调试帧保存失败: %s", _e)
+            elif self._frame_count % (30 * self._skip_frames) == 0:
+                logger.info("[face] 持续未检测到人脸 (frame_count=%d)", self._frame_count)
             return []
 
         logger.info(f"[face] 检测到 {len(face_rects)} 张人脸")
@@ -320,22 +353,30 @@ class FaceDetector(Detector):
         face_crop = frame.image[y1:y2, x1:x2] if x2 > x1 and y2 > y1 else None
 
         # ---- 活体检测 ----
+        WARMUP_FRAMES = 5  # 积累足够历史后才做判定
         if self._liveness is not None and self._liveness.enabled:
             landmarks = self._matcher.shape_from_rect(frame.image, rect)
             if landmarks is not None and face_crop is not None:
-                liveness_result = self._liveness.check(face_crop, landmarks)
+                liveness_result = self._liveness.check(
+                    face_crop, landmarks, crop_x=x1, crop_y=y1,
+                    full_frame=frame.image,
+                )
                 score = liveness_result["score"]
                 reasons = liveness_result["reasons"]
+                frames_cached = liveness_result["details"]["frames_cached"]
                 logger.info(
-                    "[face] 活体分数=%.3f reasons=%s details=%s",
-                    score, reasons, liveness_result["details"],
+                    "[face] 活体分数=%.3f reasons=%s frames=%d details=%s",
+                    score, reasons, frames_cached, liveness_result["details"],
                 )
 
-                if score < self._liveness.threshold:
-                    logger.warning("[face] 活体检测失败，判定为欺骗攻击！")
-                    # 清空投票窗口，防止旧帧结果泄漏
-                    self._vote_window.clear()
-                    self._stable_result = None
+                # 热身期：数据不足，不判定，只积累历史
+                if frames_cached < WARMUP_FRAMES:
+                    logger.info(f"[face] 活体热身中 (frames={frames_cached})，跳过判定")
+                    return []
+
+                # 热身完成后才判定活体
+                if liveness_result["is_spoof"]:
+                    logger.warning("[face] 活体检测判定为欺骗攻击！")
                     # 写入 WebSocket
                     msg = {
                         "type": "face_spoof",
@@ -364,12 +405,6 @@ class FaceDetector(Detector):
                         )
                     ]
 
-                # 热身期：活体检测需要积累历史才能可靠判定
-                frames_cached = liveness_result["details"]["frames_cached"]
-                if frames_cached < 5:
-                    logger.info(f"[face] 活体热身中 (frames={frames_cached})，跳过匹配")
-                    return []
-
         # ---- 特征提取 ----
         feature = self._matcher.encode_from_rect(frame.image, rect)
         if feature is None:
@@ -382,24 +417,24 @@ class FaceDetector(Detector):
         logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}")
 
         # ---- 直接推送（带冷却去重） ----
-        now = time.time()
-        if result != self._last_result or (now - self._last_result_ts) > self._cooldown:
-            self._last_result = result
-            self._last_result_ts = now
-            self._push_result(result, extra, face_crop, frame)
-            return [
-                AlarmEvent(
-                    region_id=frame.camera_id,
-                    camera_id=frame.camera_id,
-                    type="face_recognition",
-                    confidence=1.0,
-                    snapshot=frame.image,
-                    face_crop=face_crop,
-                    extra=extra,
-                )
-            ]
+now = time.time()
+if result != self._last_result or (now - self._last_result_ts) > self._cooldown:
+    self._last_result = result
+    self._last_result_ts = now
+    self._push_result(result, extra, face_crop, frame)
+    return [
+        AlarmEvent(
+            region_id=frame.camera_id,
+            camera_id=frame.camera_id,
+            type="face_recognition",
+            confidence=1.0,
+            snapshot=frame.image,
+            face_crop=face_crop,
+            extra=extra,
+        )
+    ]
 
-        return []
+return []
 
     # ------------------------------------------------------------------
     # 诊断 + 推送辅助方法
@@ -457,7 +492,7 @@ class FaceDetector(Detector):
             if (
                 best_id is not None
                 and best_dist < self._matcher.threshold
-                and (nrr < 0.9 or gap > 0.05 or second_best_dist >= float("inf"))
+                and (nrr < 0.8 or gap > 0.05 or second_best_dist >= float("inf"))
             ):
                 result = f"member:{best_id}"
                 # 找名字
@@ -492,6 +527,6 @@ class FaceDetector(Detector):
         try:
             from ..api.ws import broadcast_face_result
             broadcast_face_result(msg)
-            logger.info(f"[face] 投票通过，推送: {msg}")
+            logger.info(f"[face] 推送: {msg}")
         except Exception as e:
             logger.error(f"[face] 写入结果失败: {e}")
