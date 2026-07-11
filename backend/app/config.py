@@ -80,6 +80,7 @@ class Config:
         "FIRE_SMOKE_LEGACY_YOLOV5_DIR",
         "fire-smoke-detect-yolov4-master/yolov5",
     )
+    FIRE_SMOKE_MODEL_LOADER = os.getenv("FIRE_SMOKE_MODEL_LOADER", "legacy").strip().lower()
     FIRE_SMOKE_IMG_SIZE = int(os.getenv("FIRE_SMOKE_IMG_SIZE", 640))
     FIRE_SMOKE_DETECT_CONF = float(os.getenv("FIRE_SMOKE_DETECT_CONF", 0.25))
     FIRE_SMOKE_IOU = float(os.getenv("FIRE_SMOKE_IOU", 0.45))

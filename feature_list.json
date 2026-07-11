@@ -71,7 +71,8 @@
         "Added backend service facade app.services.fire_smoke.detect_fire_smoke_image() so direct backend startup can call the grafted legacy YOLOv5 fire/smoke model without relying on standalone scripts.",
         "Added POST /api/alarms/fire-smoke/detect, accepting multipart image upload or JSON/form image_path, with frames support for the 30-frame debounce window and optional raise_alarm=true persistence/broadcast.",
         "Real backend service validation passed on test_photos/fire_test.jpg: legacy YOLOv5 fallback loaded backend/model_weights/fire_smoke.pt, detected fire/smoke, and emitted one fire_smoke event after 30 frames.",
-        "Validation after backend-callable integration passed: py_compile for fire_smoke detector/service/API/tests, focused pytest 18 passed, related backend regression 45 passed, backend smoke test ALL SMOKE TESTS PASSED, and init.cmd smoke passed."
+        "Validation after backend-callable integration passed: py_compile for fire_smoke detector/service/API/tests, focused pytest 18 passed, related backend regression 45 passed, backend smoke test ALL SMOKE TESTS PASSED, and init.cmd smoke passed.",
+        "Changed the default fire/smoke model loader to legacy YOLOv5 so local scripts and backend startup no longer stall while importing ultralytics/torch before falling back. Validation passed: raw image script detected fire/smoke on test_photos/fire_test.jpg, alarm image script emitted one fire_smoke event after 30 frames, focused pytest 19 passed, and init.cmd smoke passed."
       ],
       "blockers": [
         "Full real RTMP/video fire-smoke acceptance still needs live camera or OBS footage with smoke/fire and non-fire reflection negative cases.",
