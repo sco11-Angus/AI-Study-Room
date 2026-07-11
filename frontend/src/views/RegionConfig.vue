@@ -74,7 +74,7 @@ import { ElMessage } from 'element-plus'
 import CanvasDraw from '../components/CanvasDraw.vue'
 import { createRegion, getCameras, getRegions, updateRegion, deleteRegion } from '../api'
 
-const DEFAULT_STREAM_URL = 'camera_id=5'
+const DEFAULT_STREAM_URL = ''
 const streamUrl = ref(DEFAULT_STREAM_URL)
 const cameras = ref([])
 const regions = ref([])

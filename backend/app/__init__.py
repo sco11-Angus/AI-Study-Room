@@ -1,10 +1,14 @@
 """Flask 应用工厂 — 集成 Swagger/OpenAPI 文档 + WebSocket (§9, §10.3)。"""
-from flask import Flask, jsonify
+import logging
+
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_sock import Sock
 from flasgger import Swagger
 
 from .config import Config
+
+logger = logging.getLogger(__name__)
 
 sock = Sock()
 
@@ -174,7 +178,8 @@ def create_app(config: type[Config] = Config) -> Flask:
 
     @app.errorhandler(Exception)
     def handle_exception(e):
-        """未捕获异常统一返回 {code:500,...}，不泄漏堆栈。"""
+        """未捕获异常统一返回 {code:500,...}，不泄漏堆栈给前端，但把完整堆栈打到服务端日志。"""
+        logger.exception("[500] 未捕获异常 %s %s -> %s", request.method, request.path, e)
         return jsonify({
             "code": 500,
             "message": "Internal Server Error",

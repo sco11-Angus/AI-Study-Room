@@ -76,7 +76,7 @@ import AlarmPanel from '../components/AlarmPanel.vue'
 import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
 import { useAlarmStore } from '../store/alarm'
 
-const streamUrl = ref('camera_id=5')
+const streamUrl = ref('')
 const alarms = ref([])
 const faceResult = ref(null)
 const regions = ref([])
@@ -118,11 +118,11 @@ function fetchStreamUrl() {
           fetchRegionsForCamera(list[0].id)
         }
       } else {
-        streamUrl.value = 'camera_id=5'
+        streamUrl.value = ''
       }
     })
     .catch(() => {
-      streamUrl.value = 'camera_id=5'
+      streamUrl.value = ''
     })
 }
 
