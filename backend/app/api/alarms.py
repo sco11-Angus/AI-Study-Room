@@ -12,7 +12,7 @@ from flasgger import swag_from
 from ..config import Config
 
 bp = Blueprint("alarms", __name__, url_prefix="/api/alarms")
-ALLOWED_ALARM_TYPES = {"intrusion", "fire_smoke", "occupy", "fatigue", "fight", "face_recognition"}
+ALLOWED_ALARM_TYPES = {"intrusion", "fire_smoke", "occupy", "fatigue", "fight", "face_recognition", "face_spoof"}
 
 
 @bp.get("")
@@ -54,7 +54,7 @@ def list_alarms():
           camera_id: {type: integer, example: 1}
           type:
             type: string
-            enum: [intrusion, fire_smoke, occupy, fatigue, fight, face_recognition]
+            enum: [intrusion, fire_smoke, occupy, fatigue, fight, face_recognition, face_spoof]
             example: fight
           snapshot_url:
             type: string
@@ -153,7 +153,7 @@ def create_test_capture_alarm():
               example: 1
             type:
               type: string
-              enum: [intrusion, fire_smoke, occupy, fatigue, fight, face_recognition]
+              enum: [intrusion, fire_smoke, occupy, fatigue, fight, face_recognition, face_spoof]
               default: fight
             level:
               type: integer

@@ -463,6 +463,29 @@
   - Fight MP4 evidence is currently video-only in the OpenCV encoder path; precise audio muxing remains a future enhancement if required.
   - If live RTMP capture fails again, first check for duplicate Python processes on port 5000 before changing stream code.
 
+## Session 2026-07-11 Task E/G Backend Review And DingTalk Wording
+
+- Goal: review the current backend-only Task E/G changes, remove local-only leftovers, clarify ownership of public snapshot/playback access, and make DingTalk alarm context read like a person speaking.
+- Actions:
+  - Kept only source-worthy changes and ignored generated runtime artifacts with `.gitignore` entries for `backend/clips/`, `backend/reports/`, and `backend/logs/`.
+  - Removed local experiment/deployment leftovers that were not tracked by Git, including temporary cloud deploy examples, shared alarm server experiment files, generated clips, and local-only test scripts.
+  - Updated DingTalk ActionCard content to summarize actor, behavior, location, camera, handler, type, level, and evidence in one natural spoken paragraph.
+  - Removed Base64 snapshot embedding from DingTalk cards and kept public HTTP/HTTPS snapshot markdown only when `PUBLIC_BASE_URL` makes it reachable.
+  - Added `face_spoof` to the Task E alarm API allowed types and Swagger enum.
+  - Repaired `FaceDetector.detect()` indentation so imports work again while preserving existing behavior: normal face recognition pushes WebSocket updates only; `face_spoof` remains an alarm path.
+  - Added formal backend tests for confirm-page snapshot/clip detail rendering, MP4 Range playback, and daily-report JSON/Markdown artifact generation.
+- Validation:
+  - `.\init.cmd` passed.
+  - From repo root: `python -m py_compile backend/app/detectors/face.py backend/app/services/dingtalk.py backend/app/api/alarms.py backend/app/services/daily_report.py backend/app/services/clip_recorder.py backend/app/services/alarm.py backend/run.py backend/tests/test_alarm_center.py` passed.
+  - From `backend/`: `python -m pytest tests/test_alarm_center.py -q` passed: 14 passed, 13 warnings.
+  - From `backend/`: `python -m pytest tests/test_face.py tests/test_alarm_center.py -q` passed: 26 passed, 20 warnings.
+  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_fatigue.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_fire_smoke.py tests/test_alarm_center.py -q` passed: 61 passed, 37 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+- Remaining risks:
+  - Full external DingTalk snapshot/playback viewing still requires `PUBLIC_BASE_URL` to point to a publicly reachable HTTP/HTTPS backend or media host.
+  - A full pytest run including `tests/test_liveness.py` still has one independent liveness assertion mismatch: identical frames are classified earlier as `static_frame_mse` spoof instead of the test's allowed `prolonged_no_blink`/`spoof_streak` reasons.
+  - Public access to snapshots and MP4 clips is a deployment/network responsibility; backend can serve correct URLs, but other users cannot open local `127.0.0.1` or private-LAN addresses from DingTalk.
+
 ## Session 2026-07-11 Fire Smoke Legacy Loader Default
 
 - Goal: fix local fire/smoke test scripts stalling while importing Ultralytics/Torch before falling back to the grafted legacy YOLOv5 model.

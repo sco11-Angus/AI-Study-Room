@@ -85,11 +85,11 @@ class AlarmService:
                     "reasons": extra_dict.get("reasons"),
                 }
                 broadcast_face_result(msg)
-            event = self._normalize_event(event, region_id, type_, extra)
-            event.level = 2
-            frame = frame if frame is not None else event.snapshot
-            if frame is not None:
-                event.snapshot_url = event.snapshot_url or self._save_snapshot(event, frame)
+         event = self._normalize_event(event, region_id, type_, extra)
+event.level = 2
+frame = frame if frame is not None else event.snapshot
+if frame is not None:
+    event.snapshot_url = event.snapshot_url or self._save_snapshot(event, frame)
             record = self._persist(event)
             self._last_fired[(event.region_id, event.type)] = (time.time(), record.id)
             payload = self._serialize_record(record)

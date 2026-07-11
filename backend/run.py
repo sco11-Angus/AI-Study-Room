@@ -26,18 +26,17 @@ def start_services():
 
     print("[run] ===== 启动推理引擎 =====", flush=True)
     engine = InferenceEngine()
-    # 入侵检测：跑 YOLO 检测人，并把人员框写入 engine.shared_ctx 供打架检测复用
+    # Intrusion writes person boxes into shared_ctx so fight detection can reuse them.
     engine.register(IntrusionPlugin(shared_ctx=engine.shared_ctx))
     engine.register(FaceDetector(skip_frames=10, cooldown=1.0))
     engine.register(FatiguePlugin())
     engine.register(FireSmokePlugin())
-    # 打架检测复用入侵检测写入 shared_ctx 的全身人体框（人员框只算一次）
+    # Fight detection reuses the person boxes above instead of running another person pass.
     engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
     engine.setup_all()
     print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 
-    # 摄像头 ID：优先用环境变量显式指定；否则取数据库首个摄像头的真实 id，
-    # 避免 scheduler 注册的 camera_id 与数据库/前端不一致导致"摄像头不存在"。
+    # Prefer explicit env config; otherwise use the first database camera id.
     camera_id = Config.STREAM_CAMERA_ID
     if not os.getenv("STREAM_CAMERA_ID") and not os.getenv("CAMERA_ID"):
         try:
@@ -73,4 +72,6 @@ def start_services():
 
 if __name__ == "__main__":
     start_services()
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    port = int(os.getenv("PORT", 5000))
+    print(f"[run] ===== 启动Web服务 (端口: {port}) =====", flush=True)
+    app.run(host="0.0.0.0", port=port, debug=False)
