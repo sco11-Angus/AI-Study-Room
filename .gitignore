@@ -7,14 +7,50 @@ __pycache__/
 .venv/
 venv/
 *.db
-.runlogs/
-backend/.runlogs/
 
 # 模型权重与抓拍产物（大文件，不入库）
 backend/model_weights/*.pt
+backend/model_weights/*.pth
+backend/model_weights/*.onnx
 backend/model_weights/*.dat
 backend/snapshots/*.jpg
 backend/snapshots/*.png
+
+# 训练数据集（图片量大，不入库）
+backend/training_data/
+training_data/
+
+# 测试照片（不入库）
+backend/test_photos/
+test_photos/
+
+# 测试用临时文件
+backend/stream_test.jpg
+test_junk.jpg
+AI.mp4
+
+# 训练仓库和临时文件
+training_repo/
+temp_mesonet/
+
+# 模型权重格式（任意位置均忽略）
+*.pth
+*.onnx
+*.pt
+*.dat
+*.h5
+*.pkl
+*.npy
+*.bin
+*.safetensors
+*.ckpt
+*.parquet
+
+# HuggingFace 模型缓存
+backend/hf_model_cache/
+
+# 日志文件
+*.log
 
 # Node / 前端
 node_modules/

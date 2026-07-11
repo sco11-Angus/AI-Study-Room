@@ -161,6 +161,17 @@ def create_app(config: type[Config] = Config) -> Flask:
     video_feed.register_ws_routes(sock)
 
     # 全局异常处理器
+    from werkzeug.exceptions import HTTPException
+
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(e):
+        """保留 HTTP 错误的原始状态码（404/405/400 等），不吞成 500。"""
+        return jsonify({
+            "code": e.code,
+            "message": e.name,
+            "data": None
+        }), e.code
+
     @app.errorhandler(Exception)
     def handle_exception(e):
         """未捕获异常统一返回 {code:500,...}，不泄漏堆栈。"""

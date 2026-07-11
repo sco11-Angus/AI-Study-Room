@@ -55,7 +55,9 @@ class AlarmEvent(Base):
     camera_id = Column(Integer, ForeignKey("camera.id"))
     type = Column(Enum("intrusion", "fire_smoke", "occupy", "fatigue", "fight", "face_recognition", name="alarm_type"))
     snapshot_url = Column(String(256))     # 抓拍图路径
+    clip_url = Column(String(256))         # 视频片段路径(任务书G)
     face_match = Column(String(64))        # 会员ID / stranger
+    message = Column(Text)                 # 告警文字描述(任务书G4)
     level = Column(Integer, default=1)     # 优先级(升级递增)
     status = Column(Enum("pending", "notified", "confirmed", "escalated", name="alarm_status"), default="pending")
     extra = Column(Text)                   # 附加信息(JSON)

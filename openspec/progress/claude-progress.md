@@ -385,26 +385,82 @@
   - Network instability: RTMP stream shows frequent packet mismatch errors, causing intermittent frame drops.
   - When the stream is stable, `test-capture` can successfully grab frames from the scheduler's ring buffer.
 
-## Session 2026-07-11 Fire Smoke Backend Callable API
+## Session 2026-07-10 Configurable Camera 5 Stream Startup
 
-- Goal: make the directly-started backend able to call the grafted open-source fire/smoke detector instead of only using standalone test scripts.
+- Goal: make backend stream startup configurable and use `camera_id=5` for the current real-camera test without hard-coding the only usable camera.
 - Baseline:
-  - `pwd` confirmed `C:\Users\ASUS\AI-Study-Room`.
-  - `.\init.cmd` passed before the change.
-  - `feature_list.json` still tracks Task C3 as blocked only by full live RTMP/video acceptance.
+  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
+  - `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL still printed the localhost proxy warning.
+  - Direct sandboxed `python.exe` launch failed in this session with "specified logon session does not exist", so Python tests were run with approved non-sandbox execution.
 - Actions:
-  - Added `FireSmokePlugin.raw_detections(image)` and `reset_window()` for direct backend requests.
-  - Added `backend/app/services/fire_smoke.py` as a shared, locked service facade around the grafted legacy YOLOv5 detector.
-  - Added `POST /api/alarms/fire-smoke/detect` in `backend/app/api/alarms.py`.
-  - The endpoint accepts multipart field `image` or JSON/form `image_path`, supports `camera_id`, `region_id`, `frames`, and optional `raise_alarm=true`.
-  - Added API regression coverage in `backend/tests/test_alarm_center.py` for uploaded image decoding and parameter forwarding.
+  - Added `STREAM_CAMERA_ID`, `STREAM_NAME`, `STREAM_URL`, and `STREAM_LOCAL_CAMERA` config values.
+  - Updated `backend/run.py` so startup uses those config values. Default startup camera remains `camera_id=5`.
+  - Updated `StreamScheduler.add_camera()` so `add_camera(camera_id=5)` loads `camera.stream_url` from the database when no explicit stream name or URL is provided.
+  - Preserved legacy behavior: `add_camera(camera_id=0, stream_name="test")` still builds `rtmp://{RTMP_SERVER}:{RTMP_PORT}/live/test`.
+  - Fixed local camera mode so `local_camera=0` is passed to OpenCV as integer `0`, not string `"0"`.
+  - Fixed `verify_task_e_g_real_camera.py` so `--camera-id 5` keeps camera 5 and derives a region for camera 5 instead of falling back to the first camera/region pair.
+  - Added `--stream-url` to `verify_task_e_g_real_camera.py` so any existing camera/region row can be tested against an arbitrary RTMP source without editing the database first.
+  - Documented the new stream startup settings in `.env.example`.
 - Validation:
-  - `py_compile` passed for `backend/app/detectors/fire_smoke.py`, `backend/app/services/fire_smoke.py`, `backend/app/api/alarms.py`, and related tests.
-  - Focused pytest passed from `backend/`: `18 passed` for `tests/test_fire_smoke.py tests/test_alarm_center.py --basetemp=.pytest_tmp`.
-  - Real backend service call passed on `test_photos/fire_test.jpg`: legacy YOLOv5 fallback loaded `backend/model_weights/fire_smoke.pt`, detected fire/smoke, and produced one `fire_smoke` event after 30 frames.
-  - Related backend regression passed from `backend/`: `45 passed` for intrusion, fight, fight integration, face, alarm center, and fire smoke tests.
-  - Backend smoke passed with `ALL SMOKE TESTS PASSED`.
-  - `.\init.cmd` passed after the change.
+  - WSL py_compile passed for `app/stream/scheduler.py`, `app/config.py`, `run.py`, `scripts/verify_task_e_g_real_camera.py`, and `tests/test_task_g.py`.
+  - From `backend/`: `python -m pytest tests/test_task_g.py -q` passed: 6 passed.
+  - From `backend/`: `python -m pytest tests/test_alarm_center.py tests/test_task_g.py -q` passed: 16 passed, 13 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+  - Real-camera script with `--camera-id 5` resolved `camera_id=5`, `region_id=5`, and `source=rtmp://49.233.71.82:9090/live/test`.
+  - Retesting with `--camera-id 1 --stream-url rtmp://49.233.71.82:9090/live/test` still failed at RTMP handshake, confirming the blocker is independent of camera id.
 - Remaining risks:
-  - Full Task C3 acceptance still needs live RTMP/OBS positive fire-smoke footage and negative reflection/non-fire cases.
-  - Deployment still must include `backend/model_weights/fire_smoke.pt` and the legacy YOLOv5 source directory, or configure `FIRE_SMOKE_LEGACY_YOLOV5_DIR`.
+  - The real `camera_id=5` RTMP run timed out waiting for a readable frame after about 30 seconds, so snapshot/playback/report could not complete until the RTMP pusher/server path is live.
+  - Existing frontend files remain staged from prior merge/conflict work and were not modified in this session.
+
+## Session 2026-07-10 Stream Capture Failure Triage
+
+- Goal: analyze why OBS can start streaming but backend capture still cannot read frames.
+- Findings:
+  - `python backend/run.py` does start StreamScheduler for `camera_id=5` and tries `rtmp://49.233.71.82:9090/live/test`.
+  - `fire_smoke.pt` missing only makes the fire/smoke detector setup fail; engine continues and this is not the RTMP capture blocker.
+  - The frontend `VideoPlayer` does not directly play RTMP. It extracts `camera_id` and subscribes to `/ws/video_feed/{camera_id}`, which depends on the backend scheduler ring buffer.
+  - `verify_task_e_g_real_camera.py` starts a separate Python scheduler process, so it is not testing the exact same scheduler instance that a running frontend may be viewing.
+  - `stream_capture.capture_frame()` previously waited only about 1 second for a scheduler frame before falling back to a second RTMP `VideoCapture`; this made it too easy to hit the currently failing direct-RTMP path.
+  - Minimal OpenCV tests with and without `OPENCV_FFMPEG_CAPTURE_OPTIONS` both returned `opened=False` for `rtmp://49.233.71.82:9090/live/test`.
+  - Low-level socket tests show the server port can respond to RTMP handshake bytes, so the port is not completely dead; the failure is in OpenCV/FFmpeg opening/reading that playback stream.
+- Actions:
+  - Added `GET /api/cameras/{camera_id}/stream-status` for scheduler diagnostics: scheduler started, registered camera ids, online state, latest frame bytes, ring buffer length, and pre-buffer length.
+  - Updated `stream_capture.capture_frame()` to wait the full requested timeout for an existing scheduler camera frame before falling back to opening a second RTMP connection.
+- Validation:
+  - WSL py_compile passed for `app/api/cameras.py`, `app/services/stream_capture.py`, and `tests/test_task_g.py`.
+  - From `backend/`: `python -m pytest tests/test_task_g.py tests/test_alarm_center.py -q` passed: 17 passed, 13 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+  - Found two Python processes listening on port 5000; stopped the duplicate/stale listeners and restarted a single clean `python backend/run.py`.
+  - Clean backend startup connected to `camera_id=5` at `rtmp://49.233.71.82:9090/live/test`; scheduler logged successful source size `1280x720` and decode statistics with ok frames and 0 dropped.
+  - `GET /api/cameras/5/stream-status` returned `online=true`, `has_frame=true`, `latest_frame_bytes=10334`, `ring_buffer_len=5`, and `pre_buffer_len=75`.
+  - `POST /api/alarms/test-capture` created real scheduler-buffer alarm `id=48` with snapshot `/api/alarms/snapshots/alarm_1783691900602_5_fight.jpg`.
+  - Async clip recording completed for alarm 48 and set `clip_url=/api/alarms/clips/alarm_48_1783691900602.mp4`.
+  - Snapshot endpoint returned 200 with 17558 bytes; clip endpoint returned 200 with 227218 bytes and `video/mp4`.
+  - `GET /api/alarms/daily-report?date=2026-07-10` returned 200 and included alarm 48 in the daily report data.
+- Next diagnostic step:
+  - Keep using a single `python backend/run.py` process for live-video tests. If capture fails again, first check for duplicate `:5000` Python listeners before changing RTMP code.
+
+## Session 2026-07-10 Task E/G Completion Verification
+
+- Goal: verify whether Task E and Task G are complete, especially snapshot capture, playback clip evidence, and AI monitoring daily report generation.
+- Baseline:
+  - Current branch is `taskE`.
+  - `feature_list.json` already marked Task E completed, but its evidence mixed Task G details and still contained a stale RTMP timeout blocker.
+  - Frontend files were already staged from earlier work; this backend verification did not modify or include them.
+- Actions:
+  - Confirmed Task E close-loop remains implemented: alarm query/confirm/snapshot APIs, test-capture alarm creation, DingTalk workflow, and persisted alarm records.
+  - Confirmed Task G backend evidence flow is implemented: `clip_url`, async `ClipRecorder`, `/api/alarms/clips/<filename>` playback endpoint with range support, stream-status diagnostics, and `DailyReportService` in `backend/app/services/daily_report.py`.
+  - Added a separate completed Task G entry to `feature_list.json` and removed the stale RTMP-timeout blocker from Task E.
+  - Added `backend/clips/*.mp4` to `.gitignore` so generated playback evidence videos do not pollute source control; the tracked `backend/reports/report_2026-07-10.json` remains daily-report evidence.
+- Validation:
+  - `wsl -d Ubuntu -- bash -lc "cd /mnt/c/Users/25003/AI-Study-Room && ./init.sh"` passed; WSL only printed the localhost proxy warning.
+  - WSL `python3 -m py_compile` passed for Task E/G files: daily report, clip recorder, alarm/camera APIs, stream capture, scheduler, and `tests/test_task_g.py`.
+  - WSL `python3 -m json.tool feature_list.json` passed.
+  - From `backend/`: `python -m pytest tests/test_task_g.py tests/test_alarm_center.py -q` passed: 17 passed, 13 warnings.
+  - From `backend/`: `python tests/smoke_test.py` passed and printed `ALL SMOKE TESTS PASSED`.
+- Remaining risks:
+  - Task G backend capture/playback/report is complete; frontend playback UI belongs to Task F and was not changed in this pass.
+  - Fight MP4 evidence is currently video-only in the OpenCV encoder path; precise audio muxing remains a future enhancement if required.
+  - If live RTMP capture fails again, first check for duplicate Python processes on port 5000 before changing stream code.
+
+

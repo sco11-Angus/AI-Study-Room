@@ -101,16 +101,34 @@ def test_level_zero_alarm_is_private_only(db, snapshot_dir):
     notifier = FakeNotifier()
     svc = AlarmService(cooldown=30, notifier=notifier, broadcaster=sent.append)
 
-    payload = svc.raise_alarm(AlarmEvent(type="fatigue", region_id=4, camera_id=1, level=0))
+    payload = svc.raise_alarm(AlarmEvent(type="fatigue", region_id=4, camera_id=0, level=0))
 
     session = db()
     try:
         assert payload["level"] == 0
+        assert payload["camera_id"] == 0
         assert session.query(AlarmRecord).count() == 1
+        assert session.query(AlarmRecord).one().camera_id == 0
         assert sent == []
         assert notifier.alarm_ids == []
     finally:
         session.close()
+
+
+def test_level_one_fatigue_alarm_notifies(db, snapshot_dir):
+    from app.detectors.base import AlarmEvent
+    from app.services.alarm import AlarmService
+
+    sent = []
+    notifier = FakeNotifier()
+    svc = AlarmService(cooldown=30, notifier=notifier, broadcaster=sent.append)
+
+    payload = svc.raise_alarm(AlarmEvent(type="fatigue", region_id=4, camera_id=0, level=1))
+
+    assert payload["type"] == "fatigue"
+    assert payload["level"] == 1
+    assert sent == [payload]
+    assert notifier.alarm_ids == [payload["id"]]
 
 
 def test_dingtalk_notify_confirm_and_escalate_update_logs(db):

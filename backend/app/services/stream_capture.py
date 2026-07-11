@@ -82,7 +82,7 @@ def _try_get_from_scheduler(camera_id: int, timeout: float) -> np.ndarray | None
         if cam is None:
             for cid in scheduler.camera_ids:
                 cam = scheduler.get_camera(cid)
-                if cam and cam.online:
+                if cam:
                     jpg_bytes = cam.latest_frame()
                     if jpg_bytes:
                         frame = cv2.imdecode(np.frombuffer(jpg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
@@ -91,12 +91,15 @@ def _try_get_from_scheduler(camera_id: int, timeout: float) -> np.ndarray | None
             return None
 
         jpg_bytes = cam.latest_frame()
-        if jpg_bytes is None:
-            if timeout > 0:
-                cam.wait_frame(timeout=min(timeout, 1.0))
+        if jpg_bytes is None and timeout > 0:
+            deadline = time.time() + timeout
+            while time.time() < deadline and jpg_bytes is None:
+                cam.wait_frame(timeout=min(1.0, max(0.0, deadline - time.time())))
                 jpg_bytes = cam.latest_frame()
-            if jpg_bytes is None:
-                return None
+                if jpg_bytes:
+                    break
+        if jpg_bytes is None:
+            return None
 
         frame = cv2.imdecode(np.frombuffer(jpg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
         if frame is not None:
@@ -104,4 +107,3 @@ def _try_get_from_scheduler(camera_id: int, timeout: float) -> np.ndarray | None
         return None
     except Exception:
         return None
-
