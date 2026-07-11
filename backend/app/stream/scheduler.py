@@ -37,7 +37,7 @@ os.environ.setdefault(
     "|max_delay;2000000"
     "|read_attempts;10000",
 )
-os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "10000")
+os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "100000"
 
 # 目标分辨率（显示+推理共用）
 TARGET_W, TARGET_H = 640, 360

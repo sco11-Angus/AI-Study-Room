@@ -89,7 +89,47 @@ class AlarmService:
         else:
             logger.info("[alarm] private level=0 alarm_id=%s", record.id)
 
+        self._log_alarm_event(record, event)
+
         return payload
+
+    def _log_alarm_event(self, record, event):
+        """记录告警事件到日志文件（任务书G5扩展）。"""
+        log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        log_path = os.path.join(log_dir, f"alarm_{date_str}.log")
+        
+        extra = event.extra or {}
+        extra_str = json.dumps(extra, ensure_ascii=False, separators=(",", ":"))
+        
+        actor = extra.get("actor", "")
+        behavior = extra.get("behavior", "")
+        
+        log_entry = (
+            f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}] "
+            f"ALARM_TRIGGERED "
+            f"id={record.id} "
+            f"type={event.type} "
+            f"level={event.level} "
+            f"region={event.region_id} "
+            f"camera={event.camera_id} "
+            f"face_match={event.face_match} "
+            f"actor={actor} "
+            f"behavior={behavior} "
+            f"message={record.message} "
+            f"snapshot_url={event.snapshot_url} "
+            f"extra={extra_str}\n"
+        )
+        
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+        
+        logger.info(
+            "[alarm] 日志已记录 alarm_id=%d type=%s level=%d region=%d camera=%d message=%s",
+            record.id, event.type, event.level, event.region_id, event.camera_id, record.message
+        )
 
     def _record_clip(self, alarm_id: int, event: AlarmEvent):
         """触发视频片段录制(任务书G2)。"""
@@ -147,7 +187,14 @@ class AlarmService:
             try:
                 import cv2
 
-                saved = bool(cv2.imwrite(path, frame))
+                compressed_frame = self._compress_frame(frame)
+                saved = bool(cv2.imwrite(path, compressed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60]))
+                original_size = frame.size * frame.itemsize
+                compressed_size = compressed_frame.size * compressed_frame.itemsize
+                logger.info(
+                    "[alarm] snapshot saved path=%s original=%d bytes compressed=%d bytes ratio=%.1f%%",
+                    filename, original_size, compressed_size, compressed_size / original_size * 100
+                )
             except Exception:
                 logger.exception("[alarm] failed to save snapshot with cv2 path=%s", path)
         if not saved:
@@ -157,6 +204,22 @@ class AlarmService:
                 except Exception:
                     fh.write(b"")
         return f"/api/alarms/snapshots/{filename}"
+
+    def _compress_frame(self, frame):
+        """压缩帧以减少存储空间占用（分辨率和质量）。"""
+        import cv2
+
+        max_width = 1280
+        max_height = 720
+        
+        height, width = frame.shape[:2]
+        if width > max_width or height > max_height:
+            scale = min(max_width / width, max_height / height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        
+        return frame
 
     def _match_face(self, event: AlarmEvent, frame) -> str:
         if event.face_match:

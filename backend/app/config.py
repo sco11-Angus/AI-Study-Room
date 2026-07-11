@@ -120,3 +120,10 @@ class Config:
     LLM_API_URL = os.getenv("LLM_API_URL", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation")
     LLM_API_KEY = os.getenv("LLM_API_KEY", "")
     LLM_MODEL = os.getenv("LLM_MODEL", "qwen-turbo")
+
+    # 存储管理 (针对小服务器优化)
+    STORAGE_WARNING_THRESHOLD = int(os.getenv("STORAGE_WARNING_THRESHOLD", 80))    # 磁盘使用率警告阈值(%)
+    STORAGE_CRITICAL_THRESHOLD = int(os.getenv("STORAGE_CRITICAL_THRESHOLD", 90))  # 磁盘使用率临界阈值(%)
+    SNAPSHOT_MAX_DAYS = int(os.getenv("SNAPSHOT_MAX_DAYS", 3))                    # 抓拍保留天数
+    LOG_MAX_DAYS = int(os.getenv("LOG_MAX_DAYS", 7))                              # 日志保留天数
+    AUTO_CLEANUP_INTERVAL = int(os.getenv("AUTO_CLEANUP_INTERVAL", 3600))         # 自动清理间隔(秒)

@@ -18,6 +18,7 @@ def start_services():
     from app.config import Config
     from app.stream.engine import InferenceEngine
     from app.stream.scheduler import StreamScheduler, set_scheduler
+    from app.services.storage_manager import get_storage_manager
 
     print("[run] ===== 启动推理引擎 =====", flush=True)
     engine = InferenceEngine()
@@ -36,6 +37,12 @@ def start_services():
     )
     scheduler.start_all()
     set_scheduler(scheduler)
+
+    print("[run] ===== 启动存储管理器 =====", flush=True)
+    storage_manager = get_storage_manager()
+    storage_manager.start()
+    stats = storage_manager.get_storage_stats()
+    print(f"[run] 存储状态: 磁盘使用率={stats['disk_usage_percent']}% 抓拍={stats['snapshot_size_mb']}MB 视频片段={stats['clip_size_mb']}MB", flush=True)
 
 
 if __name__ == "__main__":
