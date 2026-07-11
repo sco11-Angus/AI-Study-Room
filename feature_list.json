@@ -129,7 +129,17 @@
         "Added --stream-url to verify_task_e_g_real_camera.py so a real RTMP source can be tested with any existing camera/region row. Retesting with camera_id=1 and stream_url=rtmp://49.233.71.82:9090/live/test still failed at RTMP handshake, confirming the current blocker is not camera_id binding.",
         "Added GET /api/cameras/{camera_id}/stream-status to inspect whether StreamScheduler is running, camera is registered/online, and decoded JPEG/pre-buffer frames are available. Updated stream_capture to wait the full timeout for scheduler frames before opening a second RTMP connection. Validation passed: py_compile, tests/test_task_g.py tests/test_alarm_center.py -> 17 passed, and backend smoke printed ALL SMOKE TESTS PASSED.",
         "Clean restart after stopping duplicate Python listeners on port 5000 fixed the confusing stale-process state. python backend/run.py connected to camera_id=5 at rtmp://49.233.71.82:9090/live/test with decoder stats ok frames and 0 dropped.",
-        "Real Task E/G verification succeeded through the running backend scheduler: /api/cameras/5/stream-status returned online=true and has_frame=true, POST /api/alarms/test-capture created alarm_id=48 with snapshot_url, async recording filled clip_url=/api/alarms/clips/alarm_48_1783691900602.mp4, snapshot returned 200 with 17558 bytes, clip returned 200 with 227218 bytes, and daily report for 2026-07-10 returned 200."
+        "Real Task E/G verification succeeded through the running backend scheduler: /api/cameras/5/stream-status returned online=true and has_frame=true, POST /api/alarms/test-capture created alarm_id=48 with snapshot_url, async recording filled clip_url=/api/alarms/clips/alarm_48_1783691900602.mp4, snapshot returned 200 with 17558 bytes, clip returned 200 with 227218 bytes, and daily report for 2026-07-10 returned 200.",
+        "Added alarm log system: each alarm trigger records detailed information to backend/logs/alarm_YYYY-MM-DD.log including id, type, level, region, camera, face_match, message, snapshot_url, and extra.",
+        "Added StorageManager with tiered cleanup strategy: warning threshold 80%, critical threshold 90%, automatic cleanup of expired snapshots, clips, and logs.",
+        "Optimized DingTalk notification: snapshot converted to Base64 and embedded directly in message to solve public IP access issues.",
+        "Optimized image compression: JPEG quality 60%, max resolution 1280x720.",
+        "Confirm page uses relative paths for resources, supporting access from any address.",
+        "Added GET /api/alarms/storage-status endpoint to query storage status.",
+        "Real alarm test passed: alarm_id=52 created with snapshot (4364 bytes), clip recording (10 frames), DingTalk message sent with Base64 image (5820 bytes), status=200.",
+        "Fixed face_spoof alarm routing: added face_spoof to alarm_type enum in entities.py and init.sql, fixed missing camera_id in face.py, added face_spoof handler in alarm.py, database enum updated.",
+        "Fixed sliding window voting in face.py: removed premature return that skipped de-duplication logic for stranger/face_spoof alarms.",
+        "Validation passed: all alarm types (intrusion, fire_smoke, occupy, fatigue, fight, face_recognition, face_spoof) can now trigger DingTalk notifications correctly."
       ],
       "blockers": [
         "bash ./init.sh now passes after Ubuntu WSL was installed; WSL still prints a localhost proxy warning in NAT mode.",
