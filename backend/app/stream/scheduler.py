@@ -222,6 +222,9 @@ class StreamScheduler:
         """单路解码主循环：拉流 -> 缩放 -> 缓冲 -> 跳帧推理 -> 断流重连。"""
         cap = None
 
+        # 指数退避状态
+        _reconnect_delay = 1  # 当前重连延迟（秒），成功后重置
+
         while not cs._stop_event.is_set():
             if cap is None or not cap.isOpened():
                 logger.info(f"[scheduler] camera_id={cs.camera_id} 连接流: {cs.stream_url}")
@@ -245,6 +248,7 @@ class StreamScheduler:
             decode_dropped = 0
             _last_log_ts = time.time()
             _consecutive_timeouts = 0
+            _reconnect_delay = 1  # 正常读取时重置退避
 
             while not cs._stop_event.is_set() and cap.isOpened():
                 ok, frame = cap.read()
