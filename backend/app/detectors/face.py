@@ -381,31 +381,23 @@ class FaceDetector(Detector):
         result, extra = self._match_with_diag(feature, feat_snap)
         logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}")
 
-        # ---- 滑动窗口投票（去抖动） ----
-        self._vote_window.append(result)
-        if len(self._vote_window) == self._vote_window.maxlen:
-            unique = set(self._vote_window)
-            if len(unique) == 1:
-                consensus = list(unique)[0]
-                if consensus != self._stable_result:
-                    self._stable_result = consensus
-                    now = time.time()
-                    if (now - self._last_result_ts) >= self._cooldown:
-                        self._last_result = consensus
-                        self._last_result_ts = now
-                        self._push_result(consensus, extra, face_crop, frame)
-                        return [
-                            AlarmEvent(
-                                region_id=0,
-                                type="face_recognition",
-                                confidence=1.0,
-                                snapshot=frame.image,
-                                face_crop=face_crop,
-                                extra=extra,
-                            )
-                        ]
-            else:
-                logger.info(f"[face] 窗口未一致，跳过: {list(self._vote_window)}")
+        # ---- 直接推送（带冷却去重） ----
+        now = time.time()
+        if result != self._last_result or (now - self._last_result_ts) > self._cooldown:
+            self._last_result = result
+            self._last_result_ts = now
+            self._push_result(result, extra, face_crop, frame)
+            return [
+                AlarmEvent(
+                    region_id=frame.camera_id,
+                    camera_id=frame.camera_id,
+                    type="face_recognition",
+                    confidence=1.0,
+                    snapshot=frame.image,
+                    face_crop=face_crop,
+                    extra=extra,
+                )
+            ]
 
         return []
 
