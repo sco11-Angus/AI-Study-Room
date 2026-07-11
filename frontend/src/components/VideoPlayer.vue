@@ -69,6 +69,11 @@ const connectWs = () => {
 
       const img = new Image()
       img.onload = () => {
+        // 让 canvas 绘图缓冲区匹配视频帧真实尺寸，否则默认 300x150 会导致裁剪+变形
+        if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+          canvas.width = img.naturalWidth
+          canvas.height = img.naturalHeight
+        }
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0)
         URL.revokeObjectURL(img.src)
