@@ -13,8 +13,8 @@ def create_app(config: type[Config] = Config) -> Flask:
     app = Flask(__name__)
     app.config.from_object(config)
 
-    # CORS 白名单（前端 5173）
-    CORS(app, origins=["http://localhost:5173", "http://127.0.0.1:5173"])
+    # CORS 允许所有来源（多人共享访问）
+    CORS(app, origins="*")
     
     sock.init_app(app)
     Swagger(app, template={
@@ -175,6 +175,9 @@ def create_app(config: type[Config] = Config) -> Flask:
     @app.errorhandler(Exception)
     def handle_exception(e):
         """未捕获异常统一返回 {code:500,...}，不泄漏堆栈。"""
+        import traceback
+        print(f"[ERROR] Unhandled exception: {e}", flush=True)
+        traceback.print_exc()
         return jsonify({
             "code": 500,
             "message": "Internal Server Error",

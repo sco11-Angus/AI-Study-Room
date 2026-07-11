@@ -304,7 +304,9 @@ def test_dingtalk_card_describes_actor_behavior_and_mentions_guard(db):
     assert "pushed another student" in card["text"]
     assert "Primary Guard" in card["text"]
     assert "Seat A1" in card["text"]
-    assert "fuse=0.91" in card["text"]
+    assert "融合判断分约为 0.91" in card["text"]
+    assert "请 Primary Guard 处理" in card["text"]
+    assert "存在“pushed another student”的情况" in card["text"]
 
     mention = calls[1]["json"]
     assert mention["msgtype"] == "text"
@@ -326,6 +328,9 @@ def test_alarm_api_lists_and_confirms(monkeypatch, db):
             type="fight",
             level=2,
             status="pending",
+            snapshot_url="/api/alarms/snapshots/21.jpg",
+            clip_url="/api/alarms/clips/21.mp4",
+            message="Li Ming triggered fight",
             extra=json.dumps({"fuse": 0.9}),
             created_at=datetime.utcnow(),
         ))
@@ -354,10 +359,93 @@ def test_alarm_api_lists_and_confirms(monkeypatch, db):
     confirmed_page = client.get("/api/alarms/21/confirm")
     assert confirmed_page.status_code == 200
     assert b"Alarm 21 confirmed" in confirmed_page.data
+    assert b"Li Ming triggered fight" in confirmed_page.data
+    assert b"/api/alarms/snapshots/21.jpg" in confirmed_page.data
+    assert b"/api/alarms/clips/21.mp4" in confirmed_page.data
 
     missing_page = client.get("/api/alarms/404/confirm")
     assert missing_page.status_code == 404
     assert b"Alarm 404 not found" in missing_page.data
+
+
+def test_alarm_clip_endpoint_supports_range(monkeypatch, tmp_path):
+    from app.api.alarms import bp
+
+    clip_dir = tmp_path / "clips"
+    clip_dir.mkdir()
+    (clip_dir / "alarm_21.mp4").write_bytes(b"0123456789")
+    monkeypatch.setattr("app.config.Config.CLIP_DIR", str(clip_dir))
+
+    app = Flask(__name__)
+    app.register_blueprint(bp)
+    client = app.test_client()
+
+    resp = client.get(
+        "/api/alarms/clips/alarm_21.mp4",
+        headers={"Range": "bytes=2-5"},
+    )
+
+    assert resp.status_code == 206
+    assert resp.data == b"2345"
+    assert resp.headers["Content-Range"].startswith("bytes 2-5/")
+
+
+def test_daily_report_generates_json_and_markdown_artifacts(monkeypatch, db, tmp_path):
+    from app.models.entities import AlarmEvent, Camera, Region
+    from app.services.daily_report import DailyReportService
+
+    monkeypatch.setattr("app.config.Config.LLM_ENABLED", False)
+    report_date = datetime(2026, 7, 11)
+
+    session = db()
+    try:
+        session.add_all([
+            Camera(
+                id=61,
+                name="Report Camera",
+                stream_url="rtmp://unit/report",
+                resolution="1920*1080",
+                status="online",
+                created_at=report_date,
+            ),
+            Region(
+                id=62,
+                camera_id=61,
+                user_id=None,
+                name="Report Region",
+                type="danger_zone",
+                polygon="[]",
+                x_distance=10,
+                y_stay_time=3,
+                created_at=report_date,
+            ),
+            AlarmEvent(
+                id=63,
+                region_id=62,
+                camera_id=61,
+                type="fight",
+                level=2,
+                status="confirmed",
+                message="Li Ming triggered fight",
+                created_at=datetime(2026, 7, 11, 8, 30, 0),
+                confirmed_at=datetime(2026, 7, 11, 8, 33, 0),
+            ),
+        ])
+        session.commit()
+    finally:
+        session.close()
+
+    service = DailyReportService(report_dir=str(tmp_path))
+    report = service.generate_report(report_date)
+    artifacts = service.generate_artifacts(report_date, formats=("json", "markdown"))
+
+    assert report["summary"]["total_alarms"] == 1
+    assert report["summary"]["confirmed_count"] == 1
+    assert report["summary"]["avg_response_time_minutes"] == 3.0
+    assert report["top_regions"][0]["name"] == "Report Region"
+    assert report["alarm_details"][0]["message"] == "Li Ming triggered fight"
+    assert os.path.exists(artifacts["outputs"]["json"])
+    assert os.path.exists(artifacts["outputs"]["markdown"])
 
 
 def test_fire_smoke_detect_endpoint_accepts_uploaded_image(monkeypatch):

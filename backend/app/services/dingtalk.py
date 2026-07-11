@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import re
 import threading
 import time
@@ -26,6 +25,7 @@ ALARM_TYPE_LABELS = {
     "occupy": "\u5360\u5ea7\u544a\u8b66",
     "fatigue": "\u75b2\u52b3\u63d0\u9192",
     "fight": "\u6253\u67b6\u544a\u8b66",
+    "face_spoof": "\u6b3a\u9a97\u653b\u51fb\u544a\u8b66",
 }
 
 DEFAULT_BEHAVIORS = {
@@ -34,6 +34,7 @@ DEFAULT_BEHAVIORS = {
     "occupy": "\u5360\u7528\u5ea7\u4f4d\u6216\u975e\u6cd5\u4f7f\u7528\u5ea7\u4f4d",
     "fatigue": "\u51fa\u73b0\u95ed\u773c\u3001\u6253\u54c8\u6b20\u7b49\u75b2\u52b3\u5b66\u4e60\u884c\u4e3a",
     "fight": "\u51fa\u73b0\u7591\u4f3c\u6253\u67b6\u6216\u80a2\u4f53\u51b2\u7a81\u884c\u4e3a",
+    "face_spoof": "\u4f7f\u7528\u7167\u7247\u3001\u5c4f\u5e55\u6216\u975e\u6d3b\u4f53\u65b9\u5f0f\u5c1d\u8bd5\u901a\u8fc7\u4eba\u8138\u9a8c\u8bc1",
 }
 
 ACTOR_KEYS = (
@@ -237,34 +238,36 @@ class DingTalkNotifier:
             camera_name = camera.name if camera and camera.name else f"Camera {alarm.camera_id or '-'}"
             base_title = title or f"{stage_text}: {type_label}"
             created = alarm.created_at.isoformat() if alarm.created_at else ""
+            spoken_summary = self._spoken_alarm_summary(
+                actor=actor,
+                behavior=behavior,
+                type_label=type_label,
+                handler_name=handler_name,
+                location=location,
+                camera_name=camera_name,
+                level=alarm.level,
+                extra=extra,
+            )
 
             lines = [
                 f"### {base_title}",
+                spoken_summary,
+                "",
                 f"- \u544a\u8b66ID: {alarm.id}",
-                f"- \u89e6\u53d1\u4eba: {actor}",
-                f"- \u89e6\u53d1\u884c\u4e3a: {behavior}",
-                f"- \u544a\u8b66\u7c7b\u578b: {type_label}",
-                f"- \u5904\u7406\u4eba: {handler_name}",
-                f"- \u4f4d\u7f6e: {location}",
-                f"- \u6444\u50cf\u5934: {camera_name}",
-                f"- \u7ea7\u522b: {alarm.level}",
                 f"- \u65f6\u95f4: {created}",
+                f"- \u5efa\u8bae\u5904\u7406\u4eba: {handler_name}",
             ]
             if alarm.message:
-                lines.append(f"- \u544a\u8b66\u8bf4\u660e: {alarm.message}")
+                lines.append(f"- \u7cfb\u7edf\u5907\u6ce8: {alarm.message}")
             if alarm.snapshot_url:
-                snapshot_b64 = self._snapshot_to_base64(alarm.snapshot_url)
-                if snapshot_b64:
-                    lines.append(f"![\u544a\u8b66\u6293\u62cd](data:image/jpeg;base64,{snapshot_b64})")
                 snapshot_url = self._public_url(alarm.snapshot_url)
+                if snapshot_url.startswith(("http://", "https://")):
+                    lines.append(f"![\u544a\u8b66\u6293\u62cd]({snapshot_url})")
                 lines.append(f"- \u6293\u62cd: {snapshot_url}")
             if alarm.clip_url:
                 lines.append(f"- \u56de\u653e: {self._public_url(alarm.clip_url)}")
             if alarm.face_match:
                 lines.append(f"- \u4eba\u8138\u5339\u914d: {alarm.face_match}")
-            score_text = self._score_summary(extra)
-            if score_text:
-                lines.append(f"- \u68c0\u6d4b\u4f9d\u636e: {score_text}")
             return base_title, text or "\n".join(lines)
         finally:
             session.close()
@@ -402,18 +405,47 @@ class DingTalkNotifier:
                 return str(value)
         return DEFAULT_BEHAVIORS.get(alarm_type, "\u89e6\u53d1\u544a\u8b66\u89c4\u5219")
 
-    def _score_summary(self, extra: dict) -> str:
-        keys = (
-            "confidence",
-            "score",
-            "vis_score",
-            "aud_score",
-            "fuse",
-            "stay_seconds",
-            "duration",
+    def _spoken_alarm_summary(
+        self,
+        actor: str,
+        behavior: str,
+        type_label: str,
+        handler_name: str,
+        location: str,
+        camera_name: str,
+        level: int,
+        extra: dict,
+    ) -> str:
+        evidence = self._spoken_evidence(extra)
+        evidence_text = f"\u7cfb\u7edf\u5224\u65ad\u4f9d\u636e\u662f\uff1a{evidence}\u3002" if evidence else ""
+        return (
+            f"\u8bf7 {handler_name} \u5904\u7406\uff1a"
+            f"\u7cfb\u7edf\u5728 {location} \u7684 {camera_name} \u53d1\u73b0 {actor} "
+            f"\u5b58\u5728\u201c{behavior}\u201d\u7684\u60c5\u51b5\uff0c"
+            f"\u5df2\u5224\u5b9a\u4e3a{type_label}\uff08\u7ea7\u522b {level}\uff09\u3002"
+            f"{evidence_text}"
+            "\u8bf7\u67e5\u770b\u6293\u62cd\u6216\u56de\u653e\u540e\u70b9\u51fb\u201c\u786e\u8ba4\u5904\u7406\u201d\u5b8c\u6210\u95ed\u73af\u3002"
         )
-        parts = [f"{key}={extra[key]}" for key in keys if key in extra]
-        return ", ".join(parts)
+
+    def _spoken_evidence(self, extra: dict) -> str:
+        labels = (
+            ("confidence", "\u7f6e\u4fe1\u5ea6"),
+            ("score", "\u7efc\u5408\u5206"),
+            ("vis_score", "\u753b\u9762\u51b2\u7a81\u5206"),
+            ("aud_score", "\u58f0\u97f3\u51b2\u7a81\u5206"),
+            ("fuse", "\u878d\u5408\u5224\u65ad\u5206"),
+            ("liveness_score", "\u6d3b\u4f53\u5206"),
+            ("stay_seconds", "\u505c\u7559\u65f6\u957f"),
+            ("duration", "\u6301\u7eed\u65f6\u957f"),
+        )
+        parts = []
+        for key, label in labels:
+            if key in extra and extra[key] is not None:
+                parts.append(f"{label}\u7ea6\u4e3a {extra[key]}")
+        reasons = extra.get("reasons")
+        if isinstance(reasons, list) and reasons:
+            parts.append(f"\u539f\u56e0\u5305\u62ec{'、'.join(str(item) for item in reasons)}")
+        return "\uff0c".join(parts)
 
     def _mark_notified(self, alarm_id: int, status: str) -> None:
         from ..models.entities import AlarmEvent
@@ -444,47 +476,6 @@ class DingTalkNotifier:
             raise
         finally:
             session.close()
-
-    def _snapshot_to_base64(self, snapshot_url: str) -> str | None:
-        """将抓拍图片转换为Base64，用于直接嵌入钉钉消息。"""
-        try:
-            import cv2
-            import numpy as np
-
-            if snapshot_url.startswith("/"):
-                snapshot_path = os.path.join(
-                    os.path.dirname(__file__), "..", "..", "snapshots",
-                    os.path.basename(snapshot_url)
-                )
-            else:
-                snapshot_path = snapshot_url
-
-            if not os.path.exists(snapshot_path):
-                logger.warning("[dingtalk] snapshot file not found: %s", snapshot_path)
-                return None
-
-            img = cv2.imread(snapshot_path)
-            if img is None:
-                logger.warning("[dingtalk] failed to read snapshot: %s", snapshot_path)
-                return None
-
-            max_width = 640
-            max_height = 480
-            height, width = img.shape[:2]
-            if width > max_width or height > max_height:
-                scale = min(max_width / width, max_height / height)
-                new_width = int(width * scale)
-                new_height = int(height * scale)
-                img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
-
-            _, buffer = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 60])
-            b64_str = base64.b64encode(buffer).decode("utf-8")
-
-            logger.info("[dingtalk] snapshot converted to base64, size=%d bytes", len(b64_str))
-            return b64_str
-        except Exception:
-            logger.exception("[dingtalk] failed to convert snapshot to base64")
-            return None
 
     def _public_url(self, path_or_url: str) -> str:
         if not path_or_url:

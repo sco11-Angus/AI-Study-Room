@@ -111,6 +111,9 @@ class Config:
     DINGTALK_LEADER_SECRET = os.getenv("DINGTALK_LEADER_SECRET", "")
     PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
+    # 统一部署模式 - 用于多人共享访问
+    DEPLOY_MODE = os.getenv("DEPLOY_MODE", "local")
+
     # 数据库 (§8)
     DB_HOST = os.getenv("DB_HOST", os.getenv("MYSQL_HOST", "localhost"))
     DB_PORT = os.getenv("DB_PORT", os.getenv("MYSQL_PORT", "3306"))

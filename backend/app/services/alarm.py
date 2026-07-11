@@ -87,7 +87,8 @@ class AlarmService:
                 broadcast_face_result(msg)
             event = self._normalize_event(event, region_id, type_, extra)
             event.level = 2
-            frame = frame or event.snapshot
+            if frame is None:
+                frame = event.snapshot
             if frame is not None:
                 event.snapshot_url = event.snapshot_url or self._save_snapshot(event, frame)
             record = self._persist(event)
