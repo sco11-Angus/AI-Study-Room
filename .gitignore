@@ -7,8 +7,6 @@ __pycache__/
 .venv/
 venv/
 *.db
-.runlogs/
-backend/.runlogs/
 
 # 模型权重与抓拍产物（大文件，不入库）
 backend/model_weights/*.pt
@@ -17,7 +15,6 @@ backend/model_weights/*.onnx
 backend/model_weights/*.dat
 backend/snapshots/*.jpg
 backend/snapshots/*.png
-backend/clips/*.mp4
 
 # 训练数据集（图片量大，不入库）
 backend/training_data/

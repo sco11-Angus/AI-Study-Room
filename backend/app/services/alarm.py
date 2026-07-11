@@ -54,19 +54,49 @@ class AlarmService:
         New code should pass an AlarmEvent. region_id/type_ are kept for older
         callers. face_recognition uses only the lightweight frontend channel.
         """
-        if type_ == "face_recognition":
+        event_type = type_ if type_ else (event.type if event else None)
+        if event_type == "face_recognition":
             from ..api.ws import set_face_result
 
-            if extra:
-                msg = {"type": "stranger"}
-                if extra.get("face_match", "").startswith("member:"):
-                    msg = {
-                        "type": "member",
-                        "member_id": extra.get("member_id"),
-                        "name": extra.get("name", "unknown"),
-                    }
-                set_face_result(msg)
+            msg = {"type": "stranger"}
+            if event and event.extra and event.extra.get("face_match", "").startswith("member:"):
+                msg = {
+                    "type": "member",
+                    "member_id": event.extra.get("member_id"),
+                    "name": event.extra.get("name", "unknown"),
+                }
+            elif extra and extra.get("face_match", "").startswith("member:"):
+                msg = {
+                    "type": "member",
+                    "member_id": extra.get("member_id"),
+                    "name": extra.get("name", "unknown"),
+                }
+            set_face_result(msg)
             return None
+
+        if event_type == "face_spoof":
+            from ..api.ws import broadcast_face_result
+
+            extra_dict = event.extra if event and event.extra else (extra if isinstance(extra, dict) else {})
+            if extra_dict:
+                msg = {
+                    "type": "face_spoof",
+                    "confidence": extra_dict.get("confidence"),
+                    "reasons": extra_dict.get("reasons"),
+                }
+                broadcast_face_result(msg)
+            event = self._normalize_event(event, region_id, type_, extra)
+            event.level = 2
+            frame = frame or event.snapshot
+            if frame is not None:
+                event.snapshot_url = event.snapshot_url or self._save_snapshot(event, frame)
+            record = self._persist(event)
+            self._last_fired[(event.region_id, event.type)] = (time.time(), record.id)
+            payload = self._serialize_record(record)
+            self._broadcast(payload)
+            self._notify(record.id)
+            self._log_alarm_event(record, event)
+            return payload
 
         event = self._normalize_event(event, region_id, type_, extra)
         if not self._dedup(event.region_id, event.type):
@@ -89,7 +119,47 @@ class AlarmService:
         else:
             logger.info("[alarm] private level=0 alarm_id=%s", record.id)
 
+        self._log_alarm_event(record, event)
+
         return payload
+
+    def _log_alarm_event(self, record, event):
+        """记录告警事件到日志文件（任务书G5扩展）。"""
+        log_dir = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        
+        date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        log_path = os.path.join(log_dir, f"alarm_{date_str}.log")
+        
+        extra = event.extra or {}
+        extra_str = json.dumps(extra, ensure_ascii=False, separators=(",", ":"))
+        
+        actor = extra.get("actor", "")
+        behavior = extra.get("behavior", "")
+        
+        log_entry = (
+            f"[{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}] "
+            f"ALARM_TRIGGERED "
+            f"id={record.id} "
+            f"type={event.type} "
+            f"level={event.level} "
+            f"region={event.region_id} "
+            f"camera={event.camera_id} "
+            f"face_match={event.face_match} "
+            f"actor={actor} "
+            f"behavior={behavior} "
+            f"message={record.message} "
+            f"snapshot_url={event.snapshot_url} "
+            f"extra={extra_str}\n"
+        )
+        
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+        
+        logger.info(
+            "[alarm] 日志已记录 alarm_id=%d type=%s level=%d region=%d camera=%d message=%s",
+            record.id, event.type, event.level, event.region_id, event.camera_id, record.message
+        )
 
     def _record_clip(self, alarm_id: int, event: AlarmEvent):
         """触发视频片段录制(任务书G2)。"""
@@ -147,7 +217,14 @@ class AlarmService:
             try:
                 import cv2
 
-                saved = bool(cv2.imwrite(path, frame))
+                compressed_frame = self._compress_frame(frame)
+                saved = bool(cv2.imwrite(path, compressed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 60]))
+                original_size = frame.size * frame.itemsize
+                compressed_size = compressed_frame.size * compressed_frame.itemsize
+                logger.info(
+                    "[alarm] snapshot saved path=%s original=%d bytes compressed=%d bytes ratio=%.1f%%",
+                    filename, original_size, compressed_size, compressed_size / original_size * 100
+                )
             except Exception:
                 logger.exception("[alarm] failed to save snapshot with cv2 path=%s", path)
         if not saved:
@@ -157,6 +234,22 @@ class AlarmService:
                 except Exception:
                     fh.write(b"")
         return f"/api/alarms/snapshots/{filename}"
+
+    def _compress_frame(self, frame):
+        """压缩帧以减少存储空间占用（分辨率和质量）。"""
+        import cv2
+
+        max_width = 1280
+        max_height = 720
+        
+        height, width = frame.shape[:2]
+        if width > max_width or height > max_height:
+            scale = min(max_width / width, max_height / height)
+            new_width = int(width * scale)
+            new_height = int(height * scale)
+            frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
+        
+        return frame
 
     def _match_face(self, event: AlarmEvent, frame) -> str:
         if event.face_match:
@@ -234,6 +327,7 @@ class AlarmService:
             "fatigue": "疲劳提醒",
             "fight": "打架告警",
             "face_recognition": "人脸识别",
+            "face_spoof": "欺骗攻击告警",
         }.get(event.type, f"{event.type}告警")
 
         if actor and behavior:
@@ -255,6 +349,14 @@ class AlarmService:
             if fuse is not None:
                 parts.append(f"融合分{fuse}")
             return "，".join(parts)
+        
+        elif event.type == "face_spoof":
+            liveness_score = extra.get("liveness_score")
+            reasons = extra.get("reasons", [])
+            reason_text = "、".join(reasons) if reasons else "未知原因"
+            if liveness_score is not None:
+                return f"检测到欺骗攻击（活体分数={liveness_score:.3f}），原因：{reason_text}"
+            return f"检测到欺骗攻击，原因：{reason_text}"
         
         elif event.type == "intrusion":
             if face_match.startswith("member:"):

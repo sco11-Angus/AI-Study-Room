@@ -229,7 +229,7 @@ class FightPlugin(Detector):
         # 复用 B 的人员框（不加载 YOLO）；音频模型加载留待语义增强 TODO
         if self._person is None:
             self._person = build_person_provider(Config.FIGHT_PERSON_SOURCE)
-        logger.info("[fight] 打架检测器就绪（人员框来源=%s）", Config.FIGHT_PERSON_SOURCE)
+        logger.info("[fight] 打架检测器就绪（人员框来源=%s）", type(self._person).__name__)
 
     def feed_audio(self, chunk) -> None:
         """由音轨管线(D1)投递 AudioChunk，更新最近音频分（D3）。"""

@@ -57,11 +57,52 @@ class SharedContextProvider(PersonBoxProvider):
         return self._ctx.get_person_boxes(frame.camera_id, frame.frame_idx)
 
 
+class FaceBoxProvider(PersonBoxProvider):
+    """复用 B 的 dlib 人脸检测（FaceMatcher.detect_faces）作为人员框来源。
+
+    项目现状：无独立人体 YOLO 检测器在运行，B 的人员框共享上下文也未落地。
+    打架检测的视觉信号（近距离聚集 + 高速运动）本质只需"人在哪"的框，
+    人脸框可作为人员框的代理：两人贴身打斗时人脸也贴近、随身体剧烈位移。
+
+    零新依赖：FaceMatcher(dlib) 已在运行。人脸检测为单例，不重复加载模型。
+    局限：背对/侧脸/低头时可能漏检——配合音频侧双模确认可容忍。
+    """
+
+    def __init__(self):
+        self._matcher = None
+
+    def _ensure_matcher(self):
+        if self._matcher is None:
+            from .face import FaceMatcher
+
+            self._matcher = FaceMatcher()
+        return self._matcher
+
+    def get_boxes(self, frame: Frame) -> list[Box]:
+        try:
+            matcher = self._ensure_matcher()
+            rects = matcher.detect_faces(frame.image)
+        except Exception:
+            return []
+        boxes: list[Box] = []
+        for r in rects or []:
+            try:
+                boxes.append((float(r.left()), float(r.top()),
+                              float(r.right()), float(r.bottom())))
+            except AttributeError:
+                # 已是 (x1,y1,x2,y2) 元组
+                boxes.append(tuple(float(v) for v in r[:4]))
+        return boxes
+
+
 def build_person_provider(source: str, ctx: SharedContext | None = None) -> PersonBoxProvider:
     """按 Config.FIGHT_PERSON_SOURCE 构造人员框来源。
 
-    当前仅支持 "shared"（复用 B，合规）。保留参数以便后续扩展来源类型。
+    - "shared"：复用 B 的引擎共享上下文（合规首选，需 B 写入才生效）。
+    - "face"：复用 B 的 dlib 人脸检测作为人员框代理（当前默认，零新依赖即可跑通）。
     """
     if source == "shared":
         return SharedContextProvider(ctx)
-    raise ValueError(f"不支持的人员框来源: {source!r}（当前仅支持 'shared'）")
+    if source == "face":
+        return FaceBoxProvider()
+    raise ValueError(f"不支持的人员框来源: {source!r}（支持 'shared' / 'face'）")

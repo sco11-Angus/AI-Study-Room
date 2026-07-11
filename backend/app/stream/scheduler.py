@@ -37,7 +37,7 @@ os.environ.setdefault(
     "|max_delay;2000000"
     "|read_attempts;10000",
 )
-os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "10000")
+os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "100000"
 
 # 目标分辨率（显示+推理共用）
 TARGET_W, TARGET_H = 640, 360
@@ -58,6 +58,7 @@ class CameraStream:
     online: bool = False
     _frame_idx: int = 0
     _thread: threading.Thread | None = None
+    _audio_thread: threading.Thread | None = None
     _stop_event: threading.Event = field(default_factory=threading.Event)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _new_frame: threading.Condition = field(default_factory=threading.Condition)
@@ -200,7 +201,7 @@ class StreamScheduler:
         logger.info(f"[scheduler] 已启动 {len(self._cameras)} 路摄像头")
 
     def _start_camera(self, cs: CameraStream) -> None:
-        """为单路摄像头启动解码线程。"""
+        """为单路摄像头启动解码线程（视频）+ 音轨线程（供打架检测音频侧）。"""
         cs._stop_event.clear()
         cs._thread = threading.Thread(
             target=self._decode_loop,
@@ -209,6 +210,54 @@ class StreamScheduler:
             name=f"cam-{cs.camera_id}",
         )
         cs._thread.start()
+
+        # 音轨线程：拉音频 -> 分窗 -> 喂给打架检测器音频侧 (任务书 D1)
+        cs._audio_thread = threading.Thread(
+            target=self._audio_loop,
+            args=(cs,),
+            daemon=True,
+            name=f"cam-{cs.camera_id}-audio",
+        )
+        cs._audio_thread.start()
+
+    def _audio_loop(self, cs: CameraStream) -> None:
+        """单路音轨主循环：解音频 -> 累积 1s 窗口 -> 投递打架检测器。
+
+        仅对网络流(str URL)启用；本地摄像头索引(int)无音轨则跳过。
+        ffmpeg 缺失或无 fight 检测器时优雅退出，不影响视频链路。
+        """
+        if isinstance(cs.stream_url, int):
+            return  # 本地摄像头无音轨
+
+        fight = self._engine._detectors.get("fight") if self._engine else None
+        if fight is None or not hasattr(fight, "feed_audio"):
+            return  # 未注册打架检测器，无需拉音频
+
+        from .audio import AudioWindower, FfmpegAudioSource, ffmpeg_available
+
+        if not ffmpeg_available():
+            logger.warning("[scheduler] 未检测到 ffmpeg，音轨管线跳过 camera_id=%s", cs.camera_id)
+            return
+
+        windower = AudioWindower(camera_id=cs.camera_id)
+        while not cs._stop_event.is_set():
+            source = FfmpegAudioSource(str(cs.stream_url).split()[0])
+            try:
+                for pcm in source.read():
+                    if cs._stop_event.is_set():
+                        break
+                    for chunk in windower.feed(pcm, ts=time.time()):
+                        try:
+                            fight.feed_audio(chunk)
+                        except Exception:
+                            logger.exception("[scheduler] feed_audio 失败 camera_id=%s", cs.camera_id)
+            except Exception:
+                logger.exception("[scheduler] 音轨读取异常 camera_id=%s", cs.camera_id)
+            finally:
+                source.close()
+            if not cs._stop_event.is_set():
+                time.sleep(3)  # 音频流断开后重连退避
+        logger.info("[scheduler] camera_id=%s 音轨线程退出", cs.camera_id)
 
     def stop_all(self) -> None:
         """停止所有摄像头解码线程。"""

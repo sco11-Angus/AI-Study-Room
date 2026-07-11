@@ -4,11 +4,35 @@
 检测器内部禁止创建线程或推理循环（Code Review 逐项检查）。
 """
 import logging
+import threading
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 
 from ..detectors.base import AlarmEvent, Detector, Frame
+from ..detectors.person_source import Box
 
 logger = logging.getLogger(__name__)
+
+
+class SharedPersonContext:
+    """Small thread-safe cache of person boxes keyed by camera/frame."""
+
+    def __init__(self, max_entries: int = 64):
+        self._max_entries = max_entries
+        self._boxes: OrderedDict[tuple[int, int], list[Box]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def set(self, camera_id: int, frame_idx: int, boxes: list[Box]) -> None:
+        key = (camera_id, frame_idx)
+        with self._lock:
+            self._boxes[key] = list(boxes)
+            self._boxes.move_to_end(key)
+            while len(self._boxes) > self._max_entries:
+                self._boxes.popitem(last=False)
+
+    def get_person_boxes(self, camera_id: int, frame_idx: int) -> list[Box]:
+        with self._lock:
+            return list(self._boxes.get((camera_id, frame_idx), []))
 
 
 class InferenceEngine:
@@ -21,9 +45,10 @@ class InferenceEngine:
         events = engine.dispatch(frame)
     """
 
-    def __init__(self, max_workers: int = 2):
+    def __init__(self, max_workers: int = 1):
         self._detectors: dict[str, Detector] = {}          # name -> detector（注册顺序）
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
+        self.shared_ctx = SharedPersonContext()
         self._setup_done = False
 
     # ---- 注册与启停 ----

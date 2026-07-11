@@ -1,4 +1,4 @@
-"""烟雾/明火检测 - YOLO 推理 + 连续帧置信度防误报 (系统设计说明书 §6)."""
+"""Fire/smoke detection plugin with YOLO inference and frame-window debounce."""
 from __future__ import annotations
 
 import logging
@@ -11,11 +11,9 @@ from .base import AlarmEvent, Detector, Frame
 
 logger = logging.getLogger(__name__)
 
-class FireSmokePlugin(Detector):
-    name = "fire_smoke"
 
 class FireSmokeDetector:
-    """对 fire/smoke 置信度做滑动窗口确认."""
+    """Confirm fire/smoke confidence with a sliding window."""
 
     def __init__(self):
         self._window: deque[float] = deque(maxlen=Config.FIRE_WINDOW)
@@ -26,10 +24,7 @@ class FireSmokeDetector:
             return 0.0
         return sum(self._window) / len(self._window)
 
-
-
     def feed(self, conf: float) -> bool:
-        """送入本帧 fire/smoke 最大置信度，返回是否判定为有效灾情."""
         conf = max(0.0, min(float(conf), 1.0))
         self._window.append(conf)
         if len(self._window) < Config.FIRE_WINDOW:
@@ -38,7 +33,7 @@ class FireSmokeDetector:
 
 
 class FireSmokePlugin(Detector):
-    """烟火检测插件 - 注册进统一推理引擎，不创建线程或推理循环."""
+    """Fire/smoke detector registered in the shared inference engine."""
 
     name = "fire_smoke"
 
@@ -56,26 +51,42 @@ class FireSmokePlugin(Detector):
         self._debouncer = FireSmokeDetector()
 
     def setup(self) -> None:
-        """加载 YOLO 烟火权重；测试可注入 fake model 跳过真实加载."""
         if self._model is not None:
-            logger.info("[fire_smoke] 使用已注入模型，跳过权重加载")
+            logger.info("[fire_smoke] using injected model")
             return
 
         weights = self._resolve_weights_path()
         if not weights.exists():
-            raise FileNotFoundError(f"[fire_smoke] 模型权重不存在: {weights}")
+            raise FileNotFoundError(f"[fire_smoke] model weights not found: {weights}")
         if weights.stat().st_size <= 0:
-            raise RuntimeError(f"[fire_smoke] 模型权重为空文件: {weights}")
+            raise RuntimeError(f"[fire_smoke] model weights file is empty: {weights}")
+
+        loader = Config.FIRE_SMOKE_MODEL_LOADER
+        if loader == "legacy":
+            self._model = self._load_legacy_yolov5(weights)
+            logger.info("[fire_smoke] legacy YOLOv5 weights loaded: %s", weights)
+            return
+
+        if loader != "ultralytics":
+            raise RuntimeError(f"[fire_smoke] unsupported model loader: {loader}")
+
+        # 强制 legacy：嫁接的 YOLOv5 权重与 ultralytics(YOLOv8) 不兼容，
+        # 且 ultralytics 加载有时"看似成功"却在推理时报 visualize 参数错误
+        # （依赖 sys.modules 状态，不稳定）。显式走 legacy 加载器最可靠。
+        if Config.FIRE_SMOKE_FORCE_LEGACY:
+            self._model = self._load_legacy_yolov5(weights)
+            logger.info("[fire_smoke] legacy YOLOv5 权重加载完成(强制): %s", weights)
+            return
 
         try:
             from ultralytics import YOLO
 
             self._model = YOLO(str(weights))
-            logger.info("[fire_smoke] YOLO 权重加载完成: %s", weights)
+            logger.info("[fire_smoke] YOLO weights loaded: %s", weights)
         except Exception as exc:
-            logger.warning("[fire_smoke] Ultralytics YOLO 加载失败，尝试旧 YOLOv5 适配: %s", exc)
+            logger.warning("[fire_smoke] Ultralytics YOLO load failed, trying legacy YOLOv5: %s", exc)
             self._model = self._load_legacy_yolov5(weights)
-            logger.info("[fire_smoke] legacy YOLOv5 权重加载完成: %s", weights)
+            logger.info("[fire_smoke] legacy YOLOv5 weights loaded: %s", weights)
 
     def detect(self, frame: Frame) -> list[AlarmEvent]:
         if self._model is None:
@@ -88,7 +99,7 @@ class FireSmokePlugin(Detector):
 
         avg = self._debouncer.average_confidence
         logger.warning(
-            "[fire_smoke] 烟火告警 camera=%s region=%s conf=%.3f avg=%.3f",
+            "[fire_smoke] alarm camera=%s region=%s conf=%.3f avg=%.3f",
             frame.camera_id,
             self.region_id,
             conf,
@@ -167,6 +178,34 @@ class FireSmokePlugin(Detector):
                 return candidate
         return candidates[-1]
 
+    def raw_detections(self, image: Any) -> list[dict[str, Any]]:
+        """Return fire/smoke detections for direct API calls without debouncing."""
+        if self._model is None:
+            self.setup()
+
+        detections: list[dict[str, Any]] = []
+        results = self._infer(image)
+        for result in _iter_results(results):
+            boxes = getattr(result, "boxes", None)
+            if boxes is None:
+                continue
+
+            confs = _to_list(getattr(boxes, "conf", []))
+            classes = _to_list(getattr(boxes, "cls", []))
+            names = getattr(result, "names", None) or getattr(self._model, "names", {})
+            for cls_id, conf in zip(classes, confs):
+                class_name = _class_name(names, cls_id)
+                if class_name.lower() not in self._target_classes:
+                    continue
+                detections.append({
+                    "class": class_name,
+                    "confidence": round(float(conf), 3),
+                })
+        return detections
+
+    def reset_window(self) -> None:
+        self._debouncer = FireSmokeDetector()
+
     def _max_fire_smoke_conf(self, results: Any) -> tuple[float, str | None]:
         best_conf = 0.0
         best_class = None
@@ -187,6 +226,7 @@ class FireSmokePlugin(Detector):
                     best_conf = conf
                     best_class = class_name
         return best_conf, best_class
+
 
 def _iter_results(results: Any) -> Iterable[Any]:
     if results is None:
@@ -212,6 +252,7 @@ def _to_list(values: Any) -> list:
     if isinstance(values, list):
         return values
     return [values]
+
 
 def _class_name(names: Any, cls_id: Any) -> str:
     idx = int(cls_id)

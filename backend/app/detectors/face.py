@@ -8,6 +8,7 @@
 import json
 import logging
 import os
+import threading
 from collections import deque
 from typing import Optional
 
@@ -45,6 +46,9 @@ class FaceMatcher:
         self._shape_predictor = None
         self._face_encoder = None
         self._dlib_loaded = False
+        # dlib 原生对象非线程安全：引擎线程池并发调用（face_recognition + fight
+        # 共用同一单例）会导致 C 层段错误，用锁串行化所有 dlib 调用。
+        self._dlib_lock = threading.Lock()
         self._try_load_models()
         self._initialized = True
 
@@ -92,7 +96,8 @@ class FaceMatcher:
                 return []
             # 强制 RGB + 连续内存复制，避免 dlib 内存布局兼容问题
             rgb = image[..., ::-1].copy()
-            return self._detector(rgb, 2)
+            with self._dlib_lock:
+                return self._detector(rgb, 2)
         except Exception:
             return []
 
@@ -112,11 +117,12 @@ class FaceMatcher:
             return None
 
         rgb = face_img[..., ::-1].copy()  # BGR → RGB（dlib 要求，copy 确保内存连续）
-        faces = self._detector(rgb, 1)
-        if len(faces) == 0:
-            return None
-        shape = self._shape_predictor(rgb, faces[0])
-        descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
+        with self._dlib_lock:
+            faces = self._detector(rgb, 1)
+            if len(faces) == 0:
+                return None
+            shape = self._shape_predictor(rgb, faces[0])
+            descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
         return np.array(descriptor)
 
     def shape_from_rect(self, image: np.ndarray, rect):
@@ -132,7 +138,8 @@ class FaceMatcher:
         if not self._dlib_loaded:
             return None
         rgb = image[..., ::-1].copy()
-        return self._shape_predictor(rgb, rect)
+        with self._dlib_lock:
+            return self._shape_predictor(rgb, rect)
 
     def encode_from_rect(self, image: np.ndarray, rect) -> Optional[np.ndarray]:
         """从已检测到的人脸矩形直接提取特征（不重复检测，更稳定）。
@@ -156,8 +163,9 @@ class FaceMatcher:
                 return None
             return self.encode(image[y1:y2, x1:x2])
         rgb = image[..., ::-1].copy()
-        shape = self._shape_predictor(rgb, rect)
-        descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
+        with self._dlib_lock:
+            shape = self._shape_predictor(rgb, rect)
+            descriptor = self._face_encoder.compute_face_descriptor(rgb, shape)
         return np.array(descriptor)
 
     # ---- 会员匹配 ----
@@ -383,7 +391,8 @@ class FaceDetector(Detector):
 
                     return [
                         AlarmEvent(
-                            region_id=0,
+                            region_id=frame.camera_id,
+                            camera_id=frame.camera_id,
                             type="face_spoof",
                             confidence=1.0 - score,
                             snapshot=frame.image,
@@ -413,6 +422,17 @@ class FaceDetector(Detector):
             self._last_result = result
             self._last_result_ts = now
             self._push_result(result, extra, face_crop, frame)
+            return [
+                AlarmEvent(
+                    region_id=frame.camera_id,
+                    camera_id=frame.camera_id,
+                    type="face_recognition",
+                    confidence=1.0,
+                    snapshot=frame.image,
+                    face_crop=face_crop,
+                    extra=extra,
+                )
+            ]
 
         return []
 
