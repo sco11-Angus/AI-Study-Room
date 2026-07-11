@@ -6,7 +6,6 @@
 - 流状态监控：实时追踪 online/offline，断流自动重连并告警。
 """
 import logging
-import os
 import threading
 import time
 from collections import deque
@@ -21,17 +20,8 @@ logger = logging.getLogger(__name__)
 
 # FFmpeg 拉流参数（作用于 demuxer + 解码器）
 #  showall + ignore_err：H.264 参考帧缺失时容忍继续解码
-os.environ.setdefault(
-    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
-    "rtsp_transport;tcp"
-    "|analyzeduration;100000|probesize;50000"
-    "|fflags;nobuffer+genpts"
-    "|flags;low_delay"
-    "|flags2;showall"
-    "|err_detect;ignore_err"
-    "|strict;unofficial"
-    "|max_delay;2000000",
-)
+# Keep OpenCV's FFmpeg defaults unless the deployment explicitly overrides
+# them. RTSP-oriented low-latency options can break RTMP stream probing.
 
 # 目标分辨率（显示+推理共用）
 TARGET_W, TARGET_H = 640, 360
@@ -88,7 +78,7 @@ class StreamScheduler:
 
     def add_camera(self, camera_id: int, stream_name: str) -> CameraStream:
         """添加一路摄像头，返回其流状态对象。"""
-        stream_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name} live=1"
+        stream_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name}"
         cs = CameraStream(
             camera_id=camera_id,
             stream_name=stream_name,

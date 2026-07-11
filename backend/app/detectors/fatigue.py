@@ -1,7 +1,7 @@
 """Fatigue detection with Dlib 68-point landmarks (SDD section 4.3).
 
 The detector is active only for seats whose status is ``studying``. Fatigue
-events are level-0 private reminders and must not trigger public alarms.
+event level is configurable; level >= 1 uses the normal alarm/DingTalk path.
 """
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ class ActiveSeat:
 
 
 class FatiguePlugin(Detector):
-    """Detector plugin that emits private fatigue reminders for active seats."""
+    """Detector plugin that emits fatigue alarms for active studying seats."""
 
     name = "fatigue"
     enabled = False
@@ -163,19 +163,20 @@ class FatiguePlugin(Detector):
             kind = detector.detect(landmarks, frame.ts)
             if not kind:
                 continue
+            level = int(getattr(Config, "FATIGUE_ALERT_LEVEL", 1))
             events.append(
                 AlarmEvent(
                     type="fatigue",
                     region_id=seat.region_id,
                     camera_id=frame.camera_id,
                     ts=frame.ts,
-                    level=0,
+                    level=level,
                     confidence=1.0,
                     snapshot=frame.image,
                     extra={
                         "kind": kind,
                         "user_id": seat.user_id,
-                        "level": 0,
+                        "level": level,
                     },
                 )
             )

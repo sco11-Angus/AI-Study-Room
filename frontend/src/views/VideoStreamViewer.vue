@@ -35,7 +35,8 @@ const streaming = ref(false);
 let ws = null;
 let reconnectTimer = null;
 
-const WS_BASE = "ws://localhost:5000";
+const WS_PROTOCOL = location.protocol === "https:" ? "wss:" : "ws:";
+const WS_BASE = `${WS_PROTOCOL}//${location.host}`;
 
 const connect = () => {
   if (ws) {

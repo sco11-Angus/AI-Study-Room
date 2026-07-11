@@ -1,6 +1,8 @@
 """摄像头接口 (§9.1)。"""
-from flask import Blueprint, jsonify
+from flask import Blueprint
 from .response import ok
+from ..models.database import SessionLocal
+from ..models.entities import Camera
 
 bp = Blueprint("cameras", __name__, url_prefix="/api/cameras")
 
@@ -30,4 +32,18 @@ def list_cameras():
           status: {type: string}
     """
     # TODO: 查询 camera 表，返回 stream_url / resolution / status
-    return ok([])
+    session = SessionLocal()
+    try:
+        cameras = session.query(Camera).order_by(Camera.id).all()
+        return ok([
+            {
+                "id": camera.id,
+                "name": camera.name,
+                "stream_url": camera.stream_url,
+                "resolution": camera.resolution,
+                "status": camera.status,
+            }
+            for camera in cameras
+        ])
+    finally:
+        session.close()

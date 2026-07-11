@@ -1,109 +1,172 @@
-"""防区/座位接口 — 前端画区参数持久化 (§5.1, §5.2, §9)。"""
+"""Region CRUD APIs used by the frontend drawing tool."""
+import json
+
 from flask import Blueprint, jsonify, request
-from .response import ok, err
+
+from ..models.database import SessionLocal
+from ..models.entities import Region
+from ..stream.scheduler import get_scheduler
 
 bp = Blueprint("regions", __name__, url_prefix="/api/regions")
+
+REGION_TYPES = {"danger_zone", "seat"}
+
+
+def _serialize_region(region: Region) -> dict:
+    return {
+        "id": region.id,
+        "camera_id": region.camera_id,
+        "user_id": region.user_id,
+        "name": region.name,
+        "type": region.type,
+        "polygon": json.loads(region.polygon or "[]"),
+        "x_distance": region.x_distance,
+        "y_stay_time": region.y_stay_time,
+    }
+
+
+def _validate_payload(payload: dict, partial: bool = False) -> tuple[dict, str | None]:
+    data: dict = {}
+
+    if not partial or "camera_id" in payload:
+        try:
+            data["camera_id"] = int(payload.get("camera_id"))
+        except (TypeError, ValueError):
+            return {}, "camera_id must be an integer"
+
+    if "user_id" in payload:
+        user_id = payload.get("user_id")
+        data["user_id"] = None if user_id in (None, "") else int(user_id)
+
+    if not partial or "name" in payload:
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            return {}, "name is required"
+        data["name"] = name
+
+    if not partial or "type" in payload:
+        region_type = str(payload.get("type") or "").strip()
+        if region_type not in REGION_TYPES:
+            return {}, "type must be one of: danger_zone, seat"
+        data["type"] = region_type
+
+    if not partial or "polygon" in payload:
+        polygon = payload.get("polygon")
+        if not isinstance(polygon, list) or len(polygon) < 3:
+            return {}, "polygon must contain at least 3 points"
+        normalized = []
+        for point in polygon:
+            if not isinstance(point, (list, tuple)) or len(point) != 2:
+                return {}, "polygon point must be [x, y]"
+            try:
+                normalized.append([int(point[0]), int(point[1])])
+            except (TypeError, ValueError):
+                return {}, "polygon coordinates must be integers"
+        data["polygon"] = json.dumps(normalized)
+
+    if not partial or "x_distance" in payload:
+        try:
+            x_distance = int(payload.get("x_distance", 0))
+        except (TypeError, ValueError):
+            return {}, "x_distance must be an integer"
+        if x_distance < 0:
+            return {}, "x_distance must be >= 0"
+        data["x_distance"] = x_distance
+
+    if not partial or "y_stay_time" in payload:
+        try:
+            y_stay_time = int(payload.get("y_stay_time", 0))
+        except (TypeError, ValueError):
+            return {}, "y_stay_time must be an integer"
+        if y_stay_time < 0:
+            return {}, "y_stay_time must be >= 0"
+        data["y_stay_time"] = y_stay_time
+
+    return data, None
+
+
+def _notify_intrusion_changed() -> None:
+    scheduler = get_scheduler()
+    if scheduler is not None:
+        scheduler.engine.on_config_changed("intrusion", {})
 
 
 @bp.get("")
 def list_regions():
-    """查询某摄像头下防区
-    ---
-    tags: [Region]
-    parameters:
-      - {name: camera_id, in: query, type: integer, required: true}
-    responses:
-      200:
-        description: 防区列表
-        schema:
-          type: object
-          properties:
-            code: {type: integer, example: 0}
-            message: {type: string, example: success}
-            data: {type: array, items: {$ref: '#/definitions/Region'}}
-    """
     camera_id = request.args.get("camera_id", type=int)
-    return ok([])
+    session = SessionLocal()
+    try:
+        query = session.query(Region)
+        if camera_id is not None:
+            query = query.filter(Region.camera_id == camera_id)
+        rows = query.order_by(Region.id.asc()).all()
+        return jsonify(code=0, message="success", data=[_serialize_region(r) for r in rows])
+    finally:
+        session.close()
 
 
 @bp.post("")
 def create_region():
-    """创建防区 (polygon + x_distance + y_stay_time)
-    ---
-    tags: [Region]
-    parameters:
-      - in: body
-        name: body
-        required: true
-        schema:
-          type: object
-          required: [camera_id, name, type, polygon]
-          properties:
-            camera_id: {type: integer}
-            name: {type: string}
-            type: {type: string, enum: [danger_zone, seat]}
-            polygon: {type: array, items: {type: array, items: {type: integer}}}
-            x_distance: {type: integer, description: 安全距离阈值(像素), default: 50}
-            y_stay_time: {type: integer, description: 允许停留时间(秒), default: 10}
-    responses:
-      200:
-        description: 创建成功
-        schema:
-          type: object
-          properties:
-            code: {type: integer, example: 0}
-            message: {type: string, example: success}
-            data: {$ref: '#/definitions/Region'}
-    """
-    payload = request.get_json(force=True)
-    # TODO: 校验并写入 region 表；polygon 由归一化坐标映射回原始分辨率
-    return ok(payload)
+    payload = request.get_json(force=True) or {}
+    data, error = _validate_payload(payload)
+    if error:
+        return jsonify(code=1, message=error, data=None), 400
+
+    session = SessionLocal()
+    try:
+        region = Region(**data)
+        session.add(region)
+        session.commit()
+        session.refresh(region)
+        result = _serialize_region(region)
+        _notify_intrusion_changed()
+        return jsonify(code=0, message="success", data=result)
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 @bp.put("/<int:region_id>")
 def update_region(region_id: int):
-    """更新防区参数
-    ---
-    tags: [Region]
-    parameters:
-      - {name: region_id, in: path, type: integer, required: true}
-      - in: body
-        name: body
-        schema:
-          type: object
-          properties:
-            name: {type: string}
-            polygon: {type: array}
-            x_distance: {type: integer}
-            y_stay_time: {type: integer}
-    responses:
-      200:
-        description: 更新成功
-        schema:
-          type: object
-          properties:
-            code: {type: integer, example: 0}
-            message: {type: string, example: success}
-            data: {$ref: '#/definitions/Region'}
-    """
-    return ok({"id": region_id})
+    payload = request.get_json(force=True) or {}
+    data, error = _validate_payload(payload, partial=True)
+    if error:
+        return jsonify(code=1, message=error, data=None), 400
+
+    session = SessionLocal()
+    try:
+        region = session.get(Region, region_id)
+        if region is None:
+            return jsonify(code=404, message="region not found", data={"id": region_id}), 404
+        for key, value in data.items():
+            setattr(region, key, value)
+        session.commit()
+        session.refresh(region)
+        result = _serialize_region(region)
+        _notify_intrusion_changed()
+        return jsonify(code=0, message="success", data=result)
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 @bp.delete("/<int:region_id>")
 def delete_region(region_id: int):
-    """删除防区
-    ---
-    tags: [Region]
-    parameters:
-      - {name: region_id, in: path, type: integer, required: true}
-    responses:
-      200:
-        description: 删除成功
-        schema:
-          type: object
-          properties:
-            code: {type: integer, example: 0}
-            message: {type: string, example: success}
-            data: {type: object}
-    """
-    return ok({"id": region_id})
+    session = SessionLocal()
+    try:
+        region = session.get(Region, region_id)
+        if region is None:
+            return jsonify(code=404, message="region not found", data={"id": region_id}), 404
+        session.delete(region)
+        session.commit()
+        _notify_intrusion_changed()
+        return jsonify(code=0, message="success", data={"id": region_id})
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()

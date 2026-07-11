@@ -202,3 +202,102 @@
 
 - 下一步最佳动作：配置 Dlib 关键点模型后启动后端，联调真实摄像头帧下的 studying/resting 状态切换和 level=0 fatigue 记录。
 
+
+### Session 006
+
+- Date: 2026-07-09
+- Goal: prepare a fast Docker dev/runtime path for Task B fatigue verification.
+- Completed:
+  - Reused existing dlib/cv2 backend image by tagging it as `ai-study-room-backend-env:dev`.
+  - Updated `backend/Dockerfile` into a stable dependency image with apt/pip mirrors and future ffmpeg support.
+  - Updated `deploy/docker-compose.yml` so backend uses the stable image, mounts `../backend` and `../backend/model_weights`, and runs `gunicorn --reload`.
+  - Added `backend/.dockerignore`.
+  - Added `backend/scripts/seed_demo_fatigue.py`.
+  - Made `python-dotenv` optional for the reused image.
+  - Made local SQLite init create tables automatically.
+  - Fixed RTMP pull URLs by removing the ` live=1` suffix.
+  - Corrected Docker runtime and demo seed data to use cloud RTMP server `49.233.71.82:9090`.
+  - Fixed `AlarmService` persistence so legitimate `camera_id=0` values are not converted to `NULL`.
+  - Pulled latest frontend Dashboard/VideoPlayer/CanvasDraw/RegionConfig files from `origin/main`.
+  - Implemented `/api/cameras` database-backed response and adjusted frontend stream URL resolution for cloud RTMP -> HTTP-FLV playback.
+- Validation:
+  - `python -m py_compile backend/app/config.py backend/app/models/database.py backend/app/stream/scheduler.py backend/scripts/seed_demo_fatigue.py` passed.
+  - `docker compose -f deploy/docker-compose.yml up -d --no-build --force-recreate backend` recreated backend without image rebuild.
+  - `docker compose exec backend python scripts/seed_demo_fatigue.py --status studying` seeded demo user/camera/seat.
+  - `POST /api/seat-status` returned success for `user_id=1001`, `region_id=5`, `status=studying`.
+  - Container check confirmed dlib, cv2, and `shape_predictor_68_face_landmarks.dat` are available.
+  - `linuxserver/ffmpeg:latest` pushed a temporary local test stream during debugging; after user clarification, runtime config was changed to pull from the cloud RTMP server.
+  - Container check confirmed `Config.RTMP_SERVER=49.233.71.82`, scheduler URL `rtmp://49.233.71.82:9090/live/test`, and DB camera URL `rtmp://49.233.71.82:9090/live/test`.
+  - Backend logs showed cloud stream pull success and persisted `level=0` fatigue alarms with `extra.kind=sleepy`.
+  - Direct container verification after the `camera_id=0` fix persisted a debug fatigue alarm with `camera_id=0`.
+  - `python -m pytest tests/test_alarm_center.py tests/test_fatigue.py` passed: 14 passed.
+  - `GET /api/cameras` returned camera `0` with cloud RTMP stream URL.
+  - `npm.cmd run build` in `frontend/` passed.
+- Remaining risks:
+  - Old local SQLite fatigue rows created before the `camera_id=0` fix still have `camera_id=NULL`; new rows persist `camera_id=0`.
+  - Clean image rebuild still depends on network access; the current runtime uses the tagged local image.
+  - `bash ./init.sh` remains blocked on this Windows host; `./init.sh` also could not run directly from PowerShell in this session due permission/WSL behavior.
+
+### Session 007
+
+- Date: 2026-07-10
+- Goal: make studying-seat fatigue alerts use the existing DingTalk notification flow.
+- Completed:
+  - Added `Config.FATIGUE_ALERT_LEVEL`, defaulting to `1`.
+  - Updated `FatiguePlugin` so sleepy/yawn events use the configured level and include it in `extra`.
+  - Set `FATIGUE_ALERT_LEVEL=1` in `deploy/docker-compose.yml`.
+  - Added tests proving level-1 fatigue alarms notify while level-0 private reminders still stay local.
+- Validation:
+  - `python -m py_compile backend/app/config.py backend/app/detectors/fatigue.py backend/tests/test_fatigue.py backend/tests/test_alarm_center.py` passed.
+  - From `backend/`: `python -m pytest tests/test_fatigue.py tests/test_alarm_center.py` passed: 15 passed.
+  - `docker compose -f deploy/docker-compose.yml up -d --no-build --force-recreate backend` recreated backend.
+  - Container config check confirmed `FATIGUE_ALERT_LEVEL=1` and `DINGTALK_WEBHOOK_SET=False`.
+  - Container smoke generated fatigue alarm id `48`; database check showed `status=notified`, `level=1`, and a `primary` notification log.
+- Remaining risks:
+  - Real DingTalk external delivery is not verified because `DINGTALK_WEBHOOK` is currently unset.
+  - Cloud RTMP stream timed out in the latest backend log, so camera-based live fatigue verification also depends on pushing a live stream to `rtmp://49.233.71.82:9090/live/test`.
+
+### Session 008
+
+- Date: 2026-07-10
+- Goal: complete frontend danger-zone drawing to intrusion alarm end-to-end evidence.
+- Completed:
+  - Restored `/api/regions` CRUD persistence and validation for frontend drawn regions.
+  - Restored `IntrusionPlugin` and registered it in `backend/run.py`.
+  - Added repeatable verification script `backend/scripts/verify_intrusion_e2e.py`.
+  - Created danger zone `id=6` through `POST /api/regions`; backend logs showed `[intrusion] active danger zones: [6]`.
+  - Simulated a person box entering that saved polygon through the intrusion plugin and persisted alarm `id=103`.
+- Validation:
+  - `GET /api/regions?camera_id=0` returned danger zone `id=6`.
+  - `docker compose exec backend PYTHONPATH=/app python scripts/verify_intrusion_e2e.py` produced `alarm_id=103`, `type=intrusion`, `status=notified`.
+  - `GET /api/alarms?status=notified` returned alarm `id=103` with snapshot URL and person box evidence.
+  - Snapshot file `/app/snapshots/alarm_6_intrusion_1783691102938.jpg` exists.
+  - `python -m py_compile backend/scripts/verify_intrusion_e2e.py backend/app/detectors/intrusion.py backend/app/api/regions.py backend/run.py` passed.
+  - `python -m pytest tests/test_intrusion.py tests/test_alarm_center.py` passed: 9 passed.
+  - `npm.cmd --prefix frontend run build` passed.
+- Evidence recorded:
+  - Added completed `task-b-intrusion-e2e` entry to `feature_list.json`.
+  - Updated `openspec/progress/claude-progress.md`.
+- Remaining risks:
+  - Cloud RTMP `rtmp://49.233.71.82:9090/live/test` was unavailable during this verification window (`opened False/read False`), so the final person-entry trigger used a deterministic mocked person box rather than a live camera frame.
+  - Direct `npm.cmd run build` inside the Chinese-character frontend path hit a Vite/Rollup path issue; repo-root `npm.cmd --prefix frontend run build` passed.
+
+### Session 009
+
+- Date: 2026-07-10
+- Goal: implement simple reserved-seat identity checking.
+- Completed:
+  - Extended `IntrusionPlugin` to load active studying seat regions from `seat_status` joined with `region type=seat`.
+  - When a person enters an active reserved seat, the plugin crops the person box, calls `FaceMatcher`, and compares the result with `member:<seat_status.user_id>`.
+  - Matching reserved user produces no alarm.
+  - Mismatched user or `stranger` produces `AlarmEvent(type=occupy)` with `extra.kind=unauthorized_seat`.
+  - `POST /api/seat-status` now hot-updates both `fatigue` and `intrusion`, so seat reservation/status changes are effective without backend restart.
+- Validation:
+  - `python -m py_compile backend/app/detectors/intrusion.py backend/app/api/seat_status.py backend/tests/test_intrusion_identity.py backend/tests/test_fatigue.py` passed.
+  - `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_fatigue.py tests/test_alarm_center.py` passed: 20 passed.
+  - Backend container logs showed `[intrusion] active reserved seats: [5]`.
+- Evidence recorded:
+  - Added completed `task-b-seat-identity-mvp` entry to `feature_list.json`.
+- Remaining risks:
+  - Real identity matching requires `backend/model_weights/dlib_face_recognition_resnet_model_v1.dat` and enrolled `member.feature` records. Current container logs show the face recognition model is missing, so live checks fall back to `stranger` until that model and member data are available.
+  - Cloud RTMP live stream remains dependent on OBS/cloud availability.

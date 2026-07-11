@@ -100,6 +100,10 @@ def _notify_fatigue_plugin(region_id: int, status: str, user_id: int) -> None:
         "fatigue",
         {"region_id": region_id, "status": status, "user_id": user_id},
     )
+    engine.on_config_changed(
+        "intrusion",
+        {"region_id": region_id, "status": status, "user_id": user_id},
+    )
     engine.set_enabled("fatigue", _has_active_studying_region())
 
 

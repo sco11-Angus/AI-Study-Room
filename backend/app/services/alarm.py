@@ -115,7 +115,7 @@ class AlarmService:
             event.extra.update(extra)
         if not event.ts:
             event.ts = time.time()
-        if not event.camera_id:
+        if event.camera_id is None:
             event.camera_id = int(event.extra.get("camera_id", 0) or 0)
         if "level" in event.extra and event.level == 1:
             event.level = int(event.extra["level"])
@@ -177,7 +177,7 @@ class AlarmService:
         try:
             record = AlarmRecord(
                 region_id=event.region_id,
-                camera_id=event.camera_id or None,
+                camera_id=event.camera_id,
                 type=event.type,
                 snapshot_url=event.snapshot_url,
                 face_match=event.face_match,

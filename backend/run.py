@@ -5,6 +5,7 @@ import sys
 from app import create_app
 from app.detectors.face import FaceDetector
 from app.detectors.fatigue import FatiguePlugin
+from app.detectors.intrusion import IntrusionPlugin
 from app.stream.engine import InferenceEngine
 from app.stream.scheduler import StreamScheduler, set_scheduler
 
@@ -16,6 +17,7 @@ app = create_app()
 # ---- 启动拉流调度器（WebSocket 视频流依赖）----
 print("[run] ===== 启动推理引擎 =====", flush=True)
 engine = InferenceEngine()
+engine.register(IntrusionPlugin(shared_ctx=engine.shared_ctx))
 engine.register(FaceDetector(skip_frames=10, cooldown=1.0))
 engine.register(FatiguePlugin())
 engine.setup_all()

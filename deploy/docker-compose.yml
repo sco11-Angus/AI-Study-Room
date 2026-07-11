@@ -13,19 +13,22 @@ services:
     restart: unless-stopped
 
   backend:
-    build: ../backend
+    image: ai-study-room-backend-env:dev
+    command: ["gunicorn", "--reload", "-w", "1", "--worker-class", "gthread", "--threads", "8", "--timeout", "180", "-b", "0.0.0.0:5000", "run:app"]
     ports:
       - "5000:5000"   # API + WebSocket + Swagger(/apidocs)
     environment:
       - SKIP_N=5
-      - RTMP_SERVER=nginx-rtmp
+      - RTMP_SERVER=49.233.71.82
       - RTMP_PORT=9090
       - FIRE_WINDOW=30
       - FIRE_CONF=0.45
+      - FATIGUE_ALERT_LEVEL=1
       - ESCALATE_TIMEOUT=180
       - DINGTALK_WEBHOOK=${DINGTALK_WEBHOOK}
       - DATABASE_URI=sqlite:///study_room.db
     volumes:
+      - ../backend:/app
       - ../backend/snapshots:/app/snapshots
       - ../backend/model_weights:/app/model_weights
     depends_on:

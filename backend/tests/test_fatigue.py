@@ -157,7 +157,7 @@ def _seat_row(status="studying", region_id=5):
     return seat_status, region
 
 
-def test_fatigue_plugin_emits_level_zero_event_with_kind():
+def test_fatigue_plugin_emits_dingtalk_level_event_with_kind():
     from app.detectors.base import Frame
     from app.detectors.fatigue import FatigueDetector, FatiguePlugin
 
@@ -174,10 +174,11 @@ def test_fatigue_plugin_emits_level_zero_event_with_kind():
 
     assert len(events) == 1
     assert events[0].type == "fatigue"
-    assert events[0].level == 0
+    assert events[0].level == 1
     assert events[0].region_id == 5
     assert events[0].extra["kind"] == "sleepy"
     assert events[0].extra["user_id"] == 1001
+    assert events[0].extra["level"] == 1
 
 
 def test_fatigue_plugin_resting_hot_update_disables_region():
@@ -250,17 +251,17 @@ def test_seat_status_upserts_and_notifies(monkeypatch, seat_api_db):
 
     assert response.status_code == 200
     assert response.get_json()["data"]["status"] == "studying"
-    assert scheduler.engine.configs[-1] == (
-        "fatigue",
-        {"region_id": 5, "status": "studying", "user_id": 1001},
-    )
+    expected_cfg = {"region_id": 5, "status": "studying", "user_id": 1001}
+    assert ("fatigue", expected_cfg) in scheduler.engine.configs
+    assert ("intrusion", expected_cfg) in scheduler.engine.configs
     assert scheduler.engine.enabled[-1] == ("fatigue", True)
 
     response = client.post("/api/seat-status", json={"user_id": 1001, "region_id": 5, "status": "resting"})
 
     assert response.status_code == 200
     assert response.get_json()["data"]["status"] == "resting"
-    assert scheduler.engine.configs[-1][1]["status"] == "resting"
+    assert ("fatigue", {"region_id": 5, "status": "resting", "user_id": 1001}) in scheduler.engine.configs
+    assert ("intrusion", {"region_id": 5, "status": "resting", "user_id": 1001}) in scheduler.engine.configs
     assert scheduler.engine.enabled[-1] == ("fatigue", False)
 
 

@@ -1,7 +1,12 @@
 """应用配置 — 关键参数汇总（系统设计说明书 §12）。"""
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
 env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(env_path)
@@ -58,6 +63,7 @@ class Config:
     EAR_THRESH = float(os.getenv("EAR_THRESH", 0.2))  # 闭眼阈值
     EAR_DURATION = float(os.getenv("EAR_DURATION", 2))  # 闭眼持续(秒)
     MAR_THRESH = float(os.getenv("MAR_THRESH", 0.6))  # 打哈欠阈值
+    FATIGUE_ALERT_LEVEL = int(os.getenv("FATIGUE_ALERT_LEVEL", 1))
 
     # 烟火检测 (§6.2)
     FIRE_WINDOW = int(os.getenv("FIRE_WINDOW", 30))   # 滑动窗口帧数
