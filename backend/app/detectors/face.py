@@ -391,7 +391,8 @@ class FaceDetector(Detector):
 
                     return [
                         AlarmEvent(
-                            region_id=0,
+                            region_id=frame.camera_id,
+                            camera_id=frame.camera_id,
                             type="face_spoof",
                             confidence=1.0 - score,
                             snapshot=frame.image,
@@ -416,13 +417,24 @@ class FaceDetector(Detector):
         logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}")
 
         # ---- 直接推送（带冷却去重） ----
-        now = time.time()
-        if result != self._last_result or (now - self._last_result_ts) > self._cooldown:
-            self._last_result = result
-            self._last_result_ts = now
-            self._push_result(result, extra, face_crop, frame)
+now = time.time()
+if result != self._last_result or (now - self._last_result_ts) > self._cooldown:
+    self._last_result = result
+    self._last_result_ts = now
+    self._push_result(result, extra, face_crop, frame)
+    return [
+        AlarmEvent(
+            region_id=frame.camera_id,
+            camera_id=frame.camera_id,
+            type="face_recognition",
+            confidence=1.0,
+            snapshot=frame.image,
+            face_crop=face_crop,
+            extra=extra,
+        )
+    ]
 
-        return []
+return []
 
     # ------------------------------------------------------------------
     # 诊断 + 推送辅助方法
