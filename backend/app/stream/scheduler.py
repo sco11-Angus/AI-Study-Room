@@ -39,8 +39,9 @@ os.environ.setdefault(
 )
 os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] = "100000"
 
-# 目标分辨率（显示+推理共用）
-TARGET_W, TARGET_H = 640, 360
+# 目标宽度上限（显示+推理共用）。高度按各摄像头原始宽高比等比推导，
+# 避免把 4:3 摄像头硬压成 16:9 导致画面变形。
+TARGET_W = 640
 
 
 PRE_BUFFER_SIZE = Config.CLIP_PRE_SECONDS * Config.CLIP_FPS
@@ -99,6 +100,11 @@ class StreamScheduler:
         self._engine = engine          # 统一推理引擎 A2
         self._cameras: dict[int, CameraStream] = {}
         self._lock = threading.Lock()
+
+    @property
+    def engine(self) -> "InferenceEngine":
+        """暴露推理引擎，供 API 层触发 on_config_changed 热更新防区。"""
+        return self._engine
 
     # ---- 摄像头管理 ----
 
@@ -320,8 +326,11 @@ class StreamScheduler:
 
                 _consecutive_timeouts = 0
 
-                if frame.shape[1] != TARGET_W or frame.shape[0] != TARGET_H:
-                    frame = cv2.resize(frame, (TARGET_W, TARGET_H))
+                # 等比缩放：宽度超过上限才缩，高度按原始比例推导，保持画面不变形
+                src_h, src_w = frame.shape[0], frame.shape[1]
+                if src_w > TARGET_W:
+                    target_h = max(1, round(src_h * TARGET_W / src_w))
+                    frame = cv2.resize(frame, (TARGET_W, target_h))
 
                 ret, jpg = cv2.imencode(".jpg", frame, cs._encode_params)
                 if ret:

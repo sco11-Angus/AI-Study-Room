@@ -112,7 +112,7 @@ class DingTalkNotifier:
             if alarm is None:
                 return False
             alarm.status = "confirmed"
-            alarm.confirmed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            alarm.confirmed_at = datetime.now()  # 本机本地时间（北京时间）
             for log in session.query(NotificationLog).filter(NotificationLog.alarm_id == alarm_id).all():
                 log.ack_at = alarm.confirmed_at
             session.commit()
