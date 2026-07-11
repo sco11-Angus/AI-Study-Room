@@ -16,6 +16,8 @@ def start_services():
     from app.detectors.face import FaceDetector
     from app.detectors.fire_smoke import FireSmokePlugin
     from app.detectors.fight import FightPlugin
+    from app.detectors.fatigue import FatiguePlugin
+    from app.detectors.intrusion import IntrusionPlugin
     from app.config import Config
     from app.stream.engine import InferenceEngine
     from app.stream.scheduler import StreamScheduler, set_scheduler
@@ -23,7 +25,10 @@ def start_services():
 
     print("[run] ===== 启动推理引擎 =====", flush=True)
     engine = InferenceEngine()
+    # 入侵检测：跑 YOLO 检测人，并把人员框写入 engine.shared_ctx 供打架检测复用
+    engine.register(IntrusionPlugin(shared_ctx=engine.shared_ctx))
     engine.register(FaceDetector(skip_frames=10, cooldown=1.0))
+    engine.register(FatiguePlugin())
     engine.register(FireSmokePlugin())
     engine.register(FightPlugin())
     engine.setup_all()

@@ -2,7 +2,12 @@
 import os
 from pathlib import Path
 from urllib.parse import quote_plus
-from dotenv import load_dotenv
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(*args, **kwargs):
+        return False
 
 
 env_path = Path(__file__).parent.parent / ".env"
@@ -33,6 +38,23 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
+def _default_database_uri() -> str:
+    """Use SQLite locally unless DB_* settings explicitly request MySQL."""
+    has_mysql_env = any(
+        os.getenv(key)
+        for key in ("DB_HOST", "DB_PORT", "DB_USER", "DB_PASSWORD", "DB_NAME")
+    )
+    if not has_mysql_env:
+        return "sqlite:///study_room.db"
+
+    host = os.getenv("DB_HOST", "localhost")
+    port = os.getenv("DB_PORT", "3306")
+    user = os.getenv("DB_USER", "root")
+    password = os.getenv("DB_PASSWORD", "")
+    name = os.getenv("DB_NAME", "study_room")
+    return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}?charset=utf8mb4"
+
+
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
@@ -48,6 +70,7 @@ class Config:
     EAR_THRESH = float(os.getenv("EAR_THRESH", 0.2))  # 闭眼阈值
     EAR_DURATION = float(os.getenv("EAR_DURATION", 2))  # 闭眼持续(秒)
     MAR_THRESH = float(os.getenv("MAR_THRESH", 0.6))  # 打哈欠阈值
+    FATIGUE_ALERT_LEVEL = int(os.getenv("FATIGUE_ALERT_LEVEL", 1))
 
     # 烟火检测 (§6.2)
     FIRE_WINDOW = int(os.getenv("FIRE_WINDOW", 30))   # 滑动窗口帧数
@@ -100,6 +123,7 @@ class Config:
         f"mysql+mysqlconnector://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@"
         f"{DB_HOST}:{DB_PORT}/{DB_NAME}?charset={DB_CHARSET}"
     )
+
 
     # 模型权重 / 抓拍
     MODEL_DIR = os.getenv("MODEL_DIR", "model_weights")
