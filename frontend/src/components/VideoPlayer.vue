@@ -13,6 +13,7 @@
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 
 const props = defineProps({ streamUrl: String })
+const emit = defineEmits(['dimensions'])
 const canvasEl = ref(null)
 const streamStatus = ref('连接视频流...')
 let ws = null
@@ -77,6 +78,10 @@ const connectWs = () => {
         if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
           canvas.width = img.naturalWidth
           canvas.height = img.naturalHeight
+          // 向父组件上报视频真实尺寸，用于设置框的宽高比
+          if (img.naturalWidth && img.naturalHeight) {
+            emit('dimensions', { width: img.naturalWidth, height: img.naturalHeight })
+          }
         }
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0)
@@ -132,7 +137,8 @@ defineExpose({
 
 <style scoped>
 .video-player-wrapper {
-  position: relative;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   border-radius: 12px;
@@ -142,6 +148,7 @@ defineExpose({
 }
 
 .video-player {
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;

@@ -279,10 +279,11 @@ if frame is not None:
         from ..models.database import SessionLocal
         from ..models.entities import AlarmEvent as AlarmRecord
 
+        # 使用本机本地时间（北京时间），而非 UTC，避免前端显示慢 8 小时
         created_at = (
-            datetime.fromtimestamp(event.ts, timezone.utc).replace(tzinfo=None)
+            datetime.fromtimestamp(event.ts)
             if event.ts
-            else datetime.now(timezone.utc).replace(tzinfo=None)
+            else datetime.now()
         )
         session = SessionLocal()
         try:
