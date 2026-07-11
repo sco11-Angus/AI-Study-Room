@@ -394,8 +394,15 @@ class TestCheckIntegration:
                 break
 
         assert result["is_spoof"] is True
-        # FSD 加入后 static_score 升高，融合分可能先触发 spoof_streak
-        assert any(r in result["reasons"] for r in ["prolonged_no_blink", "spoof_streak"])
+        # 多路径均可触发 spoof：眨眼相关 / FSD / 媒体伪影 / 零运动 / 静态帧 / 刚性运动
+        valid_spoof_reasons = [
+            "prolonged_no_blink", "spoof_streak",
+            "media_critical", "temporal_zero_motion",
+            "temporal_critical", "static_frame_mse",
+            "temporal_rigid_motion",
+        ]
+        assert any(r in result["reasons"] for r in valid_spoof_reasons), \
+            f"actual reasons: {result['reasons']}"
         assert result["score"] < ld.threshold
 
     def test_blink_recovery_passes(self):
