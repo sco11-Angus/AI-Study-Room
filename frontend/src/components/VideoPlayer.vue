@@ -49,7 +49,11 @@ const connectWs = () => {
     return
   }
 
-  const cameraId = props.streamUrl.match(/camera_id=(\d+)/)?.[1] || 5
+  const cameraId = props.streamUrl.match(/camera_id=(\d+)/)?.[1]
+  if (!cameraId) {
+    streamStatus.value = '等待摄像头信息...'
+    return
+  }
   const wsUrl = `ws://${location.host}/ws/video_feed/${cameraId}`
 
   streamStatus.value = '连接视频流...'
