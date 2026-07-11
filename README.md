@@ -130,7 +130,25 @@ docker compose -f deploy/docker-compose.yml up -d
 ./init.sh
 ```
 
-当前 Windows 工作环境中 `bash.exe` 指向 WSL shim，且未安装 WSL 发行版，因此本地使用 PowerShell 等价 smoke test 验证必需文件和 Markdown 文档存在。
+Windows PowerShell:
+
+```powershell
+.\init.cmd
+```
+
+PowerShell implementation script, if your execution policy allows it:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\init.ps1
+```
+
+Windows cmd:
+
+```bat
+init.cmd
+```
+
+PowerShell 不能直接执行 `./init.sh`，除非系统额外配置了兼容的 shell launcher。Windows 下使用 `.\init.cmd`；Git Bash、WSL、Linux 或 macOS 下使用 `./init.sh`。
 
 ## GitHub
 

@@ -1,38 +1,124 @@
 <template>
-  <!-- 低延迟播放 HTTP-FLV 流 (§3.3, §11) -->
   <div class="video-player-wrapper">
-    <video
-      ref="videoEl"
-      controls
-      autoplay
-      muted
-      class="video-player"
-    />
-    <div v-if="!streamUrl" class="video-placeholder">
+    <canvas ref="canvasEl" class="video-player" />
+
+    <div v-if="streamStatus" class="video-placeholder">
       <div class="placeholder-icon">📹</div>
-      <div class="placeholder-text">等待视频流连接...</div>
+      <div class="placeholder-text">{{ streamStatus }}</div>
     </div>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import flvjs from 'flv.js'
 
 const props = defineProps({ streamUrl: String })
-const videoEl = ref(null)
-let player
+const canvasEl = ref(null)
+const streamStatus = ref('连接视频流...')
+let ws = null
+let reconnectTimer = null
+let lastFrameTime = 0
+const RECONNECT_DELAY = 3000
+const FRAME_INTERVAL = 1000 / 15
 
-const load = () => {
-  if (!props.streamUrl || !flvjs.isSupported()) return
-  player = flvjs.createPlayer({ type: 'flv', isLive: true, url: props.streamUrl })
-  player.attachMediaElement(videoEl.value)
-  player.load()
+const destroyWs = () => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+    reconnectTimer = null
+  }
+  if (ws) {
+    ws.close()
+    ws = null
+  }
 }
 
-onMounted(load)
-watch(() => props.streamUrl, load)
-onUnmounted(() => player && player.destroy())
+const scheduleReconnect = () => {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer)
+  }
+  reconnectTimer = setTimeout(() => {
+    connectWs()
+  }, RECONNECT_DELAY)
+}
+
+const connectWs = () => {
+  destroyWs()
+
+  if (!props.streamUrl) {
+    streamStatus.value = '等待视频流连接...'
+    return
+  }
+
+  const cameraId = props.streamUrl.match(/camera_id=(\d+)/)?.[1] || 5
+  const wsUrl = `ws://${location.host}/ws/video_feed/${cameraId}`
+
+  streamStatus.value = '连接视频流...'
+
+  ws = new WebSocket(wsUrl)
+  ws.binaryType = 'blob'
+
+  ws.onmessage = (event) => {
+    if (event.data instanceof Blob) {
+      const now = Date.now()
+      if (now - lastFrameTime < FRAME_INTERVAL) return
+      lastFrameTime = now
+
+      streamStatus.value = ''
+      const canvas = canvasEl.value
+      if (!canvas) return
+
+      const img = new Image()
+      img.onload = () => {
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0)
+        URL.revokeObjectURL(img.src)
+      }
+      img.src = URL.createObjectURL(event.data)
+    } else {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.status === 'offline') {
+          streamStatus.value = '摄像头离线'
+        } else if (data.status === 'no_camera') {
+          streamStatus.value = '摄像头不存在'
+        } else if (data.status === 'no_scheduler') {
+          streamStatus.value = '调度器未启动'
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+  }
+
+  ws.onclose = () => {
+    streamStatus.value = '视频流断开，3s 后重试...'
+    scheduleReconnect()
+  }
+
+  ws.onerror = () => {
+    streamStatus.value = '视频流异常，3s 后重试...'
+    scheduleReconnect()
+  }
+}
+
+watch(
+  () => props.streamUrl,
+  () => {
+    connectWs()
+  }
+)
+
+onMounted(() => {
+  connectWs()
+})
+
+onUnmounted(() => {
+  destroyWs()
+})
+
+defineExpose({
+  streamStatus,
+})
 </script>
 
 <style scoped>
@@ -76,5 +162,7 @@ onUnmounted(() => player && player.destroy())
 .placeholder-text {
   color: #909399;
   font-size: 16px;
+  text-align: center;
+  max-width: 220px;
 }
 </style>

@@ -50,7 +50,7 @@ class TestFaceMatch:
         """库空 -> stranger。"""
         from app.detectors.face import FaceMatcher
         matcher = FaceMatcher.__new__(FaceMatcher)
-        matcher.threshold = 0.6
+        matcher.threshold = 0.4
         assert matcher.match(_make_feature()) == "stranger"
 
     def test_same_person_matches(self, db):
@@ -64,7 +64,7 @@ class TestFaceMatch:
         db.commit()
 
         matcher = FaceMatcher.__new__(FaceMatcher)
-        matcher.threshold = 0.6
+        matcher.threshold = 0.4
         assert matcher.match(feature) == "member:1"
 
     def test_different_person_returns_stranger(self, db):
@@ -79,7 +79,7 @@ class TestFaceMatch:
 
         unknown = _make_feature(99)
         matcher = FaceMatcher.__new__(FaceMatcher)
-        matcher.threshold = 0.6
+        matcher.threshold = 0.4
         assert matcher.match(unknown) == "stranger"
 
     def test_nearest_neighbor_wins(self, db):
@@ -95,7 +95,7 @@ class TestFaceMatch:
         db.commit()
 
         matcher = FaceMatcher.__new__(FaceMatcher)
-        matcher.threshold = 0.6
+        matcher.threshold = 0.4
 
         assert matcher.match(f1) == "member:1"
         assert matcher.match(f2) == "member:2"
@@ -112,7 +112,7 @@ class TestFaceMatch:
         db.commit()
 
         matcher = FaceMatcher.__new__(FaceMatcher)
-        matcher.threshold = 0.6
+        matcher.threshold = 0.4
         assert matcher.match(f_good) == "member:1"
 
 
@@ -127,6 +127,35 @@ class _FakeRect:
     def top(self): return self._t
     def right(self): return self._r
     def bottom(self): return self._b
+
+
+class _MockPoint:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+
+class _MockLandmarks:
+    """模拟 dlib 68 点 landmarks（睁眼状态）。"""
+    def __init__(self):
+        pts = []
+        for i in range(68):
+            x = 100 + (i % 10) * 15
+            y = 120 + (i // 10) * 25
+            # 左眼 36-41, 右眼 42-47（睁眼坐标）
+            if i in (37, 38):
+                y -= 8
+            if i in (40, 41):
+                y += 8
+            if i in (43, 44):
+                y -= 8
+            if i in (46, 47):
+                y += 8
+            pts.append(_MockPoint(x, y))
+        self._points = pts
+
+    def part(self, idx):
+        return self._points[idx]
 
 
 class TestFaceDetectorE2E:
@@ -147,7 +176,7 @@ class TestFaceDetectorE2E:
 
         # 手动构造 FaceMatcher（跳过 dlib 加载）
         matcher = FaceMatcher.__new__(FaceMatcher)
-        matcher.threshold = 0.6
+        matcher.threshold = 0.4
         matcher._dlib_loaded = True
         matcher._detector = "mock"
         matcher._initialized = True
@@ -182,6 +211,10 @@ class TestFaceDetectorE2E:
         monkeypatch.setattr(matcher, "detect_faces", lambda img: self._mock_detect_faces(img))
         monkeypatch.setattr(matcher, "encode",
                             lambda face_img: self._mock_encode(face_img))
+        monkeypatch.setattr(matcher, "encode_from_rect",
+                            lambda img, rect: _make_feature(1))
+        monkeypatch.setattr(matcher, "shape_from_rect",
+                            lambda img, rect: _MockLandmarks())
         monkeypatch.setattr(matcher, "match",
                             lambda feature: self._mock_match(feature))
         monkeypatch.setattr(matcher, "get_member_name", lambda mid: None)
@@ -199,26 +232,30 @@ class TestFaceDetectorE2E:
 
     # ---- 场景 2: 陌生人 ----
 
-    def test_stranger_returns_event(self, detector_with_db):
-        """人脸存在但未匹配 -> AlarmEvent(type=face_recognition, face_match=stranger)。"""
+    def test_stranger_returns_event(self, detector_with_db, monkeypatch):
+        """人脸存在但未匹配 -> WebSocket 直接推送 stranger（带冷却去重）。"""
         ctx = detector_with_db
         self._mock_detect_faces = lambda img: [_FakeRect(100, 50, 300, 250)]
         ctx["matcher"].detect_faces = lambda img: [_FakeRect(100, 50, 300, 250)]
-        self._mock_match = lambda feature: "stranger"
-        ctx["matcher"].match = lambda feature: "stranger"
 
+        # 捕获 WebSocket 推送
+        pushed_msgs = []
+        monkeypatch.setattr(
+            "app.api.ws.broadcast_face_result",
+            lambda msg: pushed_msgs.append(msg),
+        )
+
+        # 单帧直接推送（无投票窗口）
         events = ctx["detector"].detect(ctx["make_frame"]())
-        assert len(events) == 1
-        evt = events[0]
-        assert evt.type == "face_recognition"
-        assert evt.extra["face_match"] == "stranger"
-        assert evt.extra["name"] == "陌生人"
-        assert evt.face_crop is not None
+        assert events == []
+
+        assert len(pushed_msgs) >= 1
+        assert pushed_msgs[0]["type"] == "stranger"
 
     # ---- 场景 3: 会员匹配成功 ----
 
     def test_member_matched_returns_event(self, detector_with_db, monkeypatch):
-        """人脸匹配到会员 -> AlarmEvent 含 member_id 和 name。"""
+        """人脸匹配到会员 -> WebSocket 推送 member 含 member_id 和 name。"""
         ctx = detector_with_db
         from app.models.entities import Member
 
@@ -229,18 +266,22 @@ class TestFaceDetectorE2E:
         ctx["session"].commit()
 
         ctx["matcher"].detect_faces = lambda img: [_FakeRect(100, 50, 300, 250)]
-        ctx["matcher"].match = lambda feature: "member:1"
-        ctx["matcher"].get_member_name = lambda mid: "张三"
 
+        # 捕获 WebSocket 推送
+        pushed_msgs = []
+        monkeypatch.setattr(
+            "app.api.ws.broadcast_face_result",
+            lambda msg: pushed_msgs.append(msg),
+        )
+
+        # 单帧直接推送（无投票窗口）
         events = ctx["detector"].detect(ctx["make_frame"]())
-        assert len(events) == 1
-        evt = events[0]
-        assert evt.type == "face_recognition"
-        assert evt.extra["face_match"] == "member:1"
-        assert evt.extra["member_id"] == 1
-        assert evt.extra["name"] == "张三"
-        assert evt.snapshot is not None
-        assert evt.face_crop is not None
+        assert events == []
+
+        assert len(pushed_msgs) >= 1
+        assert pushed_msgs[0]["type"] == "member"
+        assert pushed_msgs[0]["member_id"] == 1
+        assert pushed_msgs[0]["name"] == "张三"
 
     # ---- 场景 4: 冷却去重 ----
 
@@ -249,21 +290,129 @@ class TestFaceDetectorE2E:
         ctx = detector_with_db
 
         ctx["matcher"].detect_faces = lambda img: [_FakeRect(100, 50, 300, 250)]
-        ctx["matcher"].match = lambda feature: "member:1"
-        ctx["matcher"].get_member_name = lambda mid: "张三"
+
+        # 捕获 WebSocket 推送
+        pushed_msgs = []
+        monkeypatch.setattr(
+            "app.api.ws.broadcast_face_result",
+            lambda msg: pushed_msgs.append(msg),
+        )
 
         # 重新创建带冷却的 detector
         from app.detectors.face import FaceDetector
         detector = FaceDetector(skip_frames=1, cooldown=10.0)
         detector._matcher = ctx["matcher"]
 
-        # 第一次检测 -> 产生事件
-        events1 = detector.detect(ctx["make_frame"]())
-        assert len(events1) == 1
+        # 单帧 → 第一次推送
+        events = detector.detect(ctx["make_frame"]())
+        assert events == []
+        assert len(pushed_msgs) == 1
 
-        # 第二次检测（冷却期内）-> 空
+        # 冷却期内：相同结果不重复推送
         events2 = detector.detect(ctx["make_frame"]())
         assert events2 == []
+        assert len(pushed_msgs) == 1  # 仍是 1 次
+
+    def test_single_low_liveness_frame_does_not_spoof(self, detector_with_db, monkeypatch):
+        """单帧低分不触发欺骗（需要连续 2 帧低分）。"""
+        ctx = detector_with_db
+
+        pushed_msgs = []
+        monkeypatch.setattr(
+            "app.api.ws.broadcast_face_result",
+            lambda msg: pushed_msgs.append(msg),
+        )
+
+        class _LiveStub:
+            enabled = True
+            threshold = 0.5
+
+            def __init__(self):
+                self.calls = 0
+
+            def check(self, face_crop, landmarks, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    # 第一帧：正常通过
+                    return {
+                        "score": 0.75,
+                        "is_spoof": False,
+                        "reasons": [],
+                        "details": {"frames_cached": 5},
+                    }
+                if self.calls == 2:
+                    # 第二帧：单帧低分（不足以触发）
+                    return {
+                        "score": 0.15,
+                        "is_spoof": False,  # LivenessDetector内部streak=1，仍不触发is_spoof
+                        "reasons": ["freq_anomaly"],
+                        "details": {"frames_cached": 6},
+                    }
+                # 第三帧及以后：恢复正常（streak 被 reset）
+                return {
+                    "score": 0.72,
+                    "is_spoof": False,
+                    "reasons": [],
+                    "details": {"frames_cached": 7},
+                }
+
+        ctx["detector"]._liveness = _LiveStub()
+
+        # 第1帧：正常 → 无 spoof 事件
+        events1 = ctx["detector"].detect(ctx["make_frame"]())
+        spoof_events = [e for e in events1 if getattr(e, 'type', '') == "face_spoof"]
+        assert spoof_events == []
+
+        # 第2帧：单帧低分 → 不触发 spoof（streak=1）
+        events2 = ctx["detector"].detect(ctx["make_frame"]())
+        spoof_events2 = [e for e in events2 if getattr(e, 'type', '') == "face_spoof"]
+        assert spoof_events2 == []
+
+        # 第3帧：恢复正常 → 无 spoof 事件
+        events3 = ctx["detector"].detect(ctx["make_frame"]())
+        spoof_events3 = [e for e in events3 if getattr(e, 'type', '') == "face_spoof"]
+        assert spoof_events3 == []
+
+    def test_three_stable_low_frames_trigger_spoof(self, detector_with_db, monkeypatch):
+        """连续 2 帧低分应触发 face_spoof。"""
+        ctx = detector_with_db
+
+        pushed_msgs = []
+        monkeypatch.setattr(
+            "app.api.ws.broadcast_face_result",
+            lambda msg: pushed_msgs.append(msg),
+        )
+
+        class _LiveStub:
+            enabled = True
+            threshold = 0.5
+
+            def __init__(self):
+                self.calls = 0
+
+            def check(self, face_crop, landmarks, **kwargs):
+                self.calls += 1
+                # 连续低分 → 第2帧 is_spoof=True（LivenessDetector内部streak>=2）
+                is_spoof = self.calls >= 2
+                return {
+                    "score": 0.17,
+                    "is_spoof": is_spoof,
+                    "reasons": ["prolonged_no_blink", "spoof_streak"] if is_spoof else ["prolonged_no_blink"],
+                    "details": {"frames_cached": 5 + self.calls},
+                }
+
+        ctx["detector"]._liveness = _LiveStub()
+
+        # 第1帧：低分 → streak=1，不触发 spoof
+        events = ctx["detector"].detect(ctx["make_frame"]())
+        spoof_events = [e for e in events if getattr(e, 'type', '') == "face_spoof"]
+        assert spoof_events == []
+
+        # 第2帧：低分 → streak=2 → 触发 face_spoof
+        events = ctx["detector"].detect(ctx["make_frame"]())
+        spoof_events2 = [e for e in events if getattr(e, 'type', '') == "face_spoof"]
+        assert len(spoof_events2) == 1
+        assert spoof_events2[0].type == "face_spoof"
 
     # ---- 场景 5: 模型未加载返回空 ----
 

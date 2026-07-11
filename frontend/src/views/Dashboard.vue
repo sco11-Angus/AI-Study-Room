@@ -1,9 +1,47 @@
 <template>
   <div class="page">
-    <!-- 人脸识别结果 — 顶部醒目横幅 -->
-    <div v-if="faceResult" class="face-banner" :class="faceResult.type">
-      <span v-if="faceResult.type === 'member'">欢迎你, {{ faceResult.name }}</span>
-      <span v-else>陌生人</span>
+    <!-- 人脸识别横幅 — 支持活体检测多状态 -->
+    <div v-if="faceResult" class="face-banner" :class="[faceResult.type, { 'with-liveness': faceResult.liveness_passed !== undefined }]">
+      <!-- member 成功识别 -->
+      <div v-if="faceResult.type === 'member'" class="banner-content">
+        <span class="banner-icon">✅</span>
+        <div class="banner-text">
+          <div class="banner-title">欢迎你, {{ faceResult.name }}</div>
+          <div v-if="faceResult.liveness_passed" class="banner-meta">活体已验证 • 伪影评分: {{ (faceResult.artifact_score || 0).toFixed(2) }}</div>
+        </div>
+      </div>
+      <!-- 陌生人 -->
+      <div v-else-if="faceResult.type === 'stranger'" class="banner-content">
+        <span class="banner-icon">⚠️</span>
+        <div class="banner-text">
+          <div class="banner-title">陌生人</div>
+          <div class="banner-meta">无法识别的用户</div>
+        </div>
+      </div>
+      <!-- 伪造/反光/屏幕回放 -->
+      <div v-else-if="faceResult.type === 'face_spoof'" class="banner-content">
+        <span class="banner-icon">❌</span>
+        <div class="banner-text">
+          <div class="banner-title">检测到可疑媒体</div>
+          <div class="banner-meta">{{ reasonMap[faceResult.reason] || faceResult.reason || '请勿使用虚假媒体' }}</div>
+        </div>
+      </div>
+      <!-- 检测中 -->
+      <div v-else-if="faceResult.type === 'detecting'" class="banner-content">
+        <span class="banner-icon spinning">🔍</span>
+        <div class="banner-text">
+          <div class="banner-title">{{ faceResult.message || '检测中' }}</div>
+          <div v-if="faceResult.stage" class="banner-meta">阶段: {{ stageMap[faceResult.stage] || faceResult.stage }}</div>
+        </div>
+      </div>
+      <!-- 重试 -->
+      <div v-else-if="faceResult.type === 'retry'" class="banner-content">
+        <span class="banner-icon spinning">🔄</span>
+        <div class="banner-text">
+          <div class="banner-title">重新检测中</div>
+          <div class="banner-meta">请保持摄像头可见</div>
+        </div>
+      </div>
     </div>
 
     <div class="dashboard">
@@ -12,8 +50,9 @@
           <span class="header-icon">📹</span>
           <span class="header-title">实时监控</span>
         </div>
-        <div class="video-container">
-          <VideoPlayer :stream-url="streamUrl" />
+        <div class="video-container" ref="videoWrapper">
+          <VideoPlayer ref="playerRef" :stream-url="streamUrl" />
+          <canvas ref="overlayCanvas" class="overlay-canvas" />
         </div>
       </div>
       
@@ -31,15 +70,189 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
-import { confirmAlarm } from '../api'
+import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
+import { useAlarmStore } from '../store/alarm'
 
-const streamUrl = ref('')
+const streamUrl = ref('camera_id=5')
 const alarms = ref([])
 const faceResult = ref(null)
-let wsAlarms, wsFace, reconnectTimer
+const regions = ref([])
+const videoWrapper = ref(null)
+const overlayCanvas = ref(null)
+const playerRef = ref(null)
+const flashOn = ref(true)
+let wsAlarms, wsFace, reconnectTimer, beepTimer, audioContext
+
+const alarmStore = useAlarmStore()
+
+// 伪影原因映射表
+const reasonMap = {
+  'detected_reflection': '检测到反光/屏幕反射',
+  'screen_texture': '检测到屏幕纹理',
+  'eye_movement_insufficient': '眼球微动不足（可能是视频回放）',
+  'blink_insufficient': '眨眼频率异常',
+  'motion_spoof': '检测到异常运动模式'
+}
+
+// 检测阶段映射表
+const stageMap = {
+  'liveness_check': '活体检测中',
+  'artifact_check': '媒体伪影检测中',
+  'matching': '会员匹配中',
+  'extracting': '特征提取中'
+}
+
+function fetchStreamUrl() {
+  getCameras()
+    .then((list) => {
+      if (Array.isArray(list) && list.length) {
+        const cloudCamera = list.find(c => c.stream_url.includes('49.233.71.82'))
+        if (cloudCamera) {
+          streamUrl.value = `camera_id=${cloudCamera.id}`
+          fetchRegionsForCamera(cloudCamera.id)
+        } else {
+          streamUrl.value = `camera_id=${list[0].id}`
+          fetchRegionsForCamera(list[0].id)
+        }
+      } else {
+        streamUrl.value = 'camera_id=5'
+      }
+    })
+    .catch(() => {
+      streamUrl.value = 'camera_id=5'
+    })
+}
+
+function fetchRegionsForCamera(cameraId) {
+  getRegions(cameraId)
+    .then((list) => {
+      regions.value = Array.isArray(list) ? list : []
+      alarmStore.initRegions(regions.value.map((r) => r.id))
+      updateOverlaySize()
+    })
+    .catch(() => {
+      regions.value = []
+    })
+}
+
+function updateOverlaySize() {
+  nextTick(() => {
+    const canvas = overlayCanvas.value
+    const wrapper = videoWrapper.value
+    if (!canvas || !wrapper) return
+
+    const width = wrapper.clientWidth
+    const height = wrapper.clientHeight
+    if (!width || !height) return
+
+    canvas.width = width
+    canvas.height = height
+    canvas.style.width = `${width}px`
+    canvas.style.height = `${height}px`
+    drawOverlay()
+  })
+}
+
+function drawOverlay() {
+  const canvas = overlayCanvas.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  if (!regions.value || !regions.value.length) return
+
+  regions.value.forEach((region) => {
+    if (!Array.isArray(region.polygon) || !region.polygon.length) return
+    const points = region.polygon.map(([x, y]) => [x * canvas.width, y * canvas.height])
+    if (!points.length) return
+
+    const status = alarmStore.activeRegions[region.id] || 'green'
+    ctx.save()
+    ctx.beginPath()
+    points.forEach(([x, y], index) => {
+      if (index === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    })
+    ctx.closePath()
+
+    if (status === 'red') {
+      ctx.strokeStyle = '#f56c6c'
+      ctx.fillStyle = flashOn.value ? 'rgba(245, 108, 108, 0.25)' : 'rgba(245, 108, 108, 0.05)'
+    } else {
+      ctx.strokeStyle = '#67c23a'
+      ctx.fillStyle = 'rgba(103, 195, 58, 0.12)'
+    }
+    ctx.lineWidth = 3
+    ctx.fill()
+    ctx.stroke()
+    ctx.restore()
+
+    const label = region.name || `区域 ${region.id}`
+    const [lx, ly] = points[0]
+    if (typeof lx === 'number' && typeof ly === 'number') {
+      ctx.save()
+      ctx.font = '14px sans-serif'
+      const textWidth = ctx.measureText(label).width + 12
+      const textHeight = 22
+      ctx.fillStyle = status === 'red' ? '#fff2f2' : '#f7fff3'
+      ctx.strokeStyle = status === 'red' ? '#f56c6c' : '#67c23a'
+      ctx.lineWidth = 1.5
+      ctx.fillRect(lx, ly - textHeight, textWidth, textHeight)
+      ctx.strokeRect(lx, ly - textHeight, textWidth, textHeight)
+      ctx.fillStyle = '#303133'
+      ctx.fillText(label, lx + 6, ly - 6)
+      ctx.restore()
+    }
+  })
+}
+
+function initAudioContext() {
+  if (audioContext) return
+  try {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)()
+  } catch {
+    audioContext = null
+  }
+}
+
+function playBeep() {
+  if (!audioContext) {
+    initAudioContext()
+  }
+  if (!audioContext) return
+  if (audioContext.state === 'suspended') {
+    audioContext.resume().catch(() => {})
+  }
+
+  const oscillator = audioContext.createOscillator()
+  const gainNode = audioContext.createGain()
+  oscillator.type = 'sine'
+  oscillator.frequency.value = 880
+  gainNode.gain.value = 0.16
+  oscillator.connect(gainNode)
+  gainNode.connect(audioContext.destination)
+  oscillator.start()
+  oscillator.stop(audioContext.currentTime + 0.16)
+}
+
+function startBeepLoop() {
+  if (beepTimer) return
+  playBeep()
+  beepTimer = setInterval(() => {
+    if (Object.values(alarmStore.activeRegions).some((status) => status === 'red')) {
+      playBeep()
+    }
+  }, 1200)
+}
+
+function stopBeepLoop() {
+  if (beepTimer) {
+    clearInterval(beepTimer)
+    beepTimer = null
+  }
+}
 
 function connectFaceWs() {
   wsFace = new WebSocket(`ws://${location.host}/ws/face_recognition`)
@@ -56,18 +269,68 @@ function connectFaceWs() {
   }
 }
 
-onMounted(() => {
-  wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
-  wsAlarms.onmessage = (e) => alarms.value.unshift(JSON.parse(e.data))
-  connectFaceWs()
+watch(
+  () => alarmStore.activeRegions,
+  () => {
+    drawOverlay()
+    const hasRed = Object.values(alarmStore.activeRegions).some((status) => status === 'red')
+    if (hasRed) {
+      startBeepLoop()
+    } else {
+      stopBeepLoop()
+    }
+  },
+  { deep: true }
+)
+
+watch(flashOn, () => {
+  drawOverlay()
 })
+
+let flashTimer = setInterval(() => {
+  flashOn.value = !flashOn.value
+}, 500)
+
+onMounted(() => {
+  fetchStreamUrl()
+  getAlarms().then((list) => {
+    alarms.value = Array.isArray(list) ? list : []
+    alarmStore.loadAlarms(alarms.value)
+  })
+  wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
+  wsAlarms.onmessage = (e) => {
+    const data = JSON.parse(e.data)
+    if (data.type === 'update') {
+      const idx = alarms.value.findIndex(a => a.id === data.id)
+      if (idx !== -1) {
+        alarms.value[idx] = { ...alarms.value[idx], ...data }
+        alarmStore.update(data.id, data)
+      }
+    } else {
+      alarms.value.unshift(data)
+      alarmStore.push(data)
+    }
+  }
+  connectFaceWs()
+  window.addEventListener('resize', updateOverlaySize)
+})
+
 onUnmounted(() => {
   wsAlarms && wsAlarms.close()
   wsFace && wsFace.close()
   reconnectTimer && clearTimeout(reconnectTimer)
+  stopBeepLoop()
+  flashTimer && clearInterval(flashTimer)
+  window.removeEventListener('resize', updateOverlaySize)
+  if (audioContext) {
+    audioContext.close()
+  }
 })
 
-const onConfirm = (id) => confirmAlarm(id)
+const onConfirm = (id) => {
+  confirmAlarm(id)
+  alarmStore.confirm(id)
+}
 </script>
 
 <style scoped>
@@ -76,13 +339,31 @@ const onConfirm = (id) => confirmAlarm(id)
 }
 
 .face-banner {
-  text-align: center;
-  padding: 16px 0;
-  font-size: 18px;
-  font-weight: 600;
+  padding: 16px 20px;
   border-radius: 12px;
   margin-bottom: 20px;
   animation: slideDown 0.5s ease;
+}
+
+.banner-content {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.banner-icon {
+  font-size: 32px;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.banner-icon.spinning {
+  animation: spin 2s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 @keyframes slideDown {
@@ -96,6 +377,23 @@ const onConfirm = (id) => confirmAlarm(id)
   }
 }
 
+.banner-text {
+  text-align: left;
+  flex: 1;
+}
+
+.banner-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.banner-meta {
+  font-size: 12px;
+  opacity: 0.85;
+  font-weight: 400;
+}
+
 .face-banner.member {
   background: linear-gradient(135deg, #95d475 0%, #67c23a 100%);
   color: #fff;
@@ -103,9 +401,27 @@ const onConfirm = (id) => confirmAlarm(id)
 }
 
 .face-banner.stranger {
-  background: linear-gradient(135deg, #c0c4cc 0%, #909399 100%);
+  background: linear-gradient(135deg, #e6a23c 0%, #f3c96e 100%);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(144, 147, 153, 0.3);
+  box-shadow: 0 4px 12px rgba(230, 162, 60, 0.3);
+}
+
+.face-banner.detecting {
+  background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+}
+
+.face-banner.retry {
+  background: linear-gradient(135deg, #409eff 0%, #66b1ff 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(64, 158, 255, 0.3);
+}
+
+.face-banner.face_spoof {
+  background: linear-gradient(135deg, #f56c6c 0%, #ff6b6b 100%);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(245, 108, 108, 0.3);
 }
 
 .dashboard {
@@ -156,5 +472,13 @@ const onConfirm = (id) => confirmAlarm(id)
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #faf8f5 0%, #f5f0e8 100%);
+  position: relative;
+}
+
+.overlay-canvas {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  pointer-events: none;
 }
 </style>

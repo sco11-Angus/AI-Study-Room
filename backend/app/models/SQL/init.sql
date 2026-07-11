@@ -76,14 +76,16 @@ CREATE TABLE IF NOT EXISTS alarm_event (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '告警ID',
     region_id INT NOT NULL COMMENT '触发防区/座位，外键region.id',
     camera_id INT NOT NULL COMMENT '触发摄像头(便于查询)，外键camera.id',
-    type TEXT NOT NULL COMMENT 'intrusion/fire_smoke/occupy/fatigue/fight',
+    type TEXT NOT NULL COMMENT 'intrusion/fire_smoke/occupy/fatigue/fight/face_recognition',
     snapshot_url TEXT NOT NULL COMMENT '抓拍图路径',
+    clip_url TEXT NULL COMMENT '视频片段路径(任务书G)',
     face_match TEXT NOT NULL COMMENT '会员匹配结果：member:<id>/stranger',
+    message TEXT NULL COMMENT '告警文字描述(任务书G4)',
     level INT NOT NULL COMMENT '0=弱提醒(私有)；1=普通；2+=升级、高优先(如打架)',
     status TEXT NOT NULL COMMENT 'pending/notified/confirmed/escalated',
     extra TEXT NOT NULL COMMENT '附加信息(如打架的vis_score/aud_score/fuse/涉事人员框)',
     created_at DATETIME NOT NULL COMMENT '触发时间',
-    confirmed_at DATETIME NOT NULL COMMENT '确认时间',
+    confirmed_at DATETIME NULL COMMENT '确认时间',
     -- 外键约束
     FOREIGN KEY (region_id) REFERENCES region(id) ON DELETE CASCADE,
     FOREIGN KEY (camera_id) REFERENCES camera(id) ON DELETE CASCADE

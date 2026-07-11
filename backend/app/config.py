@@ -1,9 +1,11 @@
 """应用配置 — 关键参数汇总（系统设计说明书 §12）。"""
 import os
 from pathlib import Path
+from urllib.parse import quote_plus
 from dotenv import load_dotenv
 
-env_path = Path(__file__).parent.parent.parent / ".env"
+
+env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
 
 
@@ -36,6 +38,11 @@ class Config:
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
     RTMP_SERVER = os.getenv("RTMP_SERVER", "49.233.71.82")
     RTMP_PORT = int(os.getenv("RTMP_PORT", 9090))
+    STREAM_CAMERA_ID = int(os.getenv("STREAM_CAMERA_ID", os.getenv("CAMERA_ID", 5)))
+    STREAM_NAME = os.getenv("STREAM_NAME", "").strip()
+    STREAM_URL = os.getenv("STREAM_URL", "").strip()
+    _stream_local_camera = os.getenv("STREAM_LOCAL_CAMERA", "").strip()
+    STREAM_LOCAL_CAMERA = int(_stream_local_camera) if _stream_local_camera else None
 
     # 疲劳检测 (§4.3)
     EAR_THRESH = float(os.getenv("EAR_THRESH", 0.2))  # 闭眼阈值
@@ -45,6 +52,16 @@ class Config:
     # 烟火检测 (§6.2)
     FIRE_WINDOW = int(os.getenv("FIRE_WINDOW", 30))   # 滑动窗口帧数
     FIRE_CONF = float(os.getenv("FIRE_CONF", 0.45))   # 平均置信度阈值
+    FIRE_SMOKE_WEIGHTS = os.getenv("FIRE_SMOKE_WEIGHTS", "fire_smoke.pt")
+    FIRE_SMOKE_LEGACY_YOLOV5_DIR = os.getenv(
+        "FIRE_SMOKE_LEGACY_YOLOV5_DIR",
+        "fire-smoke-detect-yolov4-master/yolov5",
+    )
+    FIRE_SMOKE_IMG_SIZE = int(os.getenv("FIRE_SMOKE_IMG_SIZE", 640))
+    FIRE_SMOKE_DETECT_CONF = float(os.getenv("FIRE_SMOKE_DETECT_CONF", 0.25))
+    FIRE_SMOKE_IOU = float(os.getenv("FIRE_SMOKE_IOU", 0.45))
+    FIRE_SMOKE_DEVICE = os.getenv("FIRE_SMOKE_DEVICE", "cpu")
+    FIRE_SMOKE_REGION_ID = int(os.getenv("FIRE_SMOKE_REGION_ID", 0))
 
     # 音视频融合打架检测 (任务书 D)
     FIGHT_FUSE_THRESH = float(os.getenv("FIGHT_FUSE_THRESH", 0.6))  # 融合分告警阈值
@@ -53,8 +70,9 @@ class Config:
     FIGHT_DURATION = float(os.getenv("FIGHT_DURATION", 3))  # 候选持续确认(秒)
     FIGHT_ALIGN_TOL = float(os.getenv("FIGHT_ALIGN_TOL", 2))  # 音视频时间对齐容差(秒)
     FIGHT_LEVEL = int(os.getenv("FIGHT_LEVEL", 2))        # 告警分级(人身安全高优先)
-    # 人员框来源: shared=复用 B 的引擎共享上下文(生产, 合规); 不重复加载 YOLO
-    FIGHT_PERSON_SOURCE = os.getenv("FIGHT_PERSON_SOURCE", "shared")
+    # 人员框来源: face=复用 B 的 dlib 人脸检测(默认, 零新依赖即可跑通);
+    #            shared=复用 B 的引擎共享上下文(需 B 写入才生效, 合规首选)
+    FIGHT_PERSON_SOURCE = os.getenv("FIGHT_PERSON_SOURCE", "face")
 
     # 音频管线 (任务书 D1)
     AUDIO_WINDOW = float(os.getenv("AUDIO_WINDOW", 1.0))  # 分析窗口(秒)
@@ -65,16 +83,22 @@ class Config:
 
     # 钉钉 Webhook (§7.4)
     DINGTALK_WEBHOOK = os.getenv("DINGTALK_WEBHOOK", "")
+    DINGTALK_SECRET = os.getenv("DINGTALK_SECRET", "")
+    DINGTALK_LEADER_WEBHOOK = os.getenv("DINGTALK_LEADER_WEBHOOK", "")
+    DINGTALK_LEADER_SECRET = os.getenv("DINGTALK_LEADER_SECRET", "")
+    PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 
     # 数据库 (§8)
-    DB_HOST = os.getenv("DB_HOST", "localhost")
-    DB_PORT = os.getenv("DB_PORT", "3306")
-    DB_USER = os.getenv("DB_USER", "root")
-    DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-    DB_NAME = os.getenv("DB_NAME", "study_room")
+    DB_HOST = os.getenv("DB_HOST", os.getenv("MYSQL_HOST", "localhost"))
+    DB_PORT = os.getenv("DB_PORT", os.getenv("MYSQL_PORT", "3306"))
+    DB_USER = os.getenv("DB_USER", os.getenv("MYSQL_USER", "root"))
+    DB_PASSWORD = os.getenv("DB_PASSWORD", os.getenv("MYSQL_PASSWORD", ""))
+    DB_NAME = os.getenv("DB_NAME", os.getenv("MYSQL_DATABASE", "study_room"))
+    DB_CHARSET = os.getenv("DB_CHARSET", os.getenv("MYSQL_CHARSET", "utf8mb4"))
     DATABASE_URI = os.getenv(
         "DATABASE_URI",
-        f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+        f"mysql+mysqlconnector://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@"
+        f"{DB_HOST}:{DB_PORT}/{DB_NAME}?charset={DB_CHARSET}"
     )
 
     # 模型权重 / 抓拍
@@ -83,3 +107,32 @@ class Config:
         "SNAPSHOT_DIR",
         os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "snapshots")),
     )
+
+    # 活体检测（主动/被动信号分离融合）
+    LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "true").lower() == "true"
+    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.50))
+    LIVENESS_HISTORY_SIZE = int(os.getenv("LIVENESS_HISTORY_SIZE", 30))
+    LIVENESS_EAR_BLINK_THRESH = float(os.getenv("LIVENESS_EAR_BLINK_THRESH", 0.25))
+
+    # EMA 平滑系数（0~1，越大响应越快，越小越平滑）
+    LIVENESS_EMA_ALPHA = float(os.getenv("LIVENESS_EMA_ALPHA", 0.3))
+
+    # 反欺骗模型 Ensemble 权重
+    ANTISPOOF_WEIGHT_ONNX = float(os.getenv("ANTISPOOF_WEIGHT_ONNX", 0.5))
+    ANTISPOOF_WEIGHT_PTH = float(os.getenv("ANTISPOOF_WEIGHT_PTH", 0.5))
+
+    # 违规抓拍回放 (任务书 G)
+    CLIP_PRE_SECONDS = int(os.getenv("CLIP_PRE_SECONDS", 5))    # 违规前录制秒数
+    CLIP_POST_SECONDS = int(os.getenv("CLIP_POST_SECONDS", 5))   # 违规后录制秒数
+    CLIP_FPS = int(os.getenv("CLIP_FPS", 15))                    # 片段帧率
+    CLIP_DIR = os.getenv(
+        "CLIP_DIR",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "clips")),
+    )
+    CLIP_MAX_DAYS = int(os.getenv("CLIP_MAX_DAYS", 7))           # 片段保留天数
+
+    # AI 日报 (任务书 G)
+    LLM_ENABLED = os.getenv("LLM_ENABLED", "true").lower() == "true"
+    LLM_API_URL = os.getenv("LLM_API_URL", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation")
+    LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+    LLM_MODEL = os.getenv("LLM_MODEL", "qwen-turbo")

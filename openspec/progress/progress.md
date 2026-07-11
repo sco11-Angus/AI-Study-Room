@@ -2,19 +2,45 @@
 
 ## 当前已验证状态
 
-- 仓库根目录：`C:\Users\25003\AI-Study-Room`
+- 仓库根目录：`C:\Users\ASUS\AI-Study-Room`
 
-- 标准启动路径：shell-capable 环境运行 `./init.sh`；本 Windows 主机 `bash` 是 WSL shim 且未安装发行版，使用 PowerShell 等价检查。
+- 标准启动路径：shell-capable 环境运行 `./init.sh`；Windows PowerShell 运行 `.\init.cmd`。`init.cmd` 会用 `ExecutionPolicy Bypass` 调用 `init.ps1`，避免 PowerShell 直接执行 `.sh` 或受 `.ps1` 执行策略阻塞。
 
 - 标准验证路径：
   - `python backend/scripts/verify_task_e_real_db.py`（在仓库根目录，使用 `.env` 中 `DATABASE_URI` 验证真实 MySQL 任务 E 链路）
-  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py`（在 `backend/` 下）
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`（在 `backend/` 下）
   - `python tests/smoke_test.py`（在 `backend/` 下）
-  - PowerShell-equivalent `init.sh` smoke
+  - `.\init.cmd`（Windows PowerShell smoke）
 
-- 当前最高优先级未完成功能：`feature_list.json` 中暂无未完成项；任务 E 已完成。
+- 当前最高优先级未完成功能：`task-c3-fire-smoke-detection` 已接入本地旧 YOLOv5 烟火权重并通过 demo 图推理；真实 RTMP/视频验收仍待用 live camera 或 OBS 素材完成。
 
-- 当前 blocker：`bash ./init.sh` 在本 Windows 主机失败，因为未安装 WSL 发行版；PowerShell 等价 smoke 已通过。
+- 当前 blocker：
+  - 完整真实视频验收仍需 live camera 或 OBS 烟火/反光负样本素材。
+  - 部署时需保留 `fire-smoke-detect-yolov4-master/yolov5`，或通过 `FIRE_SMOKE_LEGACY_YOLOV5_DIR` 指向旧 YOLOv5 源码目录；`backend/model_weights/fire_smoke.pt` 是本地 gitignored 权重工件。
+
+### Session 006
+
+- 日期：2026-07-10
+
+- 本轮目标：修复 Windows PowerShell 下直接运行 `./init.sh` 被拒绝访问导致的启动验证入口问题。
+
+- 已完成：
+  - 新增 `init.ps1`，复用 `init.sh` 的必需文件和 markdown 文档数量检查。
+  - 新增 `init.cmd`，在 Windows PowerShell/cmd 下通过 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File init.ps1` 运行 smoke test。
+  - 更新 `AGENTS.md` 和 `README.md`，明确 Windows 下使用 `.\init.cmd`，shell-capable 环境继续使用 `./init.sh`。
+  - 更新 `init.sh`，让 shell 入口也检查 `init.ps1` 和 `init.cmd` 是否存在。
+
+- 运行过的验证：
+  - `.\init.cmd`：通过，输出 `Smoke test passed: required files present; markdown docs found.`
+  - `cmd /c init.cmd`：通过，输出 `Smoke test passed: required files present; markdown docs found.`
+  - `C:\Program Files\Git\bin\sh.exe ./init.sh`：通过，输出 `Smoke test passed: required files present; markdown docs found.`
+  - `.\init.ps1`：本机被 PowerShell execution policy 拦截，因此保留 `init.cmd` 作为 Windows 直接入口。
+
+- 已记录证据：已更新 `feature_list.json` 的初始化入口 evidence。
+
+- 已知风险或未解决问题：
+  - PowerShell 语法 `./init.sh` 在 Windows 上仍不能可靠支持，除非把 `init.sh` 替换为 Windows 原生可执行文件或修改系统级 shell launcher；仓库标准 Windows 入口改为 `.\init.cmd`。
+  - `backend/model_weights/fire_smoke.pt` 仍是 0 字节占位文件，真实 YOLO 推理/视频验收仍需训练权重。
 
 ## 会话记录
 
@@ -152,4 +178,134 @@
   - 本机 `bash ./init.sh` 仍受 WSL 环境限制。
 
 - 下一步最佳动作：配置真实钉钉 webhook 后执行一次外发 ActionCard 和确认按钮回调联调。
+
+### Session 005
+
+- 日期：2026-07-09
+
+- 本轮目标：按照 C 任务书完成 C3「烟火检测」插件。
+
+- 已完成：
+  - 重写 `backend/app/detectors/fire_smoke.py`，实现 `FireSmokeDetector` 30 帧滑动窗口均值防误报和 `FireSmokePlugin(Detector)`。
+  - `FireSmokePlugin.setup()` 支持加载 YOLO 权重，缺失/空权重清晰失败；测试可注入 fake model。
+  - `FireSmokePlugin.detect()` 筛选 `fire/smoke` 类别，取本帧最大置信度送入 `feed()`，窗口命中后产出 `AlarmEvent(type="fire_smoke")`。
+  - 在 `backend/run.py` 注册 `FireSmokePlugin()`，由 `InferenceEngine` 统一调度，不自建线程或循环。
+  - 新增 `backend/tests/test_fire_smoke.py`，覆盖连续窗口告警、单帧高置信不告警、fire/smoke 类别、非烟火类别过滤、空权重拒绝。
+  - 为恢复基础状态，修复 `.env` 只有 `MYSQL_*` 时的数据库配置 fallback，并对用户名/密码做 URL 编码，避免特殊字符破坏连接串。
+  - 修复合并残留：`create_app()` 重复注册 `/ws/alarms`、`entities.py` 重复 `Guard`、`AlarmService` helper 缺失、`FaceMatcher.encode_from_rect()` mock fallback、`init.sh` 旧 PRD 路径。
+
+- 运行过的验证：
+  - `python -m py_compile backend/app/services/alarm.py backend/app/detectors/face.py backend/app/models/entities.py backend/app/config.py backend/app/detectors/fire_smoke.py backend/run.py backend/tests/test_fire_smoke.py`
+  - `python -m pytest tests/test_fire_smoke.py`（在 `backend/` 下）：6 passed。
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`（在 `backend/` 下）：38 passed, 12 warnings。
+  - `python tests/smoke_test.py`（在 `backend/` 下）：通过，数据库连接成功，`DATABASE_URI` 脱敏输出。
+  - PowerShell-equivalent `init.sh` smoke：通过，15 个 markdown 文档。
+  - `bash ./init.sh`：仍失败，当前会话返回 WSL 无可用发行版提示。
+
+- 已记录证据：已更新 `feature_list.json` 的 `task-c3-fire-smoke-detection` 条目。
+
+- 提交记录：待提交。
+
+- 更新过的文件或工件：
+  - `backend/app/detectors/fire_smoke.py`
+  - `backend/tests/test_fire_smoke.py`
+  - `backend/run.py`
+  - `backend/app/config.py`
+  - `backend/app/__init__.py`
+  - `backend/app/models/entities.py`
+  - `backend/app/services/alarm.py`
+  - `backend/app/detectors/face.py`
+  - `init.sh`
+  - `feature_list.json`
+  - `openspec/progress/progress.md`
+
+- 已知风险或未解决问题：
+  - `backend/model_weights/fire_smoke.pt` 是 0 字节占位文件；真实 fire/smoke YOLO 推理和打火机/反光视频验收需要替换为训练好的非空权重。
+  - 本会话中 `bash ./init.sh` 仍未能进入 WSL 发行版；PowerShell 等价 smoke 已通过。
+
+- 下一步最佳动作：提供真实 `fire_smoke.pt` 后运行后端服务，用打火机/烟雾视频和反光视频完成 C3 真实视频验收。
+
+### Session 006
+
+- 日期：2026-07-10
+
+- 本轮目标：测试任务 E 抓拍功能，修复 scheduler camera_id 与数据库外键不匹配问题。
+
+- 已完成：
+  - 启动后端服务，验证 API `/api/alarms` 正常响应。
+  - 发现 `backend/run.py` 中 scheduler 使用 `camera_id=0`，但数据库 `camera.id` 从 1 开始，且 `AlarmEvent.camera_id` 是外键约束，导致抓拍告警无法持久化。
+  - 修复 `backend/run.py` 将 `scheduler.add_camera(camera_id=0, ...)` 修改为 `camera_id=5`，匹配数据库中指向云服务器 RTMP 流的摄像头记录。
+  - 重新启动后端服务，验证 scheduler 使用正确的 camera_id。
+  - 运行完整后端测试套件：43 passed，无回归问题。
+
+- 运行过的验证：
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`：43 passed。
+  - API 验证：`GET /api/alarms` 返回 200，包含 20 条历史告警记录。
+
+- 已记录证据：已修复 `backend/run.py` 的 camera_id 配置问题。
+
+- 提交记录：`3552cb2 fix: use correct camera_id=5 for scheduler to match database`
+
+- 更新过的文件或工件：
+  - `backend/run.py`
+  - `openspec/progress/progress.md`
+
+- 已知风险或未解决问题：
+  - RTMP 云服务器流（49.233.71.82:9090）连接超时，需要 OBS 推流才能验证真实抓拍功能。
+  - fire_smoke 权重文件仍为 0 字节占位。
+
+- 下一步最佳动作：启动 OBS 推流到云服务器后，调用 `POST /api/alarms/test-capture` 验证真实抓拍功能。
+
+### Session 007
+
+- 日期：2026-07-10
+
+- 本轮目标：把根目录 `fire-smoke-detect-yolov4-master` 开源项目中的烟火模型嫁接到当前系统。
+
+- 已完成：
+  - 检查开源项目后确认 YOLOv4 权重占位为空，实际可用权重为 `fire-smoke-detect-yolov4-master/yolov5/best.pt`。
+  - 确认该 `best.pt` 是老版 Ultralytics YOLOv5 pickle，不能被当前 `ultralytics==8.*` 的 `YOLO(...)` 直接加载。
+  - 新增 `backend/app/detectors/legacy_yolov5.py`，封装旧 YOLOv5 源码路径、PyTorch 2.6+ `weights_only=False` 加载、letterbox、推理和 NMS，输出兼容现有 `FireSmokePlugin` 的 result/boxes 结构。
+  - 修改 `FireSmokePlugin.setup()`：优先尝试 Ultralytics YOLO，失败时自动回退旧 YOLOv5 适配器。
+  - 新增火烟配置项：`FIRE_SMOKE_LEGACY_YOLOV5_DIR`、`FIRE_SMOKE_IMG_SIZE`、`FIRE_SMOKE_DETECT_CONF`、`FIRE_SMOKE_IOU`、`FIRE_SMOKE_DEVICE`。
+  - 将 `fire-smoke-detect-yolov4-master/yolov5/best.pt` 复制为本地 `backend/model_weights/fire_smoke.pt`，解除 0 字节权重问题；该权重按 `.gitignore` 不入库。
+  - 补充后端依赖：`scipy`、`tqdm`、`mysql-connector-python`。
+
+- 运行过的验证：
+  - `.\init.cmd`：通过。
+  - `python -m py_compile backend/app/config.py backend/app/detectors/fire_smoke.py backend/app/detectors/legacy_yolov5.py backend/tests/test_fire_smoke.py`：通过。
+  - 真实权重加载：Ultralytics YOLOv8 拒绝旧 YOLOv5 权重后，legacy YOLOv5 fallback 成功加载，类别为 `['fire', 'smoke']`。
+  - demo 图推理：`fire-smoke-detect-yolov4-master/result/result_demo.jpg` 检出 fire≈0.662、smoke≈0.311；连续 30 帧后产出 `AlarmEvent(type="fire_smoke")`。
+  - `python -m pytest tests/test_fire_smoke.py`：7 passed。
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`：44 passed（使用仓库内临时目录绕过系统 Temp 权限问题）。
+  - `python tests/smoke_test.py`：`ALL SMOKE TESTS PASSED`。
+  - `python backend/scripts/verify_task_e_real_db.py`：通过，输出 `TASK_E_REAL_DB_VERIFY_OK`（本次从 `.env` 的 `MYSQL_*` 临时拼接 `DATABASE_URI`）。
+
+- 已记录证据：已更新 `feature_list.json` 的 `task-c3-fire-smoke-detection` evidence 和 blockers。
+
+- 已知风险或未解决问题：
+  - 还未用真实 live RTMP/OBS 烟火视频和反光负样本完成 C3 最终验收。
+  - 旧 YOLOv5 权重依赖 `fire-smoke-detect-yolov4-master/yolov5` 源码目录；部署时需要保留该目录或配置 `FIRE_SMOKE_LEGACY_YOLOV5_DIR`。
+  - `backend/model_weights/fire_smoke.pt` 为本地模型工件，按 `.gitignore` 不入库。
+
+### Session 008
+
+- 日期：2026-07-10
+
+- 本轮目标：封装单张照片烟火检测测试脚本。
+
+- 已完成：
+  - 新增 `backend/scripts/test_fire_smoke_image.py`，用于对单张图片输出模型原始 `fire/smoke` 检测结果。
+  - 新增 `backend/scripts/test_fire_smoke_alarm_image.py`，用于把单张图片重复送入 30 帧窗口，验证是否产出 `AlarmEvent(type="fire_smoke")`。
+  - 两个脚本默认读取 `test_photos/fire_test.jpg`，也支持传入任意图片路径。
+  - 脚本已抑制旧 YOLOv5 fallback 的加载噪声，只输出测试结果。
+
+- 运行过的验证：
+  - `.\init.cmd`：通过。
+  - `python -m py_compile backend/scripts/test_fire_smoke_image.py backend/scripts/test_fire_smoke_alarm_image.py`：通过。
+  - `python backend/scripts/test_fire_smoke_image.py`：对 `test_photos/fire_test.jpg` 输出 fire≈0.757、fire≈0.557、smoke≈0.256。
+  - `python backend/scripts/test_fire_smoke_alarm_image.py`：对同一图片重复 30 帧后输出 1 个 `fire_smoke` 告警事件。
+
+- 已知风险或未解决问题：
+  - 该脚本是本地图片验证工具，不等同于真实 RTMP/OBS 视频验收。
 

@@ -7,6 +7,15 @@ export const useAlarmStore = defineStore('alarm', {
     activeRegions: {} // { regionId: 'green' | 'red' }
   }),
   actions: {
+    // 加载历史告警，并为存在未确认的高等级告警设置红色状态
+    loadAlarms(alarms) {
+      this.alarms = Array.isArray(alarms) ? alarms.slice() : []
+      this.alarms.forEach((alarm) => {
+        if (alarm.level !== 0 && alarm.status !== 'confirmed') {
+          this.activeRegions[alarm.region_id] = 'red'
+        }
+      })
+    },
     // 添加告警，对应格子转红闪烁
     push(alarm) {
       this.alarms.unshift(alarm)
@@ -20,6 +29,16 @@ export const useAlarmStore = defineStore('alarm', {
       if (alarm) {
         alarm.status = 'confirmed'
         this.activeRegions[alarm.region_id] = 'green'
+      }
+    },
+    // 更新告警状态（确认、升级、片段就绪等）
+    update(id, updates) {
+      const alarm = this.alarms.find((x) => x.id === id)
+      if (alarm) {
+        Object.assign(alarm, updates)
+        if (updates.status === 'confirmed') {
+          this.activeRegions[alarm.region_id] = 'green'
+        }
       }
     },
     // 初始化防区颜色（全部绿色）
