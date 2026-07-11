@@ -232,3 +232,84 @@
 
 - 下一步最佳动作：启动 OBS 推流到云服务器后，调用 `POST /api/alarms/test-capture` 验证真实抓拍功能。
 
+### Session 007
+
+- 日期：2026-07-11
+
+- 本轮目标：实现告警日志记录、存储管理优化、钉钉通知图片嵌入，解决公网IP访问问题。
+
+- 已完成：
+  - 新增告警日志系统：每次告警触发时自动记录详细信息到 `backend/logs/alarm_YYYY-MM-DD.log`，包含告警ID、类型、级别、区域、摄像头、人脸匹配、消息、截图URL等。
+  - 新增存储管理器 `backend/app/services/storage_manager.py`：基于磁盘使用率的分级清理策略（警告阈值80%，临界阈值90%），定时清理过期抓拍、视频片段和日志文件。
+  - 优化钉钉通知：截图转换为Base64直接嵌入消息，解决公网IP无法访问问题。
+  - 优化图片压缩：JPEG质量60%，最大分辨率限制为1280x720。
+  - 确认页面资源路径改为相对路径，支持从任意访问地址加载。
+  - 修改 `STREAM_CAMERA_ID` 默认值为5。
+  - 添加Windows防火墙规则允许端口5000入站连接。
+  - 测试验证：告警触发、截图生成、视频录制、钉钉通知发送均正常工作。
+
+- 运行过的验证：
+  - `python -m pytest tests/test_alarm_center.py`（在 `backend/` 下）：10 passed。
+  - API验证：`GET /api/alarms/storage-status` 返回存储状态信息。
+  - 真实告警测试：`POST /api/alarms/test-capture` 成功触发告警，截图和视频片段生成正常，钉钉消息发送成功。
+
+- 已记录证据：已更新 `feature_list.json` 的任务 E 和任务 G evidence。
+
+- 提交记录：`0c67429 feat: 告警日志记录、存储管理和钉钉通知优化`
+
+- 更新过的文件或工件：
+  - `backend/app/services/alarm.py`
+  - `backend/app/services/storage_manager.py`
+  - `backend/app/services/dingtalk.py`
+  - `backend/app/api/alarms.py`
+  - `backend/app/config.py`
+  - `backend/app/services/stream_capture.py`
+  - `backend/app/stream/scheduler.py`
+  - `backend/run.py`
+  - `.env`
+  - `feature_list.json`
+  - `openspec/progress/progress.md`
+
+- 已知风险或未解决问题：
+  - 公网IP `156.224.79.175:5000` 返回502 Bad Gateway，校园网网关未配置端口映射。建议使用ngrok内网穿透解决外部访问问题。
+  - fire_smoke 权重文件仍为0字节占位。
+
+- 下一步最佳动作：配置ngrok内网穿透，实现公网可访问的确认页面和回放功能。
+
+### Session 008
+
+- 日期：2026-07-11
+
+- 本轮目标：修复欺骗攻击(face_spoof)和陌生人(stranger)告警推送失败问题。
+
+- 已完成：
+  - 修复 `backend/app/detectors/face.py` 中滑动窗口投票被提前return跳过的逻辑错误，确保陌生人告警去抖动正常工作。
+  - 修复 `backend/app/services/alarm.py` 中缺少 `face_spoof` 类型路由处理的问题，现在欺骗攻击告警能正确触发钉钉通知。
+  - 修复 `backend/app/detectors/face.py` 中 `face_spoof` 告警缺少 `camera_id` 的问题，补全 `frame.camera_id`。
+  - 在 `backend/app/models/entities.py` 中添加 `face_spoof` 到告警类型枚举。
+  - 在 `backend/app/services/alarm.py` 中添加 `face_spoof` 告警描述生成逻辑，包含活体分数和原因。
+  - 更新数据库枚举类型，添加 `face_spoof`。
+  - 更新 `init.sql` 添加 `face_spoof` 告警类型注释。
+
+- 运行过的验证：
+  - `python -m pytest tests/test_alarm_center.py`（在 `backend/` 下）：10 passed。
+  - 手动测试：face_spoof告警路由成功，face_recognition正确返回None（只走WebSocket）。
+
+- 已记录证据：已更新 `feature_list.json` 的任务 E 和任务 G evidence。
+
+- 提交记录：`b356712 fix: 欺骗攻击和陌生人告警推送失败问题`, `9da744f chore: 更新init.sql添加face_spoof告警类型`
+
+- 更新过的文件或工件：
+  - `backend/app/services/alarm.py`
+  - `backend/app/detectors/face.py`
+  - `backend/app/models/entities.py`
+  - `init.sql`
+  - `feature_list.json`
+  - `openspec/progress/progress.md`
+
+- 已知风险或未解决问题：
+  - 公网IP `156.224.79.175:5000` 返回502 Bad Gateway，校园网网关未配置端口映射。建议使用ngrok内网穿透解决外部访问问题。
+  - fire_smoke 权重文件仍为0字节占位。
+
+- 下一步最佳动作：测试人员验证欺骗攻击和陌生人告警推送功能是否正常。
+
