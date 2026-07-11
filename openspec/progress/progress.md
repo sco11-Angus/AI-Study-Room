@@ -278,6 +278,59 @@
 
 ### Session 008
 
+- 日期：2026-07-10
+
+- 本轮目标：把根目录 `fire-smoke-detect-yolov4-master` 开源项目中的烟火模型嫁接到当前系统。
+
+- 已完成：
+  - 检查开源项目后确认 YOLOv4 权重占位为空，实际可用权重为 `fire-smoke-detect-yolov4-master/yolov5/best.pt`。
+  - 确认该 `best.pt` 是老版 Ultralytics YOLOv5 pickle，不能被当前 `ultralytics==8.*` 的 `YOLO(...)` 直接加载。
+  - 新增 `backend/app/detectors/legacy_yolov5.py`，封装旧 YOLOv5 源码路径、PyTorch 2.6+ `weights_only=False` 加载、letterbox、推理和 NMS，输出兼容现有 `FireSmokePlugin` 的 result/boxes 结构。
+  - 修改 `FireSmokePlugin.setup()`：优先尝试 Ultralytics YOLO，失败时自动回退旧 YOLOv5 适配器。
+  - 新增火烟配置项：`FIRE_SMOKE_LEGACY_YOLOV5_DIR`、`FIRE_SMOKE_IMG_SIZE`、`FIRE_SMOKE_DETECT_CONF`、`FIRE_SMOKE_IOU`、`FIRE_SMOKE_DEVICE`。
+  - 将 `fire-smoke-detect-yolov4-master/yolov5/best.pt` 复制为本地 `backend/model_weights/fire_smoke.pt`，解除 0 字节权重问题；该权重按 `.gitignore` 不入库。
+  - 补充后端依赖：`scipy`、`tqdm`、`mysql-connector-python`。
+
+- 运行过的验证：
+  - `.\init.cmd`：通过。
+  - `python -m py_compile backend/app/config.py backend/app/detectors/fire_smoke.py backend/app/detectors/legacy_yolov5.py backend/tests/test_fire_smoke.py`：通过。
+  - 真实权重加载：Ultralytics YOLOv8 拒绝旧 YOLOv5 权重后，legacy YOLOv5 fallback 成功加载，类别为 `['fire', 'smoke']`。
+  - demo 图推理：`fire-smoke-detect-yolov4-master/result/result_demo.jpg` 检出 fire≈0.662、smoke≈0.311；连续 30 帧后产出 `AlarmEvent(type="fire_smoke")`。
+  - `python -m pytest tests/test_fire_smoke.py`：7 passed。
+  - `python -m pytest tests/test_intrusion.py tests/test_fight.py tests/test_fight_integration.py tests/test_face.py tests/test_alarm_center.py tests/test_fire_smoke.py`：44 passed（使用仓库内临时目录绕过系统 Temp 权限问题）。
+  - `python tests/smoke_test.py`：`ALL SMOKE TESTS PASSED`。
+  - `python backend/scripts/verify_task_e_real_db.py`：通过，输出 `TASK_E_REAL_DB_VERIFY_OK`（本次从 `.env` 的 `MYSQL_*` 临时拼接 `DATABASE_URI`）。
+
+- 已记录证据：已更新 `feature_list.json` 的 `task-c3-fire-smoke-detection` evidence 和 blockers。
+
+- 已知风险或未解决问题：
+  - 还未用真实 live RTMP/OBS 烟火视频和反光负样本完成 C3 最终验收。
+  - 旧 YOLOv5 权重依赖 `fire-smoke-detect-yolov4-master/yolov5` 源码目录；部署时需要保留该目录或配置 `FIRE_SMOKE_LEGACY_YOLOV5_DIR`。
+  - `backend/model_weights/fire_smoke.pt` 为本地模型工件，按 `.gitignore` 不入库。
+
+### Session 009
+
+- 日期：2026-07-10
+
+- 本轮目标：封装单张照片烟火检测测试脚本。
+
+- 已完成：
+  - 新增 `backend/scripts/test_fire_smoke_image.py`，用于对单张图片输出模型原始 `fire/smoke` 检测结果。
+  - 新增 `backend/scripts/test_fire_smoke_alarm_image.py`，用于把单张图片重复送入 30 帧窗口，验证是否产出 `AlarmEvent(type="fire_smoke")`。
+  - 两个脚本默认读取 `test_photos/fire_test.jpg`，也支持传入任意图片路径。
+  - 脚本已抑制旧 YOLOv5 fallback 的加载噪声，只输出测试结果。
+
+- 运行过的验证：
+  - `.\init.cmd`：通过。
+  - `python -m py_compile backend/scripts/test_fire_smoke_image.py backend/scripts/test_fire_smoke_alarm_image.py`：通过。
+  - `python backend/scripts/test_fire_smoke_image.py`：对 `test_photos/fire_test.jpg` 输出 fire≈0.757、fire≈0.557、smoke≈0.256。
+  - `python backend/scripts/test_fire_smoke_alarm_image.py`：对同一图片重复 30 帧后输出 1 个 `fire_smoke` 告警事件。
+
+- 已知风险或未解决问题：
+  - 该脚本是本地图片验证工具，不等同于真实 RTMP/OBS 视频验收。
+
+### Session 010
+
 - 日期：2026-07-11
 
 - 本轮目标：修复欺骗攻击(face_spoof)和陌生人(stranger)告警推送失败问题。
@@ -290,6 +343,7 @@
   - 在 `backend/app/services/alarm.py` 中添加 `face_spoof` 告警描述生成逻辑，包含活体分数和原因。
   - 更新数据库枚举类型，添加 `face_spoof`。
   - 更新 `init.sql` 添加 `face_spoof` 告警类型注释。
+  - 解决 git 冲突，采用 main 分支的直接推送方案（带冷却去重），保留 camera_id 和 face_spoof 修复。
 
 - 运行过的验证：
   - `python -m pytest tests/test_alarm_center.py`（在 `backend/` 下）：10 passed。
@@ -297,7 +351,7 @@
 
 - 已记录证据：已更新 `feature_list.json` 的任务 E 和任务 G evidence。
 
-- 提交记录：`b356712 fix: 欺骗攻击和陌生人告警推送失败问题`, `9da744f chore: 更新init.sql添加face_spoof告警类型`
+- 提交记录：`b356712 fix: 欺骗攻击和陌生人告警推送失败问题`, `9da744f chore: 更新init.sql添加face_spoof告警类型`, `4d92de3 fix: 解决git冲突，采用main分支的直接推送方案`
 
 - 更新过的文件或工件：
   - `backend/app/services/alarm.py`
@@ -309,7 +363,7 @@
 
 - 已知风险或未解决问题：
   - 公网IP `156.224.79.175:5000` 返回502 Bad Gateway，校园网网关未配置端口映射。建议使用ngrok内网穿透解决外部访问问题。
-  - fire_smoke 权重文件仍为0字节占位。
+  - fire_smoke 权重文件为本地模型工件，按 `.gitignore` 不入库。
 
 - 下一步最佳动作：测试人员验证欺骗攻击和陌生人告警推送功能是否正常。
 
