@@ -6,6 +6,19 @@ import time
 import cv2
 import numpy as np
 
+_CAPTURE_OPTIONS = (
+    "rtsp_transport;tcp"
+    "|rtmp_live;live"
+    "|analyzeduration;100000|probesize;50000"
+    "|fflags;nobuffer+genpts"
+    "|flags;low_delay"
+    "|flags2;showall"
+    "|err_detect;ignore_err"
+    "|strict;unofficial"
+    "|max_delay;2000000"
+    "|read_attempts;10000"
+)
+
 
 class StreamCaptureError(RuntimeError):
     """Raised when a frame cannot be captured from a stream source."""
@@ -32,6 +45,8 @@ def capture_frame(
         raise StreamCaptureError("timeout must be positive")
     if warmup_frames < 0:
         raise StreamCaptureError("warmup_frames must be >= 0")
+
+    _configure_ffmpeg_capture()
 
     frame = _try_get_from_scheduler(camera_id, timeout)
     if frame is not None:
@@ -80,14 +95,6 @@ def _try_get_from_scheduler(camera_id: int, timeout: float) -> np.ndarray | None
 
         cam = scheduler.get_camera(camera_id)
         if cam is None:
-            for cid in scheduler.camera_ids:
-                cam = scheduler.get_camera(cid)
-                if cam:
-                    jpg_bytes = cam.latest_frame()
-                    if jpg_bytes:
-                        frame = cv2.imdecode(np.frombuffer(jpg_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-                        if frame is not None:
-                            return frame
             return None
 
         jpg_bytes = cam.latest_frame()
@@ -107,3 +114,11 @@ def _try_get_from_scheduler(camera_id: int, timeout: float) -> np.ndarray | None
         return None
     except Exception:
         return None
+
+
+def _configure_ffmpeg_capture() -> None:
+    """Keep one-shot OpenCV capture aligned with the live scheduler settings."""
+    import os
+
+    os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", _CAPTURE_OPTIONS)
+    os.environ.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "100000")

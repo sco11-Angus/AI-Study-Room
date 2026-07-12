@@ -192,8 +192,6 @@ class DingTalkNotifier:
                 f"- Level: {alarm.level}",
                 f"- Time: {created}",
             ]
-            if alarm.snapshot_url:
-                lines.append(f"- Snapshot: {self._public_url(alarm.snapshot_url)}")
             if alarm.face_match:
                 lines.append(f"- Face: {alarm.face_match}")
             if extra:
@@ -259,13 +257,8 @@ class DingTalkNotifier:
             ]
             if alarm.message:
                 lines.append(f"- \u7cfb\u7edf\u5907\u6ce8: {alarm.message}")
-            if alarm.snapshot_url:
-                snapshot_url = self._public_url(alarm.snapshot_url)
-                if snapshot_url.startswith(("http://", "https://")):
-                    lines.append(f"![\u544a\u8b66\u6293\u62cd]({snapshot_url})")
-                lines.append(f"- \u6293\u62cd: {snapshot_url}")
-            if alarm.clip_url:
-                lines.append(f"- \u56de\u653e: {self._public_url(alarm.clip_url)}")
+            if alarm.snapshot_url or alarm.clip_url:
+                lines.append("- \u8bc1\u636e: \u6293\u62cd/\u56de\u653e\u5df2\u4fdd\u5b58\u5230\u670d\u52a1\u5668")
             if alarm.face_match:
                 lines.append(f"- \u4eba\u8138\u5339\u914d: {alarm.face_match}")
             return base_title, text or "\n".join(lines)
@@ -424,7 +417,7 @@ class DingTalkNotifier:
             f"\u5b58\u5728\u201c{behavior}\u201d\u7684\u60c5\u51b5\uff0c"
             f"\u5df2\u5224\u5b9a\u4e3a{type_label}\uff08\u7ea7\u522b {level}\uff09\u3002"
             f"{evidence_text}"
-            "\u8bf7\u67e5\u770b\u6293\u62cd\u6216\u56de\u653e\u540e\u70b9\u51fb\u201c\u786e\u8ba4\u5904\u7406\u201d\u5b8c\u6210\u95ed\u73af\u3002"
+            "\u8bc1\u636e\u5df2\u4fdd\u5b58\u5230\u670d\u52a1\u5668\uff0c\u8bf7\u6838\u5b9e\u540e\u70b9\u51fb\u201c\u786e\u8ba4\u5904\u7406\u201d\u5b8c\u6210\u95ed\u73af\u3002"
         )
 
     def _spoken_evidence(self, extra: dict) -> str:
