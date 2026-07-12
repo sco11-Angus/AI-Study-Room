@@ -176,12 +176,13 @@ EOF
                         echo "→ 方式: docker compose up -d"
 
                         cd /opt/AI-Study-Room || cd ${WORKSPACE}
+                        # 增量部署：省略 --force-recreate，compose 仅重建镜像/配置发生变更的容器，未变更的保持运行
                         docker compose -f deploy/docker-compose.yml \
                             -f deploy/docker-compose.override.yml \
-                            up -d --pull always --force-recreate || \
+                            up -d --pull always || \
                         docker compose -f deploy/docker-compose.yml \
                             -f deploy/docker-compose.override.yml \
-                            up -d --force-recreate
+                            up -d
 
                         echo '✅ 部署完成'
                     '''
@@ -216,11 +217,11 @@ EOF
                 echo '🌐 [Stage 8] 部署前端到 Nginx'
                 sh '''
                     sudo mkdir -p ${DEPLOY_DIR}
-                    sudo rm -rf ${DEPLOY_DIR}/*
-                    sudo cp -r frontend/dist/* ${DEPLOY_DIR}/
+                    # 增量同步：仅传输变更文件，--delete 清理源中已移除的文件（替代 rm -rf 全量覆盖）
+                    sudo rsync -a --delete --checksum frontend/dist/ ${DEPLOY_DIR}/
                     sudo chown -R www-data:www-data ${DEPLOY_DIR}
                     sudo systemctl reload nginx || sudo systemctl restart nginx
-                    echo "✅ 前端已部署到 ${DEPLOY_DIR}"
+                    echo "✅ 前端已增量部署到 ${DEPLOY_DIR}"
                 '''
             }
         }
