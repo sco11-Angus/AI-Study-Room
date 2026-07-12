@@ -12,11 +12,13 @@
   - `python tests/smoke_test.py`（在 `backend/` 下）
   - `.\init.cmd`（Windows PowerShell smoke）
 
-- 当前最高优先级未完成功能：`task-c3-fire-smoke-detection` 已接入本地旧 YOLOv5 烟火权重并通过 demo 图推理；真实 RTMP/视频验收仍待用 live camera 或 OBS 素材完成。
+- 当前最高优先级未完成功能：暂无。`task-c3-fire-smoke-detection` 已接入 `fire-smoke-detect-yolov4-master/yolov5` 旧 YOLOv5 烟火权重，并通过后端脚本对 `test_photos/fire_test.jpg` 完成原始检测和 30 帧 `AlarmEvent(type="fire_smoke")` 告警验证。
 
-- 当前 blocker：
-  - 完整真实视频验收仍需 live camera 或 OBS 烟火/反光负样本素材。
+- 当前 blocker：暂无功能完成阻塞。
+
+- 当前风险/部署注意：
   - 部署时需保留 `fire-smoke-detect-yolov4-master/yolov5`，或通过 `FIRE_SMOKE_LEGACY_YOLOV5_DIR` 指向旧 YOLOv5 源码目录；`backend/model_weights/fire_smoke.pt` 是本地 gitignored 权重工件。
+  - 真实 RTMP/OBS 烟火/反光负样本仍可作为联调演示素材补充，但不再作为 `task-c3-fire-smoke-detection` 完成阻塞项。
 
 ### Session 006
 

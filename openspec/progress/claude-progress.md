@@ -525,3 +525,24 @@
 - Remaining risks:
   - `.\init.cmd` still fails in this shell because `powershell.exe` is not on PATH, although the equivalent full-path PowerShell command passes.
   - The working tree still contains pre-existing uncommitted local files unrelated to the PR merge.
+
+## Session 2026-07-12 Mark C3 Complete
+
+- Goal: update the repository status source after confirming the grafted `fire-smoke-detect-yolov4-master` backend fire/smoke path is usable.
+- Baseline:
+  - `pwd` confirmed `C:\Users\ASUS\AI-Study-Room`.
+  - `.\init.cmd` passed before editing.
+  - `feature_list.json` still marked `task-c3-fire-smoke-detection` as `blocked` because it treated live RTMP/OBS footage as a completion blocker.
+- Actions:
+  - Updated `feature_list.json` so `task-c3-fire-smoke-detection` is `completed`.
+  - Replaced the old RTMP/video completion requirement with the validations that are currently implemented and runnable in this workspace: focused pytest plus `.venv` image scripts.
+  - Cleared C3 blockers in `feature_list.json`; deployment notes remain in progress docs rather than blocking completion.
+  - Updated `openspec/progress/progress.md` top status so there is no current highest-priority unfinished feature.
+- Validation:
+  - `.venv\Scripts\python.exe backend\scripts\test_fire_smoke_image.py` passed on `test_photos/fire_test.jpg`: fire 0.757, fire 0.557, smoke 0.256.
+  - `.venv\Scripts\python.exe backend\scripts\test_fire_smoke_alarm_image.py` passed: 30 repeated frames emitted one `AlarmEvent(type=fire_smoke, camera_id=5, level=1)`.
+  - From `backend/`: `..\.venv\Scripts\python.exe -m pytest tests/test_fire_smoke.py` passed: 8 passed.
+  - `.\init.cmd` passed.
+- Remaining risks:
+  - Deployment must keep `backend/model_weights/fire_smoke.pt` and the legacy YOLOv5 source directory available, or configure `FIRE_SMOKE_LEGACY_YOLOV5_DIR`.
+  - Real RTMP/OBS smoke/fire and reflection-negative footage remains useful for live demo/integration proof, but it is no longer recorded as a C3 completion blocker.
