@@ -571,3 +571,30 @@
 - Remaining risks:
   - Real C3/Tack E live camera acceptance still requires the user to push camera footage to the RTMP server, then verify `/api/cameras/5/stream-status` and `POST /api/alarms/test-capture`.
   - The current `.env` already targets camera 5 and the RTMP stream URL; server-side success depends on an active publisher sending to the same stream name.
+
+## Session 2026-07-12 Snapshot And Playback Server Test
+
+- Goal: test alarm snapshot and playback on the server stream, keep evidence saved on the server, and avoid displaying snapshot/playback URLs in the alarm notification text.
+- Baseline:
+  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
+  - `openspec/progress/progress.md`, `feature_list.json`, and `git log --oneline -5` were read.
+  - `.\init.cmd` passed.
+  - Running backend reported camera 5 online with decoded frames: `/api/cameras/5/stream-status` returned `online=true`, `has_frame=true`, and `pre_buffer_len=75`.
+- Actions:
+  - Updated `DingTalkNotifier` so alarm ActionCard text no longer embeds or prints snapshot/playback URLs. It now only says the evidence was saved to the server.
+  - Moved clip recording ahead of DingTalk notification in `AlarmService.raise_alarm()` so a slow notification send cannot make the recorder miss the post-event window.
+  - Updated `ClipRecorder` so post-event capture uses actual recording start time, includes the immediate latest frame, verifies encoded output before updating `clip_url`, resizes mismatched frames, and pads very short clips to at least 1 second.
+  - Added focused tests for hidden notification evidence URLs and late-start clip recording producing a non-zero-duration MP4.
+- Validation:
+  - `wsl python3 -m py_compile backend/app/services/alarm.py backend/app/services/clip_recorder.py backend/app/services/dingtalk.py backend/tests/test_alarm_center.py` passed.
+  - `.\init.cmd` passed.
+  - Local OpenCV MP4 sanity check in `.venv` wrote and read a 15-frame, 15 FPS, 1.000s MP4.
+  - Real server test created alarm 72 through `POST /api/alarms/test-capture` for camera 5.
+  - Snapshot `/api/alarms/snapshots/alarm_1783823167935_5_fight.jpg` returned HTTP 200, `image/jpeg`, 19349 bytes.
+  - Playback `/api/alarms/clips/alarm_72_1783823167935.mp4` was saved at 864818 bytes; OpenCV read 112 frames at 15 FPS, duration about 7.47s, first frame shape 360x640.
+  - Playback HTTP full request returned 200 `video/mp4`; Range request returned 206 with `Content-Range: bytes 0-31/864818`.
+  - DingTalk backend verification created alarm 73 through `POST /api/alarms/test-capture`; the alarm moved to `status=escalated`, `level=3`, with notification_log rows for `primary` guard_id=3 and `escalated` guard_id=5.
+  - Direct DingTalk webhook connectivity check with UTF-8 text and alarm keywords returned `{"errcode":0,"errmsg":"ok"}`. A first sandboxed/no-keyword attempt failed, confirming both outbound access and robot keyword policy matter.
+- Remaining risks:
+  - The running backend process used for the real server test was already active before this code change. Restart the backend to load the code-level recorder fixes for future alarms.
+  - Full pytest remains blocked in the available local environments: WSL lacks pytest, `.venv` lacks Flask/pytest, and Anaconda lacks project dependencies such as `flask_cors`/`cv2`.

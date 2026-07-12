@@ -114,8 +114,8 @@ class AlarmService:
 
         if event.level >= 1:
             self._broadcast(payload)
-            self._notify(record.id)
             self._record_clip(record.id, event)
+            self._notify(record.id)
         else:
             logger.info("[alarm] private level=0 alarm_id=%s", record.id)
 

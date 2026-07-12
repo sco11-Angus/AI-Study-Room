@@ -224,7 +224,9 @@ def test_dingtalk_signed_action_card_uses_public_confirm_url(monkeypatch, db):
     assert calls[0]["url"].endswith(f"&timestamp={timestamp}&sign={expected_sign}")
     assert "SECtest" not in calls[0]["url"]
     assert calls[0]["json"]["actionCard"]["singleURL"] == "https://example.test/api/alarms/12/confirm"
-    assert "https://example.test/api/alarms/snapshots/12.jpg" in calls[0]["json"]["actionCard"]["text"]
+    card_text = calls[0]["json"]["actionCard"]["text"]
+    assert "https://example.test/api/alarms/snapshots/12.jpg" not in card_text
+    assert "证据: 抓拍/回放已保存到服务器" in card_text
 
 
 def test_dingtalk_card_describes_actor_behavior_and_mentions_guard(db):
@@ -307,6 +309,8 @@ def test_dingtalk_card_describes_actor_behavior_and_mentions_guard(db):
     assert "融合判断分约为 0.91" in card["text"]
     assert "请 Primary Guard 处理" in card["text"]
     assert "存在“pushed another student”的情况" in card["text"]
+    assert "/api/alarms/snapshots/34.jpg" not in card["text"]
+    assert "证据: 抓拍/回放已保存到服务器" in card["text"]
 
     mention = calls[1]["json"]
     assert mention["msgtype"] == "text"
@@ -388,6 +392,73 @@ def test_alarm_clip_endpoint_supports_range(monkeypatch, tmp_path):
     assert resp.status_code == 206
     assert resp.data == b"2345"
     assert resp.headers["Content-Range"].startswith("bytes 2-5/")
+
+
+def test_clip_recorder_keeps_post_window_when_started_late(monkeypatch, tmp_path):
+    import cv2
+    from app.services.clip_recorder import ClipRecorder
+
+    encoded_frames = []
+    for value in (40, 80, 120):
+        ok, jpg = cv2.imencode(".jpg", np.full((24, 32, 3), value, dtype=np.uint8))
+        assert ok
+        encoded_frames.append(jpg.tobytes())
+
+    class FakeCamera:
+        online = True
+
+        def __init__(self):
+            self.index = 0
+
+        def get_frames_since(self, ts):
+            return []
+
+        def latest_frame(self):
+            frame = encoded_frames[min(self.index, len(encoded_frames) - 1)]
+            self.index += 1
+            return frame
+
+        def wait_frame(self, timeout=0.1):
+            return self.index < len(encoded_frames)
+
+    class FakeScheduler:
+        def __init__(self):
+            self.camera = FakeCamera()
+
+        def get_camera(self, camera_id):
+            return self.camera if camera_id == 5 else None
+
+    updates = []
+    recorder = ClipRecorder(clip_dir=str(tmp_path / "clips"))
+    monkeypatch.setattr("app.services.clip_recorder.get_scheduler", lambda: FakeScheduler())
+    monkeypatch.setattr(
+        recorder,
+        "_update_alarm_clip_url",
+        lambda alarm_id, filename: updates.append((alarm_id, filename)),
+    )
+    monkeypatch.setattr("app.config.Config.CLIP_POST_SECONDS", 1)
+    monkeypatch.setattr("app.config.Config.CLIP_FPS", 15)
+
+    recorder._do_record(
+        camera_id=5,
+        alarm_id=77,
+        event_ts=1.0,
+        alarm_type="fight",
+        filename="alarm_77_late.mp4",
+    )
+
+    output = tmp_path / "clips" / "alarm_77_late.mp4"
+    assert output.exists()
+    assert output.stat().st_size > 0
+    cap = cv2.VideoCapture(str(output))
+    try:
+        assert cap.isOpened()
+        frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 1
+        assert frames / fps >= 1.0
+    finally:
+        cap.release()
+    assert updates == [(77, "alarm_77_late.mp4")]
 
 
 def test_daily_report_generates_json_and_markdown_artifacts(monkeypatch, db, tmp_path):

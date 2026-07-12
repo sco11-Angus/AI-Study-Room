@@ -79,8 +79,11 @@ class ClipRecorder:
             logger.info("[clip] alarm_id=%d 预录帧: %d 帧", alarm_id, len(pre_frames))
 
             post_frames = []
-            post_end_ts = event_ts + Config.CLIP_POST_SECONDS
             post_start = time.time()
+            post_end_ts = max(event_ts, post_start) + Config.CLIP_POST_SECONDS
+            first_jpg = cs.latest_frame()
+            if first_jpg:
+                post_frames.append((post_start, first_jpg))
 
             while time.time() < post_end_ts:
                 if cs.wait_frame(timeout=0.1):
@@ -101,6 +104,9 @@ class ClipRecorder:
 
             path = os.path.join(self.clip_dir, filename)
             self._encode_mp4(all_frames, path)
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
+                logger.error("[clip] alarm_id=%d 片段编码失败: %s", alarm_id, filename)
+                return
             logger.info("[clip] alarm_id=%d 片段已保存: %s (%d帧)", alarm_id, filename, len(all_frames))
 
             self._update_alarm_clip_url(alarm_id, filename)
@@ -132,10 +138,20 @@ class ClipRecorder:
             return
 
         try:
+            written = 0
+            last_frame = None
             for _, jpg_bytes in frames:
                 frame = cv2.imdecode(np.frombuffer(jpg_bytes, np.uint8), cv2.IMREAD_COLOR)
                 if frame is not None:
+                    if frame.shape[1] != width or frame.shape[0] != height:
+                        frame = cv2.resize(frame, (width, height), interpolation=cv2.INTER_AREA)
                     writer.write(frame)
+                    written += 1
+                    last_frame = frame
+            min_frames = max(2, int(fps))
+            while written > 0 and written < min_frames:
+                writer.write(last_frame if last_frame is not None else first_frame)
+                written += 1
         finally:
             writer.release()
 
