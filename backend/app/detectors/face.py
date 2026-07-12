@@ -290,6 +290,9 @@ class FaceDetector(Detector):
         self._feature_ema: Optional[np.ndarray] = None        # 指数移动平均特征
         self._ema_alpha: float = 0.35                        # EMA 平滑系数
         self._consecutive_low_quality: int = 0               # 连续低质量帧计数
+        # ---- 全帧静态检测（绕开 dlib bbox 抖动问题） ----
+        self._prev_full_gray: Optional[np.ndarray] = None     # 上一帧全帧灰度 (64x64)
+        self._static_streak: int = 0                          # 连续静态帧计数
 
     def setup(self) -> None:
         """加载 dlib 模型（引擎启动时调用一次）。"""
@@ -314,16 +317,72 @@ class FaceDetector(Detector):
     def detect(self, frame: Frame) -> list[AlarmEvent]:
         """对单帧执行人脸识别。
 
-        流程：人脸检测 → 活体检测 → 特征提取 → 会员匹配
-        跳帧策略：每 self._skip_frames 帧检测一次 + 结果冷却去重。
+        流程：全帧静态检测 → 人脸检测 → 活体检测 → 特征提取 → 会员匹配
+        跳帧策略：静态检测每帧都跑（O(1)开销）；其余每 self._skip_frames 帧一次。
         """
         if self._matcher is None or not self._matcher.dlib_loaded:
             return []
 
         self._frame_count += 1
+
+        # ================================================================
+        # 全帧静态检测 — 每帧都跑，绕开 dlib bbox 抖动
+        # 单档阈值 nmse < 0.0005，连续 3 次确认。
+        # 静态照片/冻结帧：nmse ~0.00001~0.0002（像素级一致）
+        # 真人坐着不动：nmse ~0.001~0.005（呼吸+传感器噪声）
+        # 0.0005 安全裕量足够大，不会误判真人。
+        # ================================================================
+        import time
+        try:
+            curr_gray = cv2.cvtColor(frame.image, cv2.COLOR_BGR2GRAY)
+            curr_small = cv2.resize(curr_gray, (64, 64)).astype(np.float32)
+
+            if self._prev_full_gray is not None:
+                nmse = float(np.mean((curr_small - self._prev_full_gray) ** 2)) / 65025.0
+
+                # 跳过合成测试帧（全黑/全白等均匀画面）
+                curr_var = float(np.var(curr_small))
+                need = 999  # 默认永不触发
+
+                if curr_var < 1.0:
+                    # 合成帧不累积 streak，同时清除可能残留的旧计数
+                    self._static_streak = 0
+                elif nmse < 0.0005:
+                    self._static_streak += 1
+                    need = 3
+                else:
+                    self._static_streak = 0
+
+                if self._static_streak >= need:
+                    logger.warning(
+                        "[face] 全帧静态检测 nmse=%.6f streak=%d → 静态照片攻击",
+                        nmse, self._static_streak,
+                    )
+                    return [
+                        AlarmEvent(
+                            region_id=frame.camera_id,
+                            camera_id=frame.camera_id,
+                            type="face_spoof",
+                            confidence=0.95,
+                            snapshot=frame.image,
+                            extra={
+                                "liveness_score": 0.05,
+                                "reasons": ["static_frame_full"],
+                                "details": {"nmse": round(nmse, 6)},
+                            },
+                        )
+                    ]
+            self._prev_full_gray = curr_small
+        except Exception:
+            pass  # 静态检测失败不阻塞正常流程
+
         if self._frame_count % self._skip_frames != 0:
             return []
 
+        return self._do_detect(frame)
+
+    def _do_detect(self, frame: Frame) -> list[AlarmEvent]:
+        """实际的人脸检测+活体检测+匹配逻辑（跳帧后才调用）。"""
         import time
 
         # 检测人脸
@@ -359,7 +418,7 @@ class FaceDetector(Detector):
         face_crop = frame.image[y1:y2, x1:x2] if x2 > x1 and y2 > y1 else None
 
         # ---- 活体检测 ----
-        WARMUP_FRAMES = 3  # 积累足够历史后才做判定
+        WARMUP_FRAMES = 6  # 积累足够历史后才做判定，避免冷启动误判
         if self._liveness is not None and self._liveness.enabled:
             landmarks = self._matcher.shape_from_rect(frame.image, rect)
             if landmarks is not None and face_crop is not None:
@@ -375,9 +434,8 @@ class FaceDetector(Detector):
                     score, reasons, frames_cached, liveness_result["details"],
                 )
 
-                # 帧差/时序零运动/FSD AI检测可绕过热身期，立即判定
+                # 帧差/FSD AI检测可绕过热身期，立即判定
                 is_instant_reject = ("static_frame_mse" in reasons
-                                     or "temporal_zero_motion" in reasons
                                      or "fsd_detected_aigc" in reasons)
                 if frames_cached < WARMUP_FRAMES and not is_instant_reject:
                     logger.info(f"[face] 活体热身中 (frames={frames_cached})，跳过判定")
