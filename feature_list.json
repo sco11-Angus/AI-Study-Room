@@ -171,7 +171,8 @@
         "DingTalk ActionCard extra/context format was changed from field-style score output to a spoken summary such as '请 Primary Guard 处理：系统在 Seat A1 的 Reading Room Camera 发现 Li Ming 存在“pushed another student”的情况...'.",
         "2026-07-12 alarm capture review: stream_capture now configures the same low-latency RTMP/FFmpeg OpenCV options used by StreamScheduler before one-shot capture, and it no longer falls back to frames from other registered cameras when the requested camera_id is not in the scheduler.",
         "Validation on 2026-07-12: .\\init.cmd passed; WSL py_compile passed for backend/app/services/stream_capture.py and backend/tests/test_alarm_center.py. Full pytest could not complete in the available local environments because WSL lacks pytest and Anaconda pytest lacks flask_cors plus has a Temp pytest directory permission error.",
-        "2026-07-12 DingTalk backend verification: POST /api/alarms/test-capture created alarm 73, alarm_event moved to escalated level=3, notification_log contains primary guard_id=3 and escalated guard_id=5 rows, and a real UTF-8 DingTalk webhook text request with alarm keywords returned errcode=0."
+        "2026-07-12 DingTalk backend verification: POST /api/alarms/test-capture created alarm 73, alarm_event moved to escalated level=3, notification_log contains primary guard_id=3 and escalated guard_id=5 rows, and a real UTF-8 DingTalk webhook text request with alarm keywords returned errcode=0.",
+        "2026-07-12 DingTalk confirm page simplified: GET /api/alarms/{id}/confirm still confirms through backend and broadcasts WebSocket updates, but no longer renders alarm details, snapshot URLs, or clip URLs. Validation passed with py_compile, init.cmd, and live confirm page check for alarm 73 showing no media links."
       ],
       "blockers": [
         "bash ./init.sh now passes after Ubuntu WSL was installed; WSL still prints a localhost proxy warning in NAT mode.",

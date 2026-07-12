@@ -363,9 +363,10 @@ def test_alarm_api_lists_and_confirms(monkeypatch, db):
     confirmed_page = client.get("/api/alarms/21/confirm")
     assert confirmed_page.status_code == 200
     assert b"Alarm 21 confirmed" in confirmed_page.data
-    assert b"Li Ming triggered fight" in confirmed_page.data
-    assert b"/api/alarms/snapshots/21.jpg" in confirmed_page.data
-    assert b"/api/alarms/clips/21.mp4" in confirmed_page.data
+    assert "状态已同步到告警中心".encode("utf-8") in confirmed_page.data
+    assert b"Li Ming triggered fight" not in confirmed_page.data
+    assert b"/api/alarms/snapshots/21.jpg" not in confirmed_page.data
+    assert b"/api/alarms/clips/21.mp4" not in confirmed_page.data
 
     missing_page = client.get("/api/alarms/404/confirm")
     assert missing_page.status_code == 404
