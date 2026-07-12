@@ -82,9 +82,15 @@ class LivenessDetector:
         # ---- 刚性运动检测（手持照片/屏幕晃动） ----
         self._rigid_motion_streak: int = 0  # 连续刚性运动帧计数
 
+<<<<<<< Updated upstream
         # ---- 媒体伪影连续低分计数（防单帧误判） ----
         self._media_low_streak: int = 0
         self._static_low_streak: int = 0
+=======
+        # ---- 快拒路径连续低分计数（防单帧误判） ----
+        self._static_low_streak: int = 0
+        self._media_low_streak: int = 0
+>>>>>>> Stashed changes
         self._liveness_low_streak: int = 0
         self._temporal_low_streak: int = 0
 
@@ -178,22 +184,39 @@ class LivenessDetector:
             return self._spoof_result(0.15, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.15, fsd_score)
 
+<<<<<<< Updated upstream
         # 快速判定 2: 三模型综合静态分过低（需连续 ≥3 帧确认，防单帧噪声误判）
+=======
+        # 快速判定 2: 三模型综合静态分过低（需连续 ≥5 帧确认，防单帧噪声误判）
+>>>>>>> Stashed changes
         if static_score < 0.25:
             self._static_low_streak += 1
         else:
             self._static_low_streak = 0
+<<<<<<< Updated upstream
         if self._static_low_streak >= 3:
+=======
+        if self._static_low_streak >= 5:
+>>>>>>> Stashed changes
             reasons.append("static_fast_reject")
             return self._spoof_result(0.20, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.20, fsd_score)
 
+<<<<<<< Updated upstream
         # 快速判定 3: 物理媒体伪影（需连续 ≥3 帧确认，防单帧噪声误判）
         if media_score < 0.30:
             self._media_low_streak += 1
         else:
             self._media_low_streak = 0
         if self._media_low_streak >= 3:
+=======
+        # 快速判定 3: 物理媒体伪影（需连续 ≥5 帧确认，防单帧噪声误判）
+        if media_score < 0.25:
+            self._media_low_streak += 1
+        else:
+            self._media_low_streak = 0
+        if self._media_low_streak >= 5:
+>>>>>>> Stashed changes
             reasons.append("media_fast_reject")
             return self._spoof_result(0.25, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.25, fsd_score)
@@ -204,12 +227,20 @@ class LivenessDetector:
             return self._spoof_result(0.25, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.25, fsd_score)
 
+<<<<<<< Updated upstream
         # 快速判定 5: 活体关键拦截（需连续 ≥3 帧确认，防侧脸/暗光误判）
+=======
+        # 快速判定 5: 活体关键拦截（需连续 ≥5 帧确认，防侧脸/暗光误判）
+>>>>>>> Stashed changes
         if liveness_score < 0.35:
             self._liveness_low_streak += 1
         else:
             self._liveness_low_streak = 0
+<<<<<<< Updated upstream
         if self._liveness_low_streak >= 3 and len(self._face_crop_history) > 10:
+=======
+        if self._liveness_low_streak >= 5 and len(self._face_crop_history) > 10:
+>>>>>>> Stashed changes
             reasons.append("liveness_critical")
             return self._spoof_result(0.30, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.30, fsd_score)
@@ -224,7 +255,11 @@ class LivenessDetector:
             self._temporal_low_streak += 1
         else:
             self._temporal_low_streak = 0
+<<<<<<< Updated upstream
         if self._temporal_low_streak >= 3 and len(self._face_crop_history) > 10:
+=======
+        if self._temporal_low_streak >= 5 and len(self._face_crop_history) > 10:
+>>>>>>> Stashed changes
             reasons.append("temporal_critical")
             return self._spoof_result(0.30, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.30, fsd_score)
@@ -366,8 +401,13 @@ class LivenessDetector:
         self._diff_mean_history.clear()
         self._static_frame_streak = 0
         self._rigid_motion_streak = 0
+<<<<<<< Updated upstream
         self._media_low_streak = 0
         self._static_low_streak = 0
+=======
+        self._static_low_streak = 0
+        self._media_low_streak = 0
+>>>>>>> Stashed changes
         self._liveness_low_streak = 0
         self._temporal_low_streak = 0
         self._ear_history.clear()
