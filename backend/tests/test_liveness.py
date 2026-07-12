@@ -398,7 +398,7 @@ class TestCheckIntegration:
         valid_spoof_reasons = [
             "prolonged_no_blink", "spoof_streak",
             "media_critical", "temporal_zero_motion",
-            "temporal_critical", "static_frame_mse",
+            "temporal_critical",
             "temporal_rigid_motion",
         ]
         assert any(r in result["reasons"] for r in valid_spoof_reasons), \

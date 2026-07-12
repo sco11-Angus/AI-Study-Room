@@ -143,7 +143,7 @@ class Config:
 
     # 活体检测（主动/被动信号分离融合）
     LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "true").lower() == "true"
-    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.50))
+    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.45))
     LIVENESS_HISTORY_SIZE = int(os.getenv("LIVENESS_HISTORY_SIZE", 30))
     LIVENESS_EAR_BLINK_THRESH = float(os.getenv("LIVENESS_EAR_BLINK_THRESH", 0.25))
 

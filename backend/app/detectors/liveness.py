@@ -82,6 +82,12 @@ class LivenessDetector:
         # ---- 刚性运动检测（手持照片/屏幕晃动） ----
         self._rigid_motion_streak: int = 0  # 连续刚性运动帧计数
 
+        # ---- 媒体伪影连续低分计数（防单帧误判） ----
+        self._media_low_streak: int = 0
+        self._static_low_streak: int = 0
+        self._liveness_low_streak: int = 0
+        self._temporal_low_streak: int = 0
+
         # ---- Layer 3 内部状态 ----
         self._ear_history: deque[float] = deque(maxlen=30)
         self._was_below_thresh: bool = False
@@ -128,14 +134,8 @@ class LivenessDetector:
         # 先积累帧历史（无论 FSD 结果如何），避免 frames_cached 永远为 0
         self._face_crop_history.append(face_crop.copy())
 
-        # 帧差静态检测：比较当前帧与上一帧人脸区域
-        is_static = self._check_static_image(face_crop)
-
-        # 零运动即时拦截：帧差已确认静态，跳过所有模型推理直接判定
-        if is_static:
-            reasons: list[str] = ["static_frame_mse"]
-            return self._spoof_result(0.05, reasons, 0.5, 0.0, 0.5,
-                                       0.5, 0.5, 0.5, 0.05, 0.5)
+        # 注：全帧静态检测已移至 FaceDetector.detect() 前端，
+        # 绕开 dlib bbox 抖动，O(1) 开销每帧都跑，无需在这里重复。
 
         fsd_score = 0.5
         if full_frame is not None:
@@ -178,48 +178,56 @@ class LivenessDetector:
             return self._spoof_result(0.15, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.15, fsd_score)
 
-        # 快速判定 2: 三模型综合静态分过低
+        # 快速判定 2: 三模型综合静态分过低（需连续 ≥3 帧确认，防单帧噪声误判）
         if static_score < 0.25:
+            self._static_low_streak += 1
+        else:
+            self._static_low_streak = 0
+        if self._static_low_streak >= 3:
             reasons.append("static_fast_reject")
             return self._spoof_result(0.20, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.20, fsd_score)
 
-        # 快速判定 3: 物理媒体伪影
-        if media_score < 0.25:
+        # 快速判定 3: 物理媒体伪影（需连续 ≥3 帧确认，防单帧噪声误判）
+        if media_score < 0.30:
+            self._media_low_streak += 1
+        else:
+            self._media_low_streak = 0
+        if self._media_low_streak >= 3:
             reasons.append("media_fast_reject")
             return self._spoof_result(0.25, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.25, fsd_score)
 
-        # 快速判定 4: 长时间无眨眼
-        if self._frames_no_blink > 20:
+        # 快速判定 4: 长时间无眨眼（真人可能盯着屏幕，放宽到 60 帧 ~12s）
+        if self._frames_no_blink > 50:
             reasons.append("prolonged_no_blink")
             return self._spoof_result(0.25, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.25, fsd_score)
 
-        # 快速判定 5: 活体关键拦截
-        if liveness_score < 0.35 and len(self._face_crop_history) > 10:
+        # 快速判定 5: 活体关键拦截（需连续 ≥3 帧确认，防侧脸/暗光误判）
+        if liveness_score < 0.35:
+            self._liveness_low_streak += 1
+        else:
+            self._liveness_low_streak = 0
+        if self._liveness_low_streak >= 3 and len(self._face_crop_history) > 10:
             reasons.append("liveness_critical")
             return self._spoof_result(0.30, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.30, fsd_score)
 
         # 快速判定 6: 时序异常
-        #   score < 0.10 → 零运动（静态照片），2 帧即可判定
-        #   score < 0.20 → 光流断裂/帧差异常（DeepFake），需 10 帧累积
-        if temporal_score < 0.10 and len(self._face_crop_history) >= 2:
+        #   score < 0.10 → 零运动（静态照片），需 15 帧累积避免真人静坐误判
+        if temporal_score < 0.10 and len(self._face_crop_history) > 15:
             reasons.append("temporal_zero_motion")
             return self._spoof_result(0.10, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.10, fsd_score)
-        if temporal_score < 0.20 and len(self._face_crop_history) > 10:
+        if temporal_score < 0.20:
+            self._temporal_low_streak += 1
+        else:
+            self._temporal_low_streak = 0
+        if self._temporal_low_streak >= 3 and len(self._face_crop_history) > 10:
             reasons.append("temporal_critical")
             return self._spoof_result(0.30, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.30, fsd_score)
-
-        # 快速判定 7: 帧差静态图片检测
-        # 连续 4 帧 nmse<0.003 → 真正的静态照片/图片攻击
-        if is_static:
-            reasons.append("static_frame_mse")
-            return self._spoof_result(0.10, reasons, deepfake, minifas, static_score,
-                                       temporal_score, liveness_score, media_score, 0.10, fsd_score)
 
         # 快速判定 8: 刚性运动检测（手持照片/屏幕平移晃动）
         # 人脸区域内帧差空间方差极低 → 整张照片在平移而非真人局部形变
@@ -246,7 +254,7 @@ class LivenessDetector:
         # 连续确认
         if final_smoothed < self.threshold:
             self._spoof_streak += 1
-            if self._spoof_streak >= 2:
+            if self._spoof_streak >= 5:
                 reasons.append("spoof_streak")
                 return self._spoof_result(final_smoothed, reasons, deepfake, minifas, static_score,
                                            temporal_score, liveness_score, media_score, final_raw, fsd_score)
@@ -358,6 +366,10 @@ class LivenessDetector:
         self._diff_mean_history.clear()
         self._static_frame_streak = 0
         self._rigid_motion_streak = 0
+        self._media_low_streak = 0
+        self._static_low_streak = 0
+        self._liveness_low_streak = 0
+        self._temporal_low_streak = 0
         self._ear_history.clear()
         self._was_below_thresh = False
 
