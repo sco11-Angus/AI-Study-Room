@@ -546,3 +546,76 @@
 - Remaining risks:
   - Deployment must keep `backend/model_weights/fire_smoke.pt` and the legacy YOLOv5 source directory available, or configure `FIRE_SMOKE_LEGACY_YOLOV5_DIR`.
   - Real RTMP/OBS smoke/fire and reflection-negative footage remains useful for live demo/integration proof, but it is no longer recorded as a C3 completion blocker.
+
+## Session 2026-07-12 Jenkins CI Stabilization
+
+- Goal: fix the Jenkins pipeline configuration so the `AI-Study-Room` job can run a stable repository-defined CI flow.
+- Baseline:
+  - `pwd` confirmed `E:\软件\小学期实训`.
+  - `openspec/progress/progress.md` and `feature_list.json` were read before changes.
+  - `./init.sh` from PowerShell failed with access denied, and `bash ./init.sh` failed because this Windows host has the WSL shim but no installed WSL distribution.
+  - The existing Jenkinsfile was a deploy-heavy pipeline with optional plugin/credential assumptions, placeholder model URLs, Docker registry login, DingTalk credentials, and production deployment paths.
+- Actions:
+  - Replaced the default Jenkinsfile with a smaller cross-platform CI pipeline: Checkout, Smoke Test, Frontend Build, Backend Syntax Check, and Docker Image.
+  - Added Unix/Windows agent branches with `isUnix()`, `sh`, and `bat`.
+  - Kept Docker build as a repository image validation step while removing default registry push and production deploy from the CI path.
+  - Updated the backend syntax check to use `PYTHONPYCACHEPREFIX=.pycache-ci`, avoiding failures from stale or locked `__pycache__` directories.
+  - Kept Windows smoke entry through `init.cmd`/`init.ps1`.
+- Validation:
+  - `.\init.cmd` passed.
+  - `npm.cmd run build` passed in `frontend/`.
+  - `PYTHONPYCACHEPREFIX=.pycache-ci python -m compileall app run.py` passed in `backend/`.
+  - `docker version` could read the client version but failed to connect to the Docker daemon because this Windows user lacks permission for Docker config/API access.
+- Evidence recorded:
+  - Added `jenkins-ci-stabilization` to `feature_list.json` with validation evidence and remaining Jenkins UI/Docker blockers.
+- Remaining risks:
+  - Jenkins agents that run the Docker stage still need Docker installed and daemon access permission.
+  - The Jenkins UI message `Failed to schedule build` can also come from job settings outside the repo: disabled job, missing build permission, zero executors, offline agents, quiet-down mode, or Pipeline SCM/Jenkinsfile path mismatch.
+
+## Session 2026-07-12 Alarm Capture Camera Binding Review
+
+- Goal: review the project for alarm snapshot issues relevant to connecting the user's own camera and pushing/reading the live server stream, without changing unrelated team-owned code.
+- Baseline:
+  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
+  - `openspec/progress/progress.md`, `feature_list.json`, and `git log --oneline -5` were read.
+  - `.\init.cmd` passed before changes.
+  - Highest-priority unfinished feature remains `task-c3-fire-smoke-detection`, still blocked on real live RTMP/OBS footage validation.
+- Actions:
+  - Updated `backend/app/services/stream_capture.py` so one-shot alarm capture configures the same low-latency RTMP/FFmpeg OpenCV options used by `StreamScheduler`.
+  - Removed the scheduler fallback that could return a frame from any other registered camera when the requested `camera_id` was missing. Alarm snapshots now only reuse the requested camera's scheduler frame, then fall back to opening the requested stream URL directly.
+  - Added focused tests in `backend/tests/test_alarm_center.py` for FFmpeg option setup and for preventing wrong-camera scheduler frame reuse.
+- Validation:
+  - `.\init.cmd` passed after changes.
+  - `wsl python3 -m py_compile backend/app/services/stream_capture.py backend/tests/test_alarm_center.py` passed.
+  - `pytest backend\tests\test_alarm_center.py -q` could not complete in the available Anaconda environment because `flask_cors` is missing and `C:\Users\25003\AppData\Local\Temp\pytest-of-25003` has a permission error.
+  - WSL pytest could not run because the WSL Python environment does not have pytest installed.
+- Remaining risks:
+  - Real C3/Tack E live camera acceptance still requires the user to push camera footage to the RTMP server, then verify `/api/cameras/5/stream-status` and `POST /api/alarms/test-capture`.
+  - The current `.env` already targets camera 5 and the RTMP stream URL; server-side success depends on an active publisher sending to the same stream name.
+
+## Session 2026-07-12 Snapshot And Playback Server Test
+
+- Goal: test alarm snapshot and playback on the server stream, keep evidence saved on the server, and avoid displaying snapshot/playback URLs in the alarm notification text.
+- Baseline:
+  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
+  - `openspec/progress/progress.md`, `feature_list.json`, and `git log --oneline -5` were read.
+  - `.\init.cmd` passed.
+  - Running backend reported camera 5 online with decoded frames: `/api/cameras/5/stream-status` returned `online=true`, `has_frame=true`, and `pre_buffer_len=75`.
+- Actions:
+  - Updated `DingTalkNotifier` so alarm ActionCard text no longer embeds or prints snapshot/playback URLs. It now only says the evidence was saved to the server.
+  - Moved clip recording ahead of DingTalk notification in `AlarmService.raise_alarm()` so a slow notification send cannot make the recorder miss the post-event window.
+  - Updated `ClipRecorder` so post-event capture uses actual recording start time, includes the immediate latest frame, verifies encoded output before updating `clip_url`, resizes mismatched frames, and pads very short clips to at least 1 second.
+  - Added focused tests for hidden notification evidence URLs and late-start clip recording producing a non-zero-duration MP4.
+- Validation:
+  - `wsl python3 -m py_compile backend/app/services/alarm.py backend/app/services/clip_recorder.py backend/app/services/dingtalk.py backend/tests/test_alarm_center.py` passed.
+  - `.\init.cmd` passed.
+  - Local OpenCV MP4 sanity check in `.venv` wrote and read a 15-frame, 15 FPS, 1.000s MP4.
+  - Real server test created alarm 72 through `POST /api/alarms/test-capture` for camera 5.
+  - Snapshot `/api/alarms/snapshots/alarm_1783823167935_5_fight.jpg` returned HTTP 200, `image/jpeg`, 19349 bytes.
+  - Playback `/api/alarms/clips/alarm_72_1783823167935.mp4` was saved at 864818 bytes; OpenCV read 112 frames at 15 FPS, duration about 7.47s, first frame shape 360x640.
+  - Playback HTTP full request returned 200 `video/mp4`; Range request returned 206 with `Content-Range: bytes 0-31/864818`.
+  - DingTalk backend verification created alarm 73 through `POST /api/alarms/test-capture`; the alarm moved to `status=escalated`, `level=3`, with notification_log rows for `primary` guard_id=3 and `escalated` guard_id=5.
+  - Direct DingTalk webhook connectivity check with UTF-8 text and alarm keywords returned `{"errcode":0,"errmsg":"ok"}`. A first sandboxed/no-keyword attempt failed, confirming both outbound access and robot keyword policy matter.
+- Remaining risks:
+  - The running backend process used for the real server test was already active before this code change. Restart the backend to load the code-level recorder fixes for future alarms.
+  - Full pytest remains blocked in the available local environments: WSL lacks pytest, `.venv` lacks Flask/pytest, and Anaconda lacks project dependencies such as `flask_cors`/`cv2`.

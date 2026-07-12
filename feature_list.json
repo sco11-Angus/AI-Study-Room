@@ -41,6 +41,32 @@
       "blockers": []
     },
     {
+      "id": "jenkins-ci-stabilization",
+      "name": "Stabilize Jenkins pipeline configuration",
+      "priority": 2,
+      "status": "completed",
+      "description": "Replace the fragile credential/deploy-heavy Jenkins pipeline with a cross-platform CI pipeline that Jenkins can schedule from SCM reliably.",
+      "required_validation": [
+        ".\\init.cmd",
+        "npm.cmd run build",
+        "PYTHONPYCACHEPREFIX=.pycache-ci python -m compileall app run.py",
+        "docker version"
+      ],
+      "evidence": [
+        "Simplified Jenkinsfile to standard Pipeline from SCM stages: Checkout, Smoke Test, Frontend Build, Backend Syntax Check, and Docker Image.",
+        "Removed hard requirements on optional Jenkins plugins, Docker Hub credentials, DingTalk credentials, placeholder model download URLs, and production deploy paths from the default CI path.",
+        "Jenkinsfile now supports both Unix and Windows agents through isUnix(), sh, and bat branches.",
+        "Backend syntax check uses PYTHONPYCACHEPREFIX=.pycache-ci so stale or locked __pycache__ directories do not break Jenkins agents.",
+        ".\\init.cmd passed on this Windows host.",
+        "Frontend production build passed with npm.cmd run build.",
+        "Backend compileall passed with PYTHONPYCACHEPREFIX=.pycache-ci."
+      ],
+      "blockers": [
+        "Local Docker validation could not complete because this Windows user cannot read C:\\Users\\wangyihan\\.docker\\config.json and cannot connect to the Docker API pipe. Jenkins Docker stage still requires a Jenkins agent with Docker installed and permission to access the daemon.",
+        "Jenkins UI error 'Failed to schedule build' can also be caused by job-level settings outside the repository, such as a disabled job, missing build permission, zero executors, offline agents, quiet-down mode, or a Pipeline SCM branch/Jenkinsfile path mismatch."
+      ]
+    },
+    {
       "id": "task-c3-fire-smoke-detection",
       "name": "Task C3 fire and smoke detection plugin",
       "priority": 3,
@@ -143,7 +169,10 @@
         "Fixed sliding window voting in face.py: removed premature return that skipped de-duplication logic for stranger/face_spoof alarms.",
         "Validation passed: all alarm types (intrusion, fire_smoke, occupy, fatigue, fight, face_recognition, face_spoof) can now trigger DingTalk notifications correctly.",
         "Post-review repair on 2026-07-11 fixed a committed FaceDetector indentation error while preserving normal face_recognition as WebSocket-only and face_spoof as an AlarmEvent path; tests/test_face.py tests/test_alarm_center.py passed with 26 cases.",
-        "DingTalk ActionCard extra/context format was changed from field-style score output to a spoken summary such as '请 Primary Guard 处理：系统在 Seat A1 的 Reading Room Camera 发现 Li Ming 存在“pushed another student”的情况...'."
+        "DingTalk ActionCard extra/context format was changed from field-style score output to a spoken summary such as '请 Primary Guard 处理：系统在 Seat A1 的 Reading Room Camera 发现 Li Ming 存在“pushed another student”的情况...'.",
+        "2026-07-12 alarm capture review: stream_capture now configures the same low-latency RTMP/FFmpeg OpenCV options used by StreamScheduler before one-shot capture, and it no longer falls back to frames from other registered cameras when the requested camera_id is not in the scheduler.",
+        "Validation on 2026-07-12: .\\init.cmd passed; WSL py_compile passed for backend/app/services/stream_capture.py and backend/tests/test_alarm_center.py. Full pytest could not complete in the available local environments because WSL lacks pytest and Anaconda pytest lacks flask_cors plus has a Temp pytest directory permission error.",
+        "2026-07-12 DingTalk backend verification: POST /api/alarms/test-capture created alarm 73, alarm_event moved to escalated level=3, notification_log contains primary guard_id=3 and escalated guard_id=5 rows, and a real UTF-8 DingTalk webhook text request with alarm keywords returned errcode=0."
       ],
       "blockers": [
         "bash ./init.sh now passes after Ubuntu WSL was installed; WSL still prints a localhost proxy warning in NAT mode.",
@@ -173,7 +202,9 @@
         "ClipRecorder has a CLIP_MAX_DAYS cleanup strategy that removes expired video artifacts before new recording jobs.",
         "Task G formal regression coverage now lives in backend/tests/test_alarm_center.py on the current taskE branch, covering confirm-page snapshot/clip/detail rendering, clip HTTP Range playback, and daily-report JSON/Markdown artifact generation.",
         "Backend-only regression passed after alarm-center refinements: py_compile for changed backend files, tests/test_alarm_center.py -> 14 passed, related backend pytest excluding the independent liveness assertion -> 61 passed, backend smoke printed ALL SMOKE TESTS PASSED, and init.cmd passed.",
-        "Real RTMP verification succeeded after clean backend restart: /api/cameras/5/stream-status returned online=true and has_frame=true, POST /api/alarms/test-capture created alarm_id=48 with a snapshot, async recording produced /api/alarms/clips/alarm_48_1783691900602.mp4, snapshot and clip endpoints returned HTTP 200, and /api/alarms/daily-report?date=2026-07-10 returned HTTP 200 including alarm 48."
+        "Real RTMP verification succeeded after clean backend restart: /api/cameras/5/stream-status returned online=true and has_frame=true, POST /api/alarms/test-capture created alarm_id=48 with a snapshot, async recording produced /api/alarms/clips/alarm_48_1783691900602.mp4, snapshot and clip endpoints returned HTTP 200, and /api/alarms/daily-report?date=2026-07-10 returned HTTP 200 including alarm 48.",
+        "2026-07-12 playback repair: AlarmService now starts clip recording before DingTalk notification, ClipRecorder uses the actual recording start time for post-event capture, captures an immediate latest frame, verifies encoded output, resizes mismatched frames, and pads very short clips to at least 1 second to avoid 0s playback.",
+        "2026-07-12 real server playback test: camera 5 stream-status returned online=true, has_frame=true, pre_buffer_len=75; POST /api/alarms/test-capture created alarm 72 with snapshot /api/alarms/snapshots/alarm_1783823167935_5_fight.jpg and clip /api/alarms/clips/alarm_72_1783823167935.mp4; snapshot HTTP returned 200 image/jpeg length 19349; clip file was 864818 bytes, OpenCV read 112 frames at 15 FPS for about 7.47s, HTTP full clip returned 200 video/mp4 and Range request returned 206 with Content-Range bytes 0-31/864818."
       ],
       "blockers": [
         "Task G backend capture/playback/report flow is complete; frontend playback UI is owned by Task F and existing staged frontend files were not changed in this backend verification pass.",
