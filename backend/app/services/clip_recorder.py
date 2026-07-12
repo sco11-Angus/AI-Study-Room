@@ -46,7 +46,7 @@ class ClipRecorder:
         self.cleanup_old_clips()
 
         ts_ms = int(event_ts * 1000)
-        filename = f"alarm_{alarm_id}_{ts_ms}.mp4"
+        filename = f"alarm_{alarm_id}_{ts_ms}.webm"
         clip_url = f"/api/alarms/clips/{filename}"
 
         thread = threading.Thread(
@@ -103,7 +103,7 @@ class ClipRecorder:
                 return
 
             path = os.path.join(self.clip_dir, filename)
-            self._encode_mp4(all_frames, path)
+            self._encode_video(all_frames, path)
             if not os.path.exists(path) or os.path.getsize(path) == 0:
                 logger.error("[clip] alarm_id=%d 片段编码失败: %s", alarm_id, filename)
                 return
@@ -117,7 +117,7 @@ class ClipRecorder:
             with self._lock:
                 self._recording.pop(camera_id, None)
 
-    def _encode_mp4(self, frames: list[tuple[float, bytes]], output_path: str):
+    def _encode_video(self, frames: list[tuple[float, bytes]], output_path: str):
         """将JPEG帧编码为MP4。"""
         if not frames:
             return
@@ -130,9 +130,7 @@ class ClipRecorder:
 
         height, width = first_frame.shape[:2]
         fps = Config.CLIP_FPS
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-
-        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        writer = self._open_video_writer(output_path, fps, width, height)
         if not writer.isOpened():
             logger.error("[clip] 无法创建VideoWriter: %s", output_path)
             return
@@ -154,6 +152,19 @@ class ClipRecorder:
                 written += 1
         finally:
             writer.release()
+
+    def _open_video_writer(self, output_path: str, fps: float, width: int, height: int):
+        """Create a browser-friendly writer for the requested container."""
+        ext = os.path.splitext(output_path)[1].lower()
+        codecs = ("VP80", "VP90") if ext == ".webm" else ("avc1", "H264", "X264", "mp4v")
+        for codec in codecs:
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+            if writer.isOpened():
+                logger.info("[clip] VideoWriter codec=%s path=%s", codec, output_path)
+                return writer
+            writer.release()
+        return cv2.VideoWriter()
 
     def _update_alarm_clip_url(self, alarm_id: int, filename: str):
         """更新告警记录的clip_url字段。"""
