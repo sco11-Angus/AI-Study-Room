@@ -15,7 +15,7 @@
 - `backend/app/detectors/face.py`：`FaceMatcher.encode/match`。
 - `backend/app/services/alarm.py`：告警去重、抓拍/推送闭环（当前含骨架注释）。
 
-## 2. 功能流程图（Flowchart）
+## 2. 功能流程图
 
 ### 图说明
 
