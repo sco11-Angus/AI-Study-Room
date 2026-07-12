@@ -560,6 +560,58 @@ def test_stream_capture_reports_open_failure(monkeypatch):
         stream_capture.capture_frame("rtmp://unit/missing", timeout=1)
 
 
+def test_stream_capture_configures_ffmpeg_options(monkeypatch):
+    from app.services import stream_capture
+
+    class FakeClosedCapture:
+        def isOpened(self):
+            return False
+
+        def release(self):
+            pass
+
+    monkeypatch.delenv("OPENCV_FFMPEG_CAPTURE_OPTIONS", raising=False)
+    monkeypatch.delenv("OPENCV_FFMPEG_READ_ATTEMPTS", raising=False)
+    monkeypatch.setattr(stream_capture.cv2, "VideoCapture", lambda *_args: FakeClosedCapture())
+
+    with pytest.raises(stream_capture.StreamCaptureError):
+        stream_capture.capture_frame("rtmp://unit/missing", timeout=1)
+
+    assert "rtmp_live;live" in os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"]
+    assert os.environ["OPENCV_FFMPEG_READ_ATTEMPTS"] == "100000"
+
+
+def test_stream_capture_does_not_use_other_camera_scheduler_frame(monkeypatch):
+    from app.services import stream_capture
+
+    class OtherCamera:
+        def latest_frame(self):
+            ok, jpg = stream_capture.cv2.imencode(".jpg", np.ones((2, 2, 3), dtype=np.uint8))
+            assert ok
+            return jpg.tobytes()
+
+    class FakeScheduler:
+        camera_ids = [99]
+
+        def get_camera(self, camera_id):
+            if camera_id == 99:
+                return OtherCamera()
+            return None
+
+    class FakeClosedCapture:
+        def isOpened(self):
+            return False
+
+        def release(self):
+            pass
+
+    monkeypatch.setattr("app.stream.scheduler.get_scheduler", lambda: FakeScheduler())
+    monkeypatch.setattr(stream_capture.cv2, "VideoCapture", lambda *_args: FakeClosedCapture())
+
+    with pytest.raises(stream_capture.StreamCaptureError, match="failed to open stream"):
+        stream_capture.capture_frame("rtmp://unit/requested", timeout=1, camera_id=51)
+
+
 def test_alarm_test_capture_endpoint_pulls_frame_and_raises_alarm(monkeypatch, db, snapshot_dir):
     from app.api.alarms import bp
     from app.models.entities import AlarmEvent, Camera, Region

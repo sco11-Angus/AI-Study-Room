@@ -550,3 +550,24 @@
 - Remaining risks:
   - Jenkins agents that run the Docker stage still need Docker installed and daemon access permission.
   - The Jenkins UI message `Failed to schedule build` can also come from job settings outside the repo: disabled job, missing build permission, zero executors, offline agents, quiet-down mode, or Pipeline SCM/Jenkinsfile path mismatch.
+
+## Session 2026-07-12 Alarm Capture Camera Binding Review
+
+- Goal: review the project for alarm snapshot issues relevant to connecting the user's own camera and pushing/reading the live server stream, without changing unrelated team-owned code.
+- Baseline:
+  - `pwd` confirmed `C:\Users\25003\AI-Study-Room`.
+  - `openspec/progress/progress.md`, `feature_list.json`, and `git log --oneline -5` were read.
+  - `.\init.cmd` passed before changes.
+  - Highest-priority unfinished feature remains `task-c3-fire-smoke-detection`, still blocked on real live RTMP/OBS footage validation.
+- Actions:
+  - Updated `backend/app/services/stream_capture.py` so one-shot alarm capture configures the same low-latency RTMP/FFmpeg OpenCV options used by `StreamScheduler`.
+  - Removed the scheduler fallback that could return a frame from any other registered camera when the requested `camera_id` was missing. Alarm snapshots now only reuse the requested camera's scheduler frame, then fall back to opening the requested stream URL directly.
+  - Added focused tests in `backend/tests/test_alarm_center.py` for FFmpeg option setup and for preventing wrong-camera scheduler frame reuse.
+- Validation:
+  - `.\init.cmd` passed after changes.
+  - `wsl python3 -m py_compile backend/app/services/stream_capture.py backend/tests/test_alarm_center.py` passed.
+  - `pytest backend\tests\test_alarm_center.py -q` could not complete in the available Anaconda environment because `flask_cors` is missing and `C:\Users\25003\AppData\Local\Temp\pytest-of-25003` has a permission error.
+  - WSL pytest could not run because the WSL Python environment does not have pytest installed.
+- Remaining risks:
+  - Real C3/Tack E live camera acceptance still requires the user to push camera footage to the RTMP server, then verify `/api/cameras/5/stream-status` and `POST /api/alarms/test-capture`.
+  - The current `.env` already targets camera 5 and the RTMP stream URL; server-side success depends on an active publisher sending to the same stream name.

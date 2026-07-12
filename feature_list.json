@@ -168,7 +168,9 @@
         "Fixed sliding window voting in face.py: removed premature return that skipped de-duplication logic for stranger/face_spoof alarms.",
         "Validation passed: all alarm types (intrusion, fire_smoke, occupy, fatigue, fight, face_recognition, face_spoof) can now trigger DingTalk notifications correctly.",
         "Post-review repair on 2026-07-11 fixed a committed FaceDetector indentation error while preserving normal face_recognition as WebSocket-only and face_spoof as an AlarmEvent path; tests/test_face.py tests/test_alarm_center.py passed with 26 cases.",
-        "DingTalk ActionCard extra/context format was changed from field-style score output to a spoken summary such as '请 Primary Guard 处理：系统在 Seat A1 的 Reading Room Camera 发现 Li Ming 存在“pushed another student”的情况...'."
+        "DingTalk ActionCard extra/context format was changed from field-style score output to a spoken summary such as '请 Primary Guard 处理：系统在 Seat A1 的 Reading Room Camera 发现 Li Ming 存在“pushed another student”的情况...'.",
+        "2026-07-12 alarm capture review: stream_capture now configures the same low-latency RTMP/FFmpeg OpenCV options used by StreamScheduler before one-shot capture, and it no longer falls back to frames from other registered cameras when the requested camera_id is not in the scheduler.",
+        "Validation on 2026-07-12: .\\init.cmd passed; WSL py_compile passed for backend/app/services/stream_capture.py and backend/tests/test_alarm_center.py. Full pytest could not complete in the available local environments because WSL lacks pytest and Anaconda pytest lacks flask_cors plus has a Temp pytest directory permission error."
       ],
       "blockers": [
         "bash ./init.sh now passes after Ubuntu WSL was installed; WSL still prints a localhost proxy warning in NAT mode.",
