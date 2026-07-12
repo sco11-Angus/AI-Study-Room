@@ -525,3 +525,28 @@
 - Remaining risks:
   - `.\init.cmd` still fails in this shell because `powershell.exe` is not on PATH, although the equivalent full-path PowerShell command passes.
   - The working tree still contains pre-existing uncommitted local files unrelated to the PR merge.
+
+## Session 2026-07-12 Jenkins CI Stabilization
+
+- Goal: fix the Jenkins pipeline configuration so the `AI-Study-Room` job can run a stable repository-defined CI flow.
+- Baseline:
+  - `pwd` confirmed `E:\软件\小学期实训`.
+  - `openspec/progress/progress.md` and `feature_list.json` were read before changes.
+  - `./init.sh` from PowerShell failed with access denied, and `bash ./init.sh` failed because this Windows host has the WSL shim but no installed WSL distribution.
+  - The existing Jenkinsfile was a deploy-heavy pipeline with optional plugin/credential assumptions, placeholder model URLs, Docker registry login, DingTalk credentials, and production deployment paths.
+- Actions:
+  - Replaced the default Jenkinsfile with a smaller cross-platform CI pipeline: Checkout, Smoke Test, Frontend Build, Backend Syntax Check, and Docker Image.
+  - Added Unix/Windows agent branches with `isUnix()`, `sh`, and `bat`.
+  - Kept Docker build as a repository image validation step while removing default registry push and production deploy from the CI path.
+  - Updated the backend syntax check to use `PYTHONPYCACHEPREFIX=.pycache-ci`, avoiding failures from stale or locked `__pycache__` directories.
+  - Kept Windows smoke entry through `init.cmd`/`init.ps1`.
+- Validation:
+  - `.\init.cmd` passed.
+  - `npm.cmd run build` passed in `frontend/`.
+  - `PYTHONPYCACHEPREFIX=.pycache-ci python -m compileall app run.py` passed in `backend/`.
+  - `docker version` could read the client version but failed to connect to the Docker daemon because this Windows user lacks permission for Docker config/API access.
+- Evidence recorded:
+  - Added `jenkins-ci-stabilization` to `feature_list.json` with validation evidence and remaining Jenkins UI/Docker blockers.
+- Remaining risks:
+  - Jenkins agents that run the Docker stage still need Docker installed and daemon access permission.
+  - The Jenkins UI message `Failed to schedule build` can also come from job settings outside the repo: disabled job, missing build permission, zero executors, offline agents, quiet-down mode, or Pipeline SCM/Jenkinsfile path mismatch.
