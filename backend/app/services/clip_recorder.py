@@ -130,9 +130,12 @@ class ClipRecorder:
 
         height, width = first_frame.shape[:2]
         fps = Config.CLIP_FPS
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-
-        writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+        # 浏览器 <video> 只支持 H.264(avc1)，不支持 mp4v(MPEG-4 Part2)。
+        # avc1 失败时回退 mp4v，保证至少能生成文件（但浏览器可能无法播放）。
+        writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"avc1"), fps, (width, height))
+        if not writer.isOpened():
+            logger.warning("[clip] avc1(H.264) 编码器不可用，回退 mp4v: %s", output_path)
+            writer = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
         if not writer.isOpened():
             logger.error("[clip] 无法创建VideoWriter: %s", output_path)
             return
