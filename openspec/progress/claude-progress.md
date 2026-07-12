@@ -616,6 +616,8 @@
   - Playback HTTP full request returned 200 `video/mp4`; Range request returned 206 with `Content-Range: bytes 0-31/864818`.
   - DingTalk backend verification created alarm 73 through `POST /api/alarms/test-capture`; the alarm moved to `status=escalated`, `level=3`, with notification_log rows for `primary` guard_id=3 and `escalated` guard_id=5.
   - Direct DingTalk webhook connectivity check with UTF-8 text and alarm keywords returned `{"errcode":0,"errmsg":"ok"}`. A first sandboxed/no-keyword attempt failed, confirming both outbound access and robot keyword policy matter.
+  - DingTalk GET confirm page was simplified on 2026-07-12: clicking `确认处理` still calls the backend confirm flow and WebSocket status broadcast, but the returned page no longer renders alarm details, snapshots, or playback videos.
+  - Live check after restart: `GET /api/alarms/73/confirm` returned HTTP 200 with no snapshot/clip links in the HTML, while `/api/alarms/clips/alarm_73_1783823531376.mp4` returned HTTP 200 `video/mp4`.
 - Remaining risks:
   - The running backend process used for the real server test was already active before this code change. Restart the backend to load the code-level recorder fixes for future alarms.
   - Full pytest remains blocked in the available local environments: WSL lacks pytest, `.venv` lacks Flask/pytest, and Anaconda lacks project dependencies such as `flask_cors`/`cv2`.

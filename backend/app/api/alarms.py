@@ -504,45 +504,6 @@ def _confirm_alarm(alarm_id: int) -> tuple[dict, int]:
 
 
 def _render_confirm_page(alarm_id: int) -> str:
-    alarm = _load_alarm_payload(alarm_id)
-    if not alarm:
-        return _render_not_found_page(alarm_id)
-
-    snapshot_url = alarm.get("snapshot_url", "")
-    clip_url = alarm.get("clip_url", "")
-    message = alarm.get("message") or _fallback_message(alarm)
-    extra = alarm.get("extra") or {}
-
-    extra_html = ""
-    if extra:
-        extra_html = (
-            "<section><h2>检测上下文</h2><pre>"
-            f"{escape(json.dumps(extra, ensure_ascii=False, indent=2))}"
-            "</pre></section>"
-        )
-
-    snapshot_html = ""
-    if snapshot_url:
-        safe_snapshot = escape(snapshot_url, quote=True)
-        snapshot_html = (
-            "<section><h2>抓拍图片</h2>"
-            f'<img src="{safe_snapshot}" alt="告警抓拍">'
-            f'<p><a href="{safe_snapshot}">打开抓拍原图</a></p>'
-            "</section>"
-        )
-
-    clip_html = (
-        "<section><h2>视频回放</h2><p>视频片段生成中，可稍后在告警中心刷新查看。</p></section>"
-    )
-    if clip_url:
-        safe_clip = escape(clip_url, quote=True)
-        clip_html = (
-            "<section><h2>视频回放</h2>"
-            f'<video controls preload="metadata" src="{safe_clip}"></video>'
-            f'<p><a href="{safe_clip}">打开视频片段</a></p>'
-            "</section>"
-        )
-
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -550,38 +511,16 @@ def _render_confirm_page(alarm_id: int) -> str:
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Alarm {alarm_id} confirmed</title>
   <style>
-    body {{ font-family: Arial, "Microsoft YaHei", sans-serif; max-width: 880px; margin: 24px auto; padding: 0 16px; color: #1f2933; }}
-    h1 {{ font-size: 24px; margin-bottom: 8px; }}
-    h2 {{ font-size: 18px; margin: 22px 0 10px; }}
+    body {{ font-family: Arial, "Microsoft YaHei", sans-serif; max-width: 520px; margin: 72px auto; padding: 0 20px; color: #1f2933; text-align: center; }}
+    h1 {{ font-size: 24px; margin-bottom: 12px; }}
+    p {{ color: #52616b; line-height: 1.6; }}
     .ok {{ color: #0f766e; font-weight: 700; }}
-    dl {{ display: grid; grid-template-columns: 110px 1fr; gap: 8px 14px; }}
-    dt {{ color: #52616b; }}
-    dd {{ margin: 0; }}
-    img, video {{ max-width: 100%; border: 1px solid #d9e2ec; border-radius: 6px; background: #f5f7fa; }}
-    video {{ width: 100%; }}
-    pre {{ white-space: pre-wrap; word-break: break-word; background: #f5f7fa; padding: 12px; border-radius: 6px; }}
   </style>
 </head>
 <body>
   <h1>Alarm {alarm_id} confirmed</h1>
-  <p class="ok">告警已确认，状态已同步到告警中心。You can close this page.</p>
-  <section>
-    <h2>告警信息</h2>
-    <dl>
-      <dt>告警说明</dt><dd>{escape(str(message))}</dd>
-      <dt>类型</dt><dd>{escape(str(alarm.get("type") or ""))}</dd>
-      <dt>状态</dt><dd>{escape(str(alarm.get("status") or ""))}</dd>
-      <dt>级别</dt><dd>{escape(str(alarm.get("level") or ""))}</dd>
-      <dt>摄像头</dt><dd>{escape(str(alarm.get("camera_id") or ""))}</dd>
-      <dt>区域</dt><dd>{escape(str(alarm.get("region_id") or ""))}</dd>
-      <dt>人脸匹配</dt><dd>{escape(str(alarm.get("face_match") or ""))}</dd>
-      <dt>触发时间</dt><dd>{escape(str(alarm.get("created_at") or ""))}</dd>
-      <dt>确认时间</dt><dd>{escape(str(alarm.get("confirmed_at") or ""))}</dd>
-    </dl>
-  </section>
-  {snapshot_html}
-  {clip_html}
-  {extra_html}
+  <p class="ok">告警已确认。</p>
+  <p>状态已同步到告警中心，可以关闭此页面。</p>
 </body>
 </html>"""
 
