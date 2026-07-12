@@ -19,6 +19,7 @@ pipeline {
         YOLO_WEIGHTS_URL = 'https://your-oss.com/model_weights/yolov8n.pt'
         DLIB_WEIGHTS_URL = 'https://your-oss.com/model_weights/shape_predictor_68_face_landmarks.dat'
         PROD_HOST        = '127.0.0.1'
+        DEPLOY_DIR       = '/var/www/html'     // 新增：前端部署目录
     }
 
     // ---- 触发条件 ----
@@ -203,6 +204,23 @@ EOF
                     curl -sf http://${PROD_HOST}:8080/ -o /dev/null \
                         && echo "Frontend OK" \
                         || echo "Frontend FAIL (nginx-rtmp 可能仍在启动中)"
+                '''
+            }
+        }
+
+        // ============================
+        // Stage 8: Deploy Frontend to Nginx (新增)
+        // ============================
+        stage('Deploy Frontend to Nginx') {
+            steps {
+                echo '🌐 [Stage 8] 部署前端到 Nginx'
+                sh '''
+                    sudo mkdir -p ${DEPLOY_DIR}
+                    sudo rm -rf ${DEPLOY_DIR}/*
+                    sudo cp -r frontend/dist/* ${DEPLOY_DIR}/
+                    sudo chown -R www-data:www-data ${DEPLOY_DIR}
+                    sudo systemctl reload nginx || sudo systemctl restart nginx
+                    echo "✅ 前端已部署到 ${DEPLOY_DIR}"
                 '''
             }
         }
