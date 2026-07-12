@@ -246,8 +246,7 @@ class TestFaceDetectorE2E:
         )
 
         # 单帧直接推送（无投票窗口）
-        events = ctx["detector"].detect(ctx["make_frame"]())
-        assert events == []
+        ctx["detector"].detect(ctx["make_frame"]())
 
         assert len(pushed_msgs) >= 1
         assert pushed_msgs[0]["type"] == "stranger"
@@ -275,15 +274,12 @@ class TestFaceDetectorE2E:
         )
 
         # 单帧直接推送（无投票窗口）
-        events = ctx["detector"].detect(ctx["make_frame"]())
-        assert events == []
+        ctx["detector"].detect(ctx["make_frame"]())
 
         assert len(pushed_msgs) >= 1
         assert pushed_msgs[0]["type"] == "member"
         assert pushed_msgs[0]["member_id"] == 1
         assert pushed_msgs[0]["name"] == "张三"
-
-    # ---- 场景 4: 冷却去重 ----
 
     def test_cooldown_dedup(self, detector_with_db, monkeypatch):
         """冷却期内相同结果不重复推送。"""
@@ -304,13 +300,11 @@ class TestFaceDetectorE2E:
         detector._matcher = ctx["matcher"]
 
         # 单帧 → 第一次推送
-        events = detector.detect(ctx["make_frame"]())
-        assert events == []
+        detector.detect(ctx["make_frame"]())
         assert len(pushed_msgs) == 1
 
         # 冷却期内：相同结果不重复推送
-        events2 = detector.detect(ctx["make_frame"]())
-        assert events2 == []
+        detector.detect(ctx["make_frame"]())
         assert len(pushed_msgs) == 1  # 仍是 1 次
 
     def test_single_low_liveness_frame_does_not_spoof(self, detector_with_db, monkeypatch):

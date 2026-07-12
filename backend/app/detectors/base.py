@@ -68,6 +68,10 @@ class Detector(ABC):
     name: str                       # 唯一标识，如 "intrusion"、"fire_smoke"、"fatigue"
     enabled: bool = True            # 供 C 的 seat_status 动态启停
 
+    # ---- 多摄像头过滤（可选） ----
+    # None = 所有摄像头都跑；[5,6] = 只在 camera_id=5,6 上跑
+    camera_ids: list[int] | None = None
+
     @abstractmethod
     def setup(self) -> None:
         """加载模型权重（引擎启动时调用一次）。
