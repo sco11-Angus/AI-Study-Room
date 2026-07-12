@@ -58,6 +58,9 @@ def _default_database_uri() -> str:
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
+    # 推理帧尺寸：防区多边形以归一化坐标 [0,1] 入库，加载时 × 该尺寸还原为像素
+    FRAME_WIDTH = int(os.getenv("FRAME_WIDTH", 640))
+    FRAME_HEIGHT = int(os.getenv("FRAME_HEIGHT", 480))
     RTMP_SERVER = os.getenv("RTMP_SERVER", "49.233.71.82")
     RTMP_PORT = int(os.getenv("RTMP_PORT", 9090))
     STREAM_CAMERA_ID = int(os.getenv("STREAM_CAMERA_ID", os.getenv("CAMERA_ID", 5)))
@@ -80,11 +83,14 @@ class Config:
         "FIRE_SMOKE_LEGACY_YOLOV5_DIR",
         "fire-smoke-detect-yolov4-master/yolov5",
     )
+    FIRE_SMOKE_MODEL_LOADER = os.getenv("FIRE_SMOKE_MODEL_LOADER", "legacy").strip().lower()
     FIRE_SMOKE_IMG_SIZE = int(os.getenv("FIRE_SMOKE_IMG_SIZE", 640))
     FIRE_SMOKE_DETECT_CONF = float(os.getenv("FIRE_SMOKE_DETECT_CONF", 0.25))
     FIRE_SMOKE_IOU = float(os.getenv("FIRE_SMOKE_IOU", 0.45))
     FIRE_SMOKE_DEVICE = os.getenv("FIRE_SMOKE_DEVICE", "cpu")
     FIRE_SMOKE_REGION_ID = int(os.getenv("FIRE_SMOKE_REGION_ID", 0))
+    # 强制走 legacy YOLOv5 加载器（嫁接的 best.pt 与 ultralytics YOLOv8 不兼容）
+    FIRE_SMOKE_FORCE_LEGACY = os.getenv("FIRE_SMOKE_FORCE_LEGACY", "true").lower() == "true"
 
     # 音视频融合打架检测 (任务书 D)
     FIGHT_FUSE_THRESH = float(os.getenv("FIGHT_FUSE_THRESH", 0.6))  # 融合分告警阈值

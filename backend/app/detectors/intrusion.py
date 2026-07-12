@@ -19,6 +19,25 @@ logger = logging.getLogger(__name__)
 Box = tuple[float, float, float, float]
 
 
+def denormalize_polygon(polygon: list, width: int, height: int) -> list:
+    """将归一化坐标 [0,1] 的多边形还原为像素坐标。
+
+    前端以归一化坐标入库（与分辨率解耦）。检测器内部按像素判定，
+    故加载时 × 帧宽高还原。对所有坐标均 ≤ 1 的点视为归一化；
+    若已是像素坐标（存在 > 1 的值），原样返回以兼容历史数据。
+    """
+    if not polygon:
+        return polygon
+    is_normalized = all(
+        isinstance(pt, (list, tuple)) and len(pt) == 2
+        and abs(pt[0]) <= 1.0 and abs(pt[1]) <= 1.0
+        for pt in polygon
+    )
+    if not is_normalized:
+        return polygon
+    return [[pt[0] * width, pt[1] * height] for pt in polygon]
+
+
 class IntrusionDetector:
     """Per-region danger timer using bottom-center person point."""
 
@@ -131,6 +150,9 @@ class IntrusionPlugin(Detector):
                     polygon = json.loads(row.polygon or "[]")
                     if len(polygon) < 3:
                         continue
+                    polygon = denormalize_polygon(
+                        polygon, Config.FRAME_WIDTH, Config.FRAME_HEIGHT
+                    )
                     runtimes[int(row.id)] = RegionRuntime(
                         id=int(row.id),
                         camera_id=int(row.camera_id or 0),
@@ -163,6 +185,9 @@ class IntrusionPlugin(Detector):
                 polygon = json.loads(region.polygon or "[]")
                 if len(polygon) < 3 or status.user_id is None:
                     continue
+                polygon = denormalize_polygon(
+                    polygon, Config.FRAME_WIDTH, Config.FRAME_HEIGHT
+                )
                 seats[int(region.id)] = SeatRuntime(
                     id=int(region.id),
                     camera_id=int(region.camera_id or 0),

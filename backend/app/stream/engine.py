@@ -107,8 +107,16 @@ class InferenceEngine:
         return events
 
     def dispatch_async(self, frame: Frame) -> None:
-        """异步调度：提交到线程池执行，告警传回 AlarmService。"""
+        """异步调度：提交到线程池执行，告警传回 AlarmService。
+
+        背压：池任务队列积压超过阈值时丢弃当前帧的推理，防止延迟无限累积。
+        显示链路（ring_buffer）不受影响，仅跳过本帧推理。
+        """
         if not self._detectors:
+            return
+        if self._pool._work_queue.qsize() > 2:
+            logger.debug("[engine] 推理队列积压，丢弃本帧 camera_id=%s idx=%s",
+                         frame.camera_id, frame.frame_idx)
             return
         self._pool.submit(self._dispatch_and_raise, frame)
 

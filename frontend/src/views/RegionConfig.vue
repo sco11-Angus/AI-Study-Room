@@ -74,7 +74,7 @@ import { ElMessage } from 'element-plus'
 import CanvasDraw from '../components/CanvasDraw.vue'
 import { createRegion, getCameras, getRegions, updateRegion, deleteRegion } from '../api'
 
-const DEFAULT_STREAM_URL = 'camera_id=5'
+const DEFAULT_STREAM_URL = ''
 const streamUrl = ref(DEFAULT_STREAM_URL)
 const cameras = ref([])
 const regions = ref([])
@@ -82,12 +82,10 @@ const selectedPolygon = ref([])
 const selectedRegionId = ref(null)
 const form = ref({ camera_id: null, name: '', type: 'danger_zone', polygon: [], x_distance: 50, y_stay_time: 10 })
 
-const resolveStreamUrl = (rawUrl) => {
-  if (!rawUrl) return DEFAULT_STREAM_URL
-  if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')) return rawUrl
-  const match = rawUrl.match(/\/live\/(.+?)(?:\s|$|\?)/)
-  if (match) return `http://${location.hostname}:8080/live?app=live&stream=${match[1]}`
-  return DEFAULT_STREAM_URL
+// 与监测大屏一致：走后端 /ws/video_feed WebSocket 拿实时帧（VideoPlayer 解析 camera_id=）
+const resolveStreamUrl = (cameraId) => {
+  if (!cameraId && cameraId !== 0) return DEFAULT_STREAM_URL
+  return `camera_id=${cameraId}`
 }
 
 const loadCameras = () => {
@@ -96,7 +94,7 @@ const loadCameras = () => {
       cameras.value = Array.isArray(list) ? list : []
       if (cameras.value.length && !form.value.camera_id) {
         form.value.camera_id = cameras.value[0].id
-        streamUrl.value = resolveStreamUrl(cameras.value[0].stream_url)
+        streamUrl.value = resolveStreamUrl(cameras.value[0].id)
         fetchRegions(form.value.camera_id)
       }
     })
@@ -125,8 +123,7 @@ watch(
   () => form.value.camera_id,
   (cameraId) => {
     if (!cameraId) return
-    const camera = cameras.value.find((item) => item.id === cameraId)
-    streamUrl.value = resolveStreamUrl(camera?.stream_url)
+    streamUrl.value = resolveStreamUrl(cameraId)
     fetchRegions(cameraId)
     clearSelection()
   }

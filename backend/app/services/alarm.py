@@ -87,8 +87,7 @@ class AlarmService:
                 broadcast_face_result(msg)
             event = self._normalize_event(event, region_id, type_, extra)
             event.level = 2
-            if frame is None:
-                frame = event.snapshot
+            frame = frame if frame is not None else event.snapshot
             if frame is not None:
                 event.snapshot_url = event.snapshot_url or self._save_snapshot(event, frame)
             record = self._persist(event)
@@ -280,10 +279,11 @@ class AlarmService:
         from ..models.database import SessionLocal
         from ..models.entities import AlarmEvent as AlarmRecord
 
+        # 使用本机本地时间（北京时间），而非 UTC，避免前端显示慢 8 小时
         created_at = (
-            datetime.fromtimestamp(event.ts, timezone.utc).replace(tzinfo=None)
+            datetime.fromtimestamp(event.ts)
             if event.ts
-            else datetime.now(timezone.utc).replace(tzinfo=None)
+            else datetime.now()
         )
         session = SessionLocal()
         try:

@@ -264,6 +264,8 @@ class FatiguePlugin(Detector):
             session.close()
 
     def _seat_from_models(self, seat_status, region) -> ActiveSeat | None:
+        from .intrusion import denormalize_polygon
+
         try:
             polygon = json.loads(region.polygon or "[]")
         except json.JSONDecodeError:
@@ -271,6 +273,8 @@ class FatiguePlugin(Detector):
             return None
         if not polygon:
             return None
+        # 座位防区以归一化坐标入库，还原为像素供人脸中心点判定
+        polygon = denormalize_polygon(polygon, Config.FRAME_WIDTH, Config.FRAME_HEIGHT)
         return ActiveSeat(
             region_id=int(region.id),
             user_id=int(seat_status.user_id),

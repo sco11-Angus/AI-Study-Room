@@ -3,7 +3,8 @@
 Layer 1: 三模型静态检测（AMTEN-FC ONNX/PyTorch + MiniFASNetV2）
 Layer 2: 深度时序物理分析（光流边界 / 帧差分时空 / 多尺度相干 / 像素频谱 / 屏幕物理）
 Layer 3: 3D 活体检测（EAR 眨眼 / head pose solvePnP / 面部光流 3D 运动模式）
-Layer 4: 物理媒体伪影检测（FFT 摩尔纹 / 傅里叶功率谱 / LBP 纹理熵 / RGB 相关 / 高光反射）
+Layer 4: 八维物理媒体伪影检测（FFT摩尔纹 / 功率谱 / LBP纹理 / RGB相关 / 高光反射
+         + 噪声残差 / 微观方差 / DCT块效应）
 Layer 5: 融合决策引擎（加权融合 + EMA 平滑 + 快速判定 + 连续确认）
 """
 import logging
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class LivenessDetector:
-    """五层融合活体检测器。
+    """五层融合活体检测器（Layer 4 含 8 个物理/图像子检测器）。
 
     每个 FaceDetector 实例持有一个 LivenessDetector，维护该人脸的帧历史与会话状态。
     """
@@ -78,6 +79,9 @@ class LivenessDetector:
         # ---- 静态图片帧差检测 ----
         self._static_frame_streak: int = 0  # 连续静态帧计数
 
+        # ---- 刚性运动检测（手持照片/屏幕晃动） ----
+        self._rigid_motion_streak: int = 0  # 连续刚性运动帧计数
+
         # ---- Layer 3 内部状态 ----
         self._ear_history: deque[float] = deque(maxlen=30)
         self._was_below_thresh: bool = False
@@ -126,6 +130,12 @@ class LivenessDetector:
 
         # 帧差静态检测：比较当前帧与上一帧人脸区域
         is_static = self._check_static_image(face_crop)
+
+        # 零运动即时拦截：帧差已确认静态，跳过所有模型推理直接判定
+        if is_static:
+            reasons: list[str] = ["static_frame_mse"]
+            return self._spoof_result(0.05, reasons, 0.5, 0.0, 0.5,
+                                       0.5, 0.5, 0.5, 0.05, 0.5)
 
         fsd_score = 0.5
         if full_frame is not None:
@@ -192,18 +202,32 @@ class LivenessDetector:
             return self._spoof_result(0.30, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.30, fsd_score)
 
-        # 快速判定 6: 时序异常（光流边界断裂+帧差结构异常）
+        # 快速判定 6: 时序异常
+        #   score < 0.10 → 零运动（静态照片），2 帧即可判定
+        #   score < 0.20 → 光流断裂/帧差异常（DeepFake），需 10 帧累积
+        if temporal_score < 0.10 and len(self._face_crop_history) >= 2:
+            reasons.append("temporal_zero_motion")
+            return self._spoof_result(0.10, reasons, deepfake, minifas, static_score,
+                                       temporal_score, liveness_score, media_score, 0.10, fsd_score)
         if temporal_score < 0.20 and len(self._face_crop_history) > 10:
             reasons.append("temporal_critical")
             return self._spoof_result(0.30, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.30, fsd_score)
 
         # 快速判定 7: 帧差静态图片检测
-        # 连续 3 帧几乎无变化 → 必然是静态照片/视频循环
+        # 连续 4 帧 nmse<0.003 → 真正的静态照片/图片攻击
         if is_static:
             reasons.append("static_frame_mse")
             return self._spoof_result(0.10, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.10, fsd_score)
+
+        # 快速判定 8: 刚性运动检测（手持照片/屏幕平移晃动）
+        # 人脸区域内帧差空间方差极低 → 整张照片在平移而非真人局部形变
+        # 附加条件：时序子特征也必须给出低分（< 0.45），避免真人微动误判
+        if self._rigid_motion_streak >= 5 and temporal_score < 0.45:
+            reasons.append("temporal_rigid_motion")
+            return self._spoof_result(0.20, reasons, deepfake, minifas, static_score,
+                                       temporal_score, liveness_score, media_score, 0.20, fsd_score)
 
         # ---- Layer 5: 综合加权融合 ----
         # 权重: static 30% / temporal 25% / liveness 25% / media 20%
@@ -254,43 +278,57 @@ class LivenessDetector:
 
     def _check_static_image(self, face_crop: np.ndarray, threshold: float = 0.003,
                               min_streak: int = 3) -> bool:
-        """帧差静态图片检测：比较连续帧的人脸区域 MSE。
+        """帧差静态图片检测 + 单帧纹理预检。
 
-        对 RTMP 推流的静态照片，连续帧几乎完全一致（仅压缩噪声），
-        MSE 比真人面部运动小 1~2 个数量级。
-        threshold=0.003 容忍 RTMP I/P 帧编码差异（avg pixel diff < 14）。
+        1) 单帧 Laplacian 方差：照片/屏幕翻拍纹理远不如真人丰富
+        2) 双帧 MSE：连续帧几乎无变化 → 静态图片攻击
 
-        Args:
-            face_crop: 当前帧 BGR 人脸裁剪
-            threshold: 归一化 MSE 阈值 (0~1)，低于此值视为静态帧
-            min_streak: 连续静态帧数阈值
-
-        Returns:
-            True 如果检测到静态图片攻击
+        阈值说明：
+        - 真正静态照片：nmse < 0.0005（像素几乎完全不变）
+        - 真人轻微晃动：nmse 0.005~0.03
+        - threshold=0.003 留有足够余量，避免真人误判
         """
+        # ---- 单帧纹理预检：Laplacian 方差 ----
+        try:
+            gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+            lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+            is_blurry = lap_var < 80  # 真人通常 >150，照片/屏幕 <80
+        except Exception:
+            lap_var = 999
+            is_blurry = False
+
+        # ---- 双帧 MSE 比较 ----
         if self._prev_face_crop is None:
-            self._static_frame_streak = 0
+            # 首帧：预种子，纹理异常直接起疑
+            self._static_frame_streak = 1 if is_blurry else 0
+            if is_blurry:
+                logger.info("[static] 单帧纹理异常 lap_var=%.1f streak=%d/%d",
+                            lap_var, self._static_frame_streak, min_streak)
             return False
 
         try:
-            # 缩放到统一尺寸后计算归一化 MSE
             target_size = (64, 64)
             prev = cv2.resize(self._prev_face_crop, target_size)
             curr = cv2.resize(face_crop, target_size)
 
-            # 转灰度减少色彩空间噪声影响
             prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY).astype(np.float32)
             curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
             mse = float(np.mean((prev_gray - curr_gray) ** 2))
-            nmse = mse / (255.0 ** 2)  # 归一化到 [0, 1]
+            nmse = mse / (255.0 ** 2)
 
             if nmse < threshold:
                 self._static_frame_streak += 1
             else:
                 self._static_frame_streak = max(0, self._static_frame_streak - 1)
 
-            return self._static_frame_streak >= min_streak
+            is_static = self._static_frame_streak >= min_streak
+            if self._static_frame_streak > 0 or nmse < 0.05:
+                logger.info(
+                    "[static] nmse=%.6f lap_var=%.1f streak=%d/%d static=%s",
+                    nmse, lap_var, self._static_frame_streak, min_streak, is_static,
+                )
+            return is_static
         except Exception:
             self._static_frame_streak = 0
             return False
@@ -319,6 +357,7 @@ class LivenessDetector:
         self._face_rect_history.clear()
         self._diff_mean_history.clear()
         self._static_frame_streak = 0
+        self._rigid_motion_streak = 0
         self._ear_history.clear()
         self._was_below_thresh = False
 
@@ -357,15 +396,59 @@ class LivenessDetector:
         self, face_crop: np.ndarray, landmarks, crop_x: int, crop_y: int,
         full_frame: Optional[np.ndarray] = None,
     ) -> float:
-        """五维时序特征融合（针对 deepfake + 屏幕回放优化）。
+        """五维时序特征融合（同时检测 DeepFake 异常变化 + 静态照片零变化）。
 
         Returns:
-            temporal_score ∈ [0, 1]
+            temporal_score ∈ [0, 1], <0.3 表示可疑
         """
         try:
             gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
         except Exception:
             return 0.5
+
+        # ---- 零运动预检：连续帧完全无变化 → 静态照片/视频循环 ----
+        if self._prev_gray is not None:
+            try:
+                # resize 到统一尺寸，避免人脸框大小变化导致广播错误
+                prev_r = cv2.resize(self._prev_gray, (64, 64)).astype(np.float32)
+                curr_r = cv2.resize(gray, (64, 64)).astype(np.float32)
+                mad = float(np.mean(np.abs(curr_r - prev_r)))
+                if mad < 2.0:  # avg pixel diff < 2/255 → 几乎完全静止（照片/死循环）
+                    return 0.10  # 极低分，直接触发 temporal_zero_motion 快拒
+            except Exception:
+                pass  # resize 失败则跳过零运动检测，继续常规流程
+
+        # ---- 刚性运动预检：照片/屏幕整体平移 vs 真人局部形变 ----
+        # 核心原理：手持照片晃动时整张照片所有像素同方向同速度平移，
+        # 帧差空间分布高度均匀。真人面部不同区域运动模式各异（眼/嘴/鼻/颧骨）。
+        if self._prev_gray is not None:
+            try:
+                prev_r = cv2.resize(self._prev_gray, (64, 64)).astype(np.float32)
+                curr_r = cv2.resize(gray, (64, 64)).astype(np.float32)
+                diff = np.abs(curr_r - prev_r)
+
+                # 4x4 网格，16 个 cell，各 cell 的帧差均值
+                cell_size = 16  # 64 / 4 = 16
+                cell_means = []
+                for i in range(4):
+                    for j in range(4):
+                        cell = diff[i*cell_size:(i+1)*cell_size,
+                                    j*cell_size:(j+1)*cell_size]
+                        cell_means.append(float(np.mean(cell)))
+
+                mean_of_cells = float(np.mean(cell_means))
+                std_of_cells = float(np.std(cell_means))
+                cv_rigidity = std_of_cells / (mean_of_cells + 1e-6)
+
+                # cv_rigidity < 0.5 → 各cell帧差几乎相同 → 刚性平移（照片/屏幕）
+                # cv_rigidity > 1.0 → 各cell帧差差异大 → 真人局部运动
+                # 同时要求 mean_of_cells > 1.5（确有意义运动，不是静止噪声）
+                if mean_of_cells > 1.5 and cv_rigidity < 0.5:
+                    self._rigid_motion_streak += 1
+                else:
+                    self._rigid_motion_streak = max(0, self._rigid_motion_streak - 1)
+            except Exception:
+                pass  # 检测失败不影响后续流程
 
         # 子特征 1 (0.25): 全帧光流场边界一致性（检测 AI换脸 人脸"贴图"）
         s1 = self._optical_flow_boundary(face_crop, full_frame, crop_x, crop_y)
@@ -1176,7 +1259,11 @@ class LivenessDetector:
     # ==================================================================
 
     def _layer4_media(self, face_crop: np.ndarray) -> float:
-        """五维物理媒体伪影检测。
+        """八维物理媒体伪影检测（含屏幕专用检测器）。
+
+        权重设计：
+        - 传统图像统计特征（FFT/功率谱/LBP/RGB/反射）：共 45%
+        - 物理传感器/显示特征（噪声/微纹理/压缩块）：共 55%
 
         Returns:
             media_score ∈ [0, 1]
@@ -1187,13 +1274,23 @@ class LivenessDetector:
             return 0.5
 
         try:
-            s1 = self._fft_moire_peaks(gray)            # 0.35
-            s2 = self._radial_power_spectrum_score(gray)  # 0.25
-            s3 = self._lbp_entropy_score(gray)           # 0.20
-            s4 = self._rgb_correlation_score(face_crop)  # 0.10
-            s5 = self._specular_reflection_score(face_crop)  # 0.10
+            # ---- 传统图像统计特征 (45%) ----
+            s1 = self._fft_moire_peaks(gray)                  # 15%
+            s2 = self._radial_power_spectrum_score(gray)      # 10%
+            s3 = self._lbp_entropy_score(gray)                # 10%
+            s4 = self._rgb_correlation_score(face_crop)       # 5%
+            s5 = self._specular_reflection_score(face_crop)   # 5%
 
-            score = 0.35 * s1 + 0.25 * s2 + 0.20 * s3 + 0.10 * s4 + 0.10 * s5
+            # ---- 物理传感器/显示特征 (55%) ----
+            s6 = self._noise_residual_score(face_crop)        # 25%  噪声残差（传感器 vs 显示）
+            s7 = self._local_micro_variance_score(face_crop)  # 20%  微观纹理平坦度
+            s8 = self._dct_blocking_score(face_crop)          # 10%  视频压缩块效应
+
+            score = (
+                0.15 * s1 + 0.10 * s2 + 0.10 * s3
+                + 0.05 * s4 + 0.05 * s5
+                + 0.25 * s6 + 0.20 * s7 + 0.10 * s8
+            )
             return float(np.clip(score, 0.0, 1.0))
         except Exception:
             return 0.5
@@ -1377,6 +1474,228 @@ class LivenessDetector:
                 return 1.0
             elif ratio < 0.03:
                 return float(1.0 - (ratio - 0.01) / 0.02)
+            else:
+                return 0.0
+        except Exception:
+            return 0.5
+
+    # ---- 子特征 6: 噪声残差分析（屏幕 vs 真实传感器） ----
+
+    @staticmethod
+    def _noise_residual_score(face_crop: np.ndarray) -> float:
+        """噪声残差分析：真实摄像头传感器噪声 vs 屏幕显示噪声。
+
+        核心原理：
+        - 真实人脸：摄像头 CMOS 传感器存在光子散粒噪声 + 读出噪声，
+          噪声残差方差较大、空间自相关性低。
+        - 手机屏幕：显示屏几乎无噪声，噪声残差极小；且屏幕自身的
+          subpixel 排列给噪声残差带来结构化的空间相关性。
+
+        方法：
+        1. 中值滤波去噪，提取噪声残差
+        2. 残差方差 → 越低越像屏幕
+        3. 残差空间自相关 → 越高越像屏幕（屏幕像素网格造成规律性）
+
+        Returns:
+            score ∈ [0, 1], <0.5 表示屏幕嫌疑
+        """
+        try:
+            gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+            # 中值滤波去噪
+            denoised = cv2.medianBlur(face_crop, 5)
+            denoised_gray = cv2.cvtColor(denoised, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+            # 噪声残差
+            residual = gray - denoised_gray
+
+            # 1) 残差方差
+            noise_var = float(np.var(residual))
+            # 真人噪声方差 > 3.0 / 屏幕 < 1.0
+            if noise_var > 3.5:
+                var_score = 1.0
+            elif noise_var > 1.5:
+                var_score = float((noise_var - 1.5) / 2.0)
+            elif noise_var > 0.5:
+                var_score = float((noise_var - 0.5) / 1.0 * 0.4)
+            else:
+                var_score = 0.0
+
+            # 2) 残差空间自相关（检测屏幕 subpixel 网格规律性）
+            h, w = residual.shape
+            if h > 4 and w > 4:
+                # 水平和垂直方向的 1-pixel shift 自相关
+                hor_corr = float(np.corrcoef(
+                    residual[:, :-1].ravel()[:2000],
+                    residual[:, 1:].ravel()[:2000],
+                )[0, 1])
+                ver_corr = float(np.corrcoef(
+                    residual[:-1, :].ravel()[:2000],
+                    residual[1:, :].ravel()[:2000],
+                )[0, 1])
+                avg_ac = (abs(hor_corr) + abs(ver_corr)) / 2.0
+                # 真人噪声随机 → 自相关 < 0.15 / 屏幕规律噪声 → > 0.3
+                if avg_ac < 0.12:
+                    ac_score = 1.0
+                elif avg_ac < 0.25:
+                    ac_score = float(1.0 - (avg_ac - 0.12) / 0.13)
+                else:
+                    ac_score = 0.0
+            else:
+                ac_score = 0.5
+
+            score = 0.5 * var_score + 0.5 * ac_score
+            return float(np.clip(score, 0.0, 1.0))
+        except Exception:
+            return 0.5
+
+    # ---- 子特征 7: 微观局部方差（屏幕像素平坦度） ----
+
+    @staticmethod
+    def _local_micro_variance_score(face_crop: np.ndarray) -> float:
+        """微观局部方差分析：检测屏幕像素级别平坦度。
+
+        核心原理：
+        - 真实人脸：皮肤有毛孔、细纹、汗毛等微观纹理，3×3 局部方差
+          分布广泛且有大量高方差区域。
+        - 手机屏幕：受限于像素分辨率，微尺度下纹理被平滑化，
+          局部方差分布集中且偏低。
+
+        方法：
+        1. 计算 3×3 窗口的局部标准差
+        2. 分析标准差的分布：均值、峰度、90 分位数
+        3. 屏幕回放：均值低 + 分布窄
+
+        Returns:
+            score ∈ [0, 1], <0.5 表示屏幕嫌疑
+        """
+        try:
+            gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
+
+            # 3×3 局部方差（使用均值滤波的平方差技巧加速）
+            mean_3x3 = cv2.blur(gray, (3, 3))
+            sq_mean_3x3 = cv2.blur(gray ** 2, (3, 3))
+            local_var = sq_mean_3x3 - mean_3x3 ** 2
+            local_var = np.maximum(local_var, 0)  # 数值精度修正
+            local_std = np.sqrt(local_var)
+
+            # 统计分布特征
+            std_mean = float(np.mean(local_std))
+            std_median = float(np.median(local_std))
+            std_p90 = float(np.percentile(local_std, 90))
+
+            # 峰度：测量分布的"厚尾"程度
+            # 真人：高方差区域多（皮肤纹理边缘）→ 正偏态
+            # 屏幕：分布集中 → 低峰度
+            std_centered = local_std - std_mean
+            m4 = float(np.mean(std_centered ** 4))
+            m2 = float(np.mean(std_centered ** 2)) + 1e-10
+            kurtosis = m4 / (m2 ** 2)
+
+            # 评分1: 局部标准差均值。真人 > 6.0，屏幕 < 3.0
+            if std_mean > 5.5:
+                mean_score = 1.0
+            elif std_mean > 3.0:
+                mean_score = float((std_mean - 3.0) / 2.5)
+            elif std_mean > 1.5:
+                mean_score = float((std_mean - 1.5) / 1.5 * 0.3)
+            else:
+                mean_score = 0.0
+
+            # 评分2: P90 分位数。真人 > 12，屏幕 < 6
+            if std_p90 > 10.0:
+                p90_score = 1.0
+            elif std_p90 > 5.0:
+                p90_score = float((std_p90 - 5.0) / 5.0)
+            elif std_p90 > 2.5:
+                p90_score = float((std_p90 - 2.5) / 2.5 * 0.3)
+            else:
+                p90_score = 0.0
+
+            # 评分3: 峰度。真人 3~6（正态→厚尾），屏幕 2~4（均匀→正态）
+            if kurtosis > 4.5:
+                kurt_score = 1.0
+            elif kurtosis > 3.0:
+                kurt_score = float((kurtosis - 3.0) / 1.5)
+            elif kurtosis > 2.0:
+                kurt_score = float((kurtosis - 2.0) / 1.0 * 0.4)
+            else:
+                kurt_score = 0.0
+
+            score = 0.35 * mean_score + 0.35 * p90_score + 0.30 * kurt_score
+            return float(np.clip(score, 0.0, 1.0))
+        except Exception:
+            return 0.5
+
+    # ---- 子特征 8: DCT 块效应检测（视频压缩伪影） ----
+
+    @staticmethod
+    def _dct_blocking_score(face_crop: np.ndarray) -> float:
+        """DCT 块效应检测：视频压缩的 8×8 块边界不连续性。
+
+        核心原理：
+        - 真实摄像头：像素连续，无块边界
+        - 手机屏幕播放视频：H.264/H.265 压缩使用 DCT 变换块（4×4~16×16），
+          块边界处存在微小灰度跳跃。即便高码率，I 帧仍有可检测的块结构。
+
+        方法：
+        1. 对灰度图计算水平和垂直方向的相邻像素差
+        2. 在 8 的倍数位置检查差值是否系统性地更大
+        3. 块边界位置的平均差值与整体平均差值的比值
+
+        Returns:
+            score ∈ [0, 1], <0.5 表示检测到块效应
+        """
+        try:
+            gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            h, w = gray.shape
+            if h < 16 or w < 16:
+                return 0.5
+
+            # 水平相邻差
+            h_diff = np.abs(np.diff(gray, axis=1))
+            # 垂直相邻差
+            v_diff = np.abs(np.diff(gray, axis=0))
+
+            # 块大小（视频编码常用 8×8）
+            block_size = 8
+
+            # 收集块边界位置的差值和块内部位置的差值
+            h_boundary_diffs = []
+            h_interior_diffs = []
+            for col in range(1, w):
+                if col % block_size == 0:
+                    h_boundary_diffs.append(float(np.mean(h_diff[:, col - 1])))
+                else:
+                    h_interior_diffs.append(float(np.mean(h_diff[:, col - 1])))
+
+            v_boundary_diffs = []
+            v_interior_diffs = []
+            for row in range(1, h):
+                if row % block_size == 0:
+                    v_boundary_diffs.append(float(np.mean(v_diff[row - 1, :])))
+                else:
+                    v_interior_diffs.append(float(np.mean(v_diff[row - 1, :])))
+
+            # 计算边界/内部差值比
+            h_boundary_mean = np.mean(h_boundary_diffs) if h_boundary_diffs else 0
+            h_interior_mean = np.mean(h_interior_diffs) if h_interior_diffs else 1e-10
+            v_boundary_mean = np.mean(v_boundary_diffs) if v_boundary_diffs else 0
+            v_interior_mean = np.mean(v_interior_diffs) if v_interior_diffs else 1e-10
+
+            h_ratio = h_boundary_mean / (h_interior_mean + 1e-10)
+            v_ratio = v_boundary_mean / (v_interior_mean + 1e-10)
+            avg_ratio = (h_ratio + v_ratio) / 2.0
+
+            # 块效应比值 > 1.15 → 有明显块边界
+            # 真人：ratio ≈ 1.0（边界和内部差值无系统性差异）
+            # 压缩视频：ratio > 1.1（8×8 块边界差值系统性地更高）
+            if avg_ratio < 1.05:
+                return 1.0
+            elif avg_ratio < 1.12:
+                return float(1.0 - (avg_ratio - 1.05) / 0.07)
+            elif avg_ratio < 1.25:
+                return float(max(0.0, 1.0 - (avg_ratio - 1.05) / 0.07))
             else:
                 return 0.0
         except Exception:

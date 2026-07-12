@@ -32,12 +32,31 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getAlarms, switchSeatStatus } from '../api'
+import { getAlarms, getCameras, getRegions, switchSeatStatus } from '../api'
 
 const status = ref('studying')
 const tip = ref('已进入自习模式，疲劳弱提醒将以私有方式展示。')
 const weakReminder = ref(null)
+const seatRegionId = ref(null)
 let pollTimer = null
+
+// 动态解析一个 seat 类型防区，避免硬编码不存在的 region_id 导致 404
+const resolveSeatRegion = () => {
+  getCameras()
+    .then((cameras) => {
+      const list = Array.isArray(cameras) ? cameras : []
+      if (!list.length) return
+      return getRegions(list[0].id).then((regions) => {
+        const seats = (Array.isArray(regions) ? regions : []).filter((r) => r.type === 'seat')
+        if (seats.length) {
+          seatRegionId.value = seats[0].id
+        }
+      })
+    })
+    .catch(() => {
+      seatRegionId.value = null
+    })
+}
 
 const loadWeakReminders = () => {
   getAlarms('pending')
@@ -54,7 +73,11 @@ const loadWeakReminders = () => {
 }
 
 const onChange = (val) => {
-  switchSeatStatus({ user_id: 1001, region_id: 5, status: val })
+  if (!seatRegionId.value) {
+    ElMessage.error('未找到可用座位防区，请先在防区配置中创建 seat 类型防区')
+    return
+  }
+  switchSeatStatus({ user_id: 1001, region_id: seatRegionId.value, status: val })
     .then(() => {
       tip.value = val === 'studying'
         ? '已切换为自习中，疲劳弱提醒将继续私有展示。'
@@ -71,6 +94,7 @@ const formatTime = (value) => {
 }
 
 onMounted(() => {
+  resolveSeatRegion()
   loadWeakReminders()
   pollTimer = setInterval(loadWeakReminders, 5000)
 })

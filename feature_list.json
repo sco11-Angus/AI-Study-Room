@@ -41,6 +41,32 @@
       "blockers": []
     },
     {
+      "id": "jenkins-ci-stabilization",
+      "name": "Stabilize Jenkins pipeline configuration",
+      "priority": 2,
+      "status": "completed",
+      "description": "Replace the fragile credential/deploy-heavy Jenkins pipeline with a cross-platform CI pipeline that Jenkins can schedule from SCM reliably.",
+      "required_validation": [
+        ".\\init.cmd",
+        "npm.cmd run build",
+        "PYTHONPYCACHEPREFIX=.pycache-ci python -m compileall app run.py",
+        "docker version"
+      ],
+      "evidence": [
+        "Simplified Jenkinsfile to standard Pipeline from SCM stages: Checkout, Smoke Test, Frontend Build, Backend Syntax Check, and Docker Image.",
+        "Removed hard requirements on optional Jenkins plugins, Docker Hub credentials, DingTalk credentials, placeholder model download URLs, and production deploy paths from the default CI path.",
+        "Jenkinsfile now supports both Unix and Windows agents through isUnix(), sh, and bat branches.",
+        "Backend syntax check uses PYTHONPYCACHEPREFIX=.pycache-ci so stale or locked __pycache__ directories do not break Jenkins agents.",
+        ".\\init.cmd passed on this Windows host.",
+        "Frontend production build passed with npm.cmd run build.",
+        "Backend compileall passed with PYTHONPYCACHEPREFIX=.pycache-ci."
+      ],
+      "blockers": [
+        "Local Docker validation could not complete because this Windows user cannot read C:\\Users\\wangyihan\\.docker\\config.json and cannot connect to the Docker API pipe. Jenkins Docker stage still requires a Jenkins agent with Docker installed and permission to access the daemon.",
+        "Jenkins UI error 'Failed to schedule build' can also be caused by job-level settings outside the repository, such as a disabled job, missing build permission, zero executors, offline agents, quiet-down mode, or a Pipeline SCM branch/Jenkinsfile path mismatch."
+      ]
+    },
+    {
       "id": "task-c3-fire-smoke-detection",
       "name": "Task C3 fire and smoke detection plugin",
       "priority": 3,
@@ -71,7 +97,8 @@
         "Added backend service facade app.services.fire_smoke.detect_fire_smoke_image() so direct backend startup can call the grafted legacy YOLOv5 fire/smoke model without relying on standalone scripts.",
         "Added POST /api/alarms/fire-smoke/detect, accepting multipart image upload or JSON/form image_path, with frames support for the 30-frame debounce window and optional raise_alarm=true persistence/broadcast.",
         "Real backend service validation passed on test_photos/fire_test.jpg: legacy YOLOv5 fallback loaded backend/model_weights/fire_smoke.pt, detected fire/smoke, and emitted one fire_smoke event after 30 frames.",
-        "Validation after backend-callable integration passed: py_compile for fire_smoke detector/service/API/tests, focused pytest 18 passed, related backend regression 45 passed, backend smoke test ALL SMOKE TESTS PASSED, and init.cmd smoke passed."
+        "Validation after backend-callable integration passed: py_compile for fire_smoke detector/service/API/tests, focused pytest 18 passed, related backend regression 45 passed, backend smoke test ALL SMOKE TESTS PASSED, and init.cmd smoke passed.",
+        "Changed the default fire/smoke model loader to legacy YOLOv5 so local scripts and backend startup no longer stall while importing ultralytics/torch before falling back. Validation passed: raw image script detected fire/smoke on test_photos/fire_test.jpg, alarm image script emitted one fire_smoke event after 30 frames, focused pytest 19 passed, and init.cmd smoke passed."
       ],
       "blockers": [
         "Full real RTMP/video fire-smoke acceptance still needs live camera or OBS footage with smoke/fire and non-fire reflection negative cases.",

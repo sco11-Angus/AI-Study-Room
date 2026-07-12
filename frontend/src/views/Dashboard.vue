@@ -50,9 +50,11 @@
           <span class="header-icon">📹</span>
           <span class="header-title">实时监控</span>
         </div>
-        <div class="video-container" ref="videoWrapper">
-          <VideoPlayer ref="playerRef" :stream-url="streamUrl" />
-          <canvas ref="overlayCanvas" class="overlay-canvas" />
+        <div class="video-container">
+          <div class="video-frame" ref="videoWrapper">
+            <VideoPlayer ref="playerRef" :stream-url="streamUrl" @dimensions="onVideoDimensions" />
+            <canvas ref="overlayCanvas" class="overlay-canvas" />
+          </div>
         </div>
       </div>
       
@@ -76,7 +78,7 @@ import AlarmPanel from '../components/AlarmPanel.vue'
 import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
 import { useAlarmStore } from '../store/alarm'
 
-const streamUrl = ref('camera_id=5')
+const streamUrl = ref('')
 const alarms = ref([])
 const faceResult = ref(null)
 const regions = ref([])
@@ -118,11 +120,11 @@ function fetchStreamUrl() {
           fetchRegionsForCamera(list[0].id)
         }
       } else {
-        streamUrl.value = 'camera_id=5'
+        streamUrl.value = ''
       }
     })
     .catch(() => {
-      streamUrl.value = 'camera_id=5'
+      streamUrl.value = ''
     })
 }
 
@@ -138,20 +140,29 @@ function fetchRegionsForCamera(cameraId) {
     })
 }
 
+// 收到视频真实尺寸后设置框的宽高比，让框完全贴合视频比例
+function onVideoDimensions({ width, height }) {
+  const frame = videoWrapper.value
+  if (frame && width && height) {
+    frame.style.setProperty('--video-aspect', `${width} / ${height}`)
+  }
+  updateOverlaySize()
+}
+
 function updateOverlaySize() {
   nextTick(() => {
     const canvas = overlayCanvas.value
-    const wrapper = videoWrapper.value
-    if (!canvas || !wrapper) return
+    const frame = videoWrapper.value
+    if (!canvas || !frame) return
 
-    const width = wrapper.clientWidth
-    const height = wrapper.clientHeight
+    // overlay 通过 CSS inset:0 已与 .video-frame 完全重合，
+    // 这里只需让画布分辨率匹配框的渲染尺寸
+    const width = frame.clientWidth
+    const height = frame.clientHeight
     if (!width || !height) return
 
     canvas.width = width
     canvas.height = height
-    canvas.style.width = `${width}px`
-    canvas.style.height = `${height}px`
     drawOverlay()
   })
 }
@@ -179,12 +190,12 @@ function drawOverlay() {
 
     if (status === 'red') {
       ctx.strokeStyle = '#f56c6c'
-      ctx.fillStyle = flashOn.value ? 'rgba(245, 108, 108, 0.25)' : 'rgba(245, 108, 108, 0.05)'
+      ctx.fillStyle = flashOn.value ? 'rgba(245, 108, 108, 0.18)' : 'rgba(245, 108, 108, 0.04)'
     } else {
-      ctx.strokeStyle = '#67c23a'
-      ctx.fillStyle = 'rgba(103, 195, 58, 0.12)'
+      ctx.strokeStyle = 'rgba(103, 195, 58, 0.9)'
+      ctx.fillStyle = 'rgba(103, 195, 58, 0.06)'
     }
-    ctx.lineWidth = 3
+    ctx.lineWidth = 1.5
     ctx.fill()
     ctx.stroke()
     ctx.restore()
@@ -193,16 +204,28 @@ function drawOverlay() {
     const [lx, ly] = points[0]
     if (typeof lx === 'number' && typeof ly === 'number') {
       ctx.save()
-      ctx.font = '14px sans-serif'
-      const textWidth = ctx.measureText(label).width + 12
-      const textHeight = 22
-      ctx.fillStyle = status === 'red' ? '#fff2f2' : '#f7fff3'
-      ctx.strokeStyle = status === 'red' ? '#f56c6c' : '#67c23a'
-      ctx.lineWidth = 1.5
-      ctx.fillRect(lx, ly - textHeight, textWidth, textHeight)
-      ctx.strokeRect(lx, ly - textHeight, textWidth, textHeight)
-      ctx.fillStyle = '#303133'
-      ctx.fillText(label, lx + 6, ly - 6)
+      ctx.font = '600 11px system-ui, sans-serif'
+      const padX = 5
+      const textW = ctx.measureText(label).width
+      const boxW = textW + padX * 2
+      const boxH = 16
+      // 标签置于多边形第一个点上方，贴住边框
+      const bx = lx
+      const by = Math.max(0, ly - boxH)
+      // 半透明圆角底色 + 无边框，轻量美观
+      ctx.fillStyle = status === 'red' ? 'rgba(245,108,108,0.92)' : 'rgba(103,195,58,0.92)'
+      const r = 3
+      ctx.beginPath()
+      ctx.moveTo(bx + r, by)
+      ctx.arcTo(bx + boxW, by, bx + boxW, by + boxH, r)
+      ctx.arcTo(bx + boxW, by + boxH, bx, by + boxH, r)
+      ctx.arcTo(bx, by + boxH, bx, by, r)
+      ctx.arcTo(bx, by, bx + boxW, by, r)
+      ctx.closePath()
+      ctx.fill()
+      ctx.fillStyle = '#fff'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(label, bx + padX, by + boxH / 2 + 0.5)
       ctx.restore()
     }
   })
@@ -475,10 +498,19 @@ const onConfirm = (id) => {
   position: relative;
 }
 
+/* 按视频真实比例的框：宽度撑满容器，高度由 aspect-ratio 推导 */
+.video-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: var(--video-aspect, 4 / 3);
+  max-height: 100%;
+}
+
 .overlay-canvas {
   position: absolute;
-  top: 20px;
-  left: 20px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 </style>

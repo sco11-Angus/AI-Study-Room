@@ -22,8 +22,8 @@ _IDLE_INTERVAL = 0.1
 _FRAME_TIMEOUT = 1.0
 # 超时后最多重试次数（避免短暂卡顿触发"缓冲中"）
 _MAX_RETRIES = 2
-# 推送帧率限制（每秒最多推送帧数）
-_MAX_FPS = 12
+# 推送帧率限制（每秒最多推送帧数）。与前端 VideoPlayer.FRAME_INTERVAL 对齐(15fps)。
+_MAX_FPS = 15
 
 
 def register_ws_routes(sock: Sock) -> None:
