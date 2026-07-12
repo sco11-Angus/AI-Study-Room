@@ -1,14 +1,34 @@
 pipeline {
     agent any
 
+    // ---- 触发条件 ----
+    triggers {
+        // GitHub Webhook 推送触发（推荐）
+        githubPush()
+        // 每 5 分钟轮询 SCM 变化（Webhook 失效时兜底）
+        pollSCM('H/5 * * * *')
+    }
+
+    // ---- 选项 ----
     options {
         timeout(time: 20, unit: 'MINUTES')
         timestamps()
         disableConcurrentBuilds()
     }
 
+    // ---- 全局环境变量 ----
     environment {
-        BACKEND_IMAGE = 'ai-study-room-backend-env:dev'
+        PROJECT_NAME    = 'AI-Study-Room'
+        DOCKER_REGISTRY = 'docker.io'          // 改为私有镜像仓库地址即可
+        IMAGE_TAG       = "${env.BUILD_NUMBER}"
+        VENV_DIR        = 'backend/.venv'
+        // 模型权重下载地址（按实际 OSS/S3 调整；占位符时下载自动跳过，不影响流水线）
+        YOLO_WEIGHTS_URL = 'https://your-oss.com/model_weights/yolov8n.pt'
+        DLIB_WEIGHTS_URL = 'https://your-oss.com/model_weights/shape_predictor_68_face_landmarks.dat'
+        PROD_HOST        = '127.0.0.1'
+        DEPLOY_DIR       = '/var/www/html'     // 新增：前端部署目录
+        // 本地开发用镜像 tag（Docker Image stage 走本地 docker build）
+        BACKEND_IMAGE   = 'ai-study-room-backend-env:dev'
     }
 
     parameters {
@@ -94,6 +114,23 @@ pipeline {
                         bat 'docker build -t %BACKEND_IMAGE% backend'
                     }
                 }
+            }
+        }
+
+        // ============================
+        // Stage 8: Deploy Frontend to Nginx (新增)
+        // ============================
+        stage('Deploy Frontend to Nginx') {
+            steps {
+                echo '🌐 [Stage 8] 部署前端到 Nginx'
+                sh '''
+                    sudo mkdir -p ${DEPLOY_DIR}
+                    sudo rm -rf ${DEPLOY_DIR}/*
+                    sudo cp -r frontend/dist/* ${DEPLOY_DIR}/
+                    sudo chown -R www-data:www-data ${DEPLOY_DIR}
+                    sudo systemctl reload nginx || sudo systemctl restart nginx
+                    echo "✅ 前端已部署到 ${DEPLOY_DIR}"
+                '''
             }
         }
     }
