@@ -87,6 +87,13 @@ const overlayCanvas = ref(null)
 const playerRef = ref(null)
 const flashOn = ref(true)
 let wsAlarms, wsFace, reconnectTimer, beepTimer, audioContext
+// ---- 人脸框实时跟踪 ----
+let wsFaceBoxes = null       // 人脸框 WebSocket
+let faceBoxesReconnect = null
+let targetFaces = []         // 后端最新推来的目标框（归一化坐标）
+let renderFaces = []         // 当前渲染的框，每帧向 target 插值靠近
+let rafId = null             // requestAnimationFrame 句柄
+const LERP = 0.25            // 插值系数：越大越跟手，越小越顺滑
 
 const alarmStore = useAlarmStore()
 
@@ -229,6 +236,41 @@ function drawOverlay() {
       ctx.restore()
     }
   })
+
+  drawFaceBoxes(ctx, canvas)
+}
+
+// 画人脸框 + 身份标签（会员绿框姓名 / 陌生人红框 / 识别中橙框）
+function drawFaceBoxes(ctx, canvas) {
+  if (!renderFaces.length) return
+  renderFaces.forEach((f) => {
+    const [nx1, ny1, nx2, ny2] = f.box
+    const x = nx1 * canvas.width
+    const y = ny1 * canvas.height
+    const bw = (nx2 - nx1) * canvas.width
+    const bh = (ny2 - ny1) * canvas.height
+
+    const isMember = f.type === 'member'
+    const color = isMember ? '#67c23a' : f.type === 'stranger' ? '#f56c6c' : '#e6a23c'
+
+    ctx.save()
+    ctx.strokeStyle = color
+    ctx.lineWidth = 2
+    ctx.strokeRect(x, y, bw, bh)
+
+    const label = isMember ? f.name || '会员' : f.type === 'stranger' ? '陌生人' : '识别中…'
+    ctx.font = '600 13px system-ui, sans-serif'
+    const padX = 6
+    const boxH = 20
+    const textW = ctx.measureText(label).width
+    const by = Math.max(0, y - boxH)
+    ctx.fillStyle = color
+    ctx.fillRect(x, by, textW + padX * 2, boxH)
+    ctx.fillStyle = '#fff'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, x + padX, by + boxH / 2 + 0.5)
+    ctx.restore()
+  })
 }
 
 function initAudioContext() {
@@ -292,6 +334,65 @@ function connectFaceWs() {
   }
 }
 
+// ---- 人脸框：订阅后端推送的归一化坐标 ----
+function connectFaceBoxesWs() {
+  wsFaceBoxes = new WebSocket(`ws://${location.host}/ws/face_boxes`)
+  wsFaceBoxes.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data)
+      if (data.type === 'faces') {
+        targetFaces = Array.isArray(data.faces) ? data.faces : []
+        syncRenderFaces()
+      }
+    } catch (err) {
+      // ignore
+    }
+  }
+  wsFaceBoxes.onclose = () => {
+    faceBoxesReconnect = setTimeout(connectFaceBoxesWs, 3000)
+  }
+  wsFaceBoxes.onerror = () => {
+    try { wsFaceBoxes.close() } catch (e) { /* noop */ }
+  }
+}
+
+// 按 track_id 对齐目标框：命中则更新目标、未命中的旧框移除、新框直接出现
+function syncRenderFaces() {
+  const map = new Map(renderFaces.map((f) => [f.track_id, f]))
+  const next = []
+  for (const t of targetFaces) {
+    const cur = map.get(t.track_id)
+    if (cur) {
+      cur.target = t.box
+      cur.type = t.type
+      cur.name = t.name
+      next.push(cur)
+    } else {
+      next.push({
+        track_id: t.track_id,
+        box: [...t.box],
+        target: [...t.box],
+        type: t.type,
+        name: t.name,
+      })
+    }
+  }
+  renderFaces = next
+}
+
+// rAF 循环：每帧把框位置向目标插值，实现平滑跟随
+function animateFaces() {
+  if (renderFaces.length) {
+    for (const f of renderFaces) {
+      for (let i = 0; i < 4; i++) {
+        f.box[i] += (f.target[i] - f.box[i]) * LERP
+      }
+    }
+    drawOverlay()
+  }
+  rafId = requestAnimationFrame(animateFaces)
+}
+
 watch(
   () => alarmStore.activeRegions,
   () => {
@@ -335,13 +436,18 @@ onMounted(() => {
     }
   }
   connectFaceWs()
+  connectFaceBoxesWs()
+  rafId = requestAnimationFrame(animateFaces)
   window.addEventListener('resize', updateOverlaySize)
 })
 
 onUnmounted(() => {
   wsAlarms && wsAlarms.close()
   wsFace && wsFace.close()
+  wsFaceBoxes && wsFaceBoxes.close()
   reconnectTimer && clearTimeout(reconnectTimer)
+  faceBoxesReconnect && clearTimeout(faceBoxesReconnect)
+  rafId && cancelAnimationFrame(rafId)
   stopBeepLoop()
   flashTimer && clearInterval(flashTimer)
   window.removeEventListener('resize', updateOverlaySize)

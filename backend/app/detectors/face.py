@@ -27,6 +27,71 @@ _SHAPE_PREDICTOR = os.path.join(Config.MODEL_DIR, "shape_predictor_68_face_landm
 _FACE_REC_MODEL = os.path.join(Config.MODEL_DIR, "dlib_face_recognition_resnet_model_v1.dat")
 
 
+class _FaceTracker:
+    """基于 IoU 的极简人脸跟踪，给每张脸分配稳定 track_id。
+
+    纯几何计算、无模型，开销可忽略。作用：让"身份姓名"稳定绑定到同一张脸，
+    避免帧间抖动导致姓名在多人之间跳。
+    """
+
+    def __init__(self, iou_thresh: float = 0.3, max_missed: int = 5):
+        # track_id -> {"box": [x1,y1,x2,y2], "missed": int, "name": str|None, "type": str|None}
+        self._tracks: dict[int, dict] = {}
+        self._next_id = 1
+        self._iou_thresh = iou_thresh
+        self._max_missed = max_missed
+
+    @staticmethod
+    def _iou(a: list, b: list) -> float:
+        ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+        ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+        iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+        inter = iw * ih
+        area_a = (a[2] - a[0]) * (a[3] - a[1])
+        area_b = (b[2] - b[0]) * (b[3] - b[1])
+        union = area_a + area_b - inter
+        return inter / union if union > 0 else 0.0
+
+    def update(self, boxes: list) -> list:
+        """boxes: 本帧检测到的像素框列表 [[x1,y1,x2,y2], ...]。
+        返回 [(track_id, box), ...]，顺序与输入一致。
+        """
+        assigned, used = [], set()
+        for box in boxes:
+            best_id, best_iou = None, self._iou_thresh
+            for tid, t in self._tracks.items():
+                if tid in used:
+                    continue
+                iou = self._iou(box, t["box"])
+                if iou >= best_iou:
+                    best_id, best_iou = tid, iou
+            if best_id is None:
+                best_id = self._next_id
+                self._next_id += 1
+                self._tracks[best_id] = {"box": box, "missed": 0, "name": None, "type": None}
+            else:
+                self._tracks[best_id]["box"] = box
+                self._tracks[best_id]["missed"] = 0
+            used.add(best_id)
+            assigned.append((best_id, box))
+        # 老化：连续未命中的 track 删除
+        for tid in list(self._tracks):
+            if tid not in used:
+                self._tracks[tid]["missed"] += 1
+                if self._tracks[tid]["missed"] > self._max_missed:
+                    del self._tracks[tid]
+        return assigned
+
+    def set_identity(self, track_id: int, type_: str, name: Optional[str]) -> None:
+        if track_id in self._tracks:
+            self._tracks[track_id]["type"] = type_
+            self._tracks[track_id]["name"] = name
+
+    def get_identity(self, track_id: int) -> tuple:
+        t = self._tracks.get(track_id, {})
+        return t.get("type"), t.get("name")
+
+
 class FaceMatcher:
     """人脸特征提取与匹配（单例，模型仅加载一次）。"""
 
@@ -293,6 +358,9 @@ class FaceDetector(Detector):
         # ---- 全帧静态检测（绕开 dlib bbox 抖动问题） ----
         self._prev_full_gray: Optional[np.ndarray] = None     # 上一帧全帧灰度 (64x64)
         self._static_streak: int = 0                          # 连续静态帧计数
+        # ---- 多脸框跟踪（供前端画框 + 平滑跟随） ----
+        self._tracker = _FaceTracker()
+        self._main_track_id: Optional[int] = None
 
     def setup(self) -> None:
         """加载 dlib 模型（引擎启动时调用一次）。"""
@@ -387,7 +455,11 @@ class FaceDetector(Detector):
 
         # 检测人脸
         face_rects = self._matcher.detect_faces(frame.image)
+        h, w = frame.image.shape[:2]
         if not face_rects:
+            # 无脸也要更新跟踪器（老化 track）并推空列表，让前端清除残留框
+            self._tracker.update([])
+            self._push_faces([])
             if self._frame_count == self._skip_frames:
                 logger.info(
                     "[face] 首次检测: 无人脸 (frame.shape=%s, dtype=%s)",
@@ -406,11 +478,19 @@ class FaceDetector(Detector):
 
         logger.info(f"[face] 检测到 {len(face_rects)} 张人脸")
 
+        # ---- 多脸跟踪：收集所有像素框 → 分配稳定 track_id ----
+        pixel_boxes = [
+            [max(0, r.left()), max(0, r.top()), min(w, r.right()), min(h, r.bottom())]
+            for r in face_rects
+        ]
+        tracked = self._tracker.update(pixel_boxes)
+        # 主脸（第一张）对应的 track_id，供识别结果绑定身份
+        self._main_track_id = tracked[0][0] if tracked else None
+        # 推送本帧所有脸的框 + 已知身份（识别结果会在后续帧刷新到框上）
+        self._push_faces(self._build_faces_payload(tracked, w, h))
+
         # 取第一个人脸
         rect = face_rects[0]
-
-        # 裁剪人脸区域
-        h, w = frame.image.shape[:2]
         x1 = max(0, rect.left())
         y1 = max(0, rect.top())
         x2 = min(w, rect.right())
@@ -512,6 +592,14 @@ class FaceDetector(Detector):
                                                stability=feature_stability)
         logger.info(f"[face] 匹配结果: {result} | feat前5维: {feat_snap}"
                     f" | 稳定度={feature_stability:.2f}")
+
+        # ---- 把识别身份绑定到主脸 track，供前端框上显示姓名 ----
+        if self._main_track_id is not None:
+            if result.startswith("member:"):
+                self._tracker.set_identity(
+                    self._main_track_id, "member", extra.get("name"))
+            else:
+                self._tracker.set_identity(self._main_track_id, "stranger", None)
 
         # ---- 直接推送（带冷却去重） ----
         now = time.time()
@@ -706,6 +794,31 @@ class FaceDetector(Detector):
 
         except Exception:
             return 0.0
+
+    def _build_faces_payload(self, tracked: list, w: int, h: int) -> list:
+        """把跟踪结果转成前端画框用的归一化 payload。
+
+        坐标归一化到 [0,1]，前端乘以 canvas 尺寸即贴合，与防区处理一致。
+        """
+        faces = []
+        for tid, box in tracked:
+            x1, y1, x2, y2 = box
+            t_type, t_name = self._tracker.get_identity(tid)
+            faces.append({
+                "track_id": tid,
+                "box": [x1 / w, y1 / h, x2 / w, y2 / h],
+                "type": t_type or "detecting",   # member / stranger / detecting
+                "name": t_name,
+            })
+        return faces
+
+    def _push_faces(self, faces: list) -> None:
+        """推送人脸框列表到 WebSocket（独立于横幅结果通道）。"""
+        try:
+            from ..api.ws import broadcast_face_boxes
+            broadcast_face_boxes(faces)
+        except Exception as e:
+            logger.debug(f"[face] 推送人脸框失败: {e}")
 
     def _push_result(self, result: str, extra: dict, face_crop, frame: Frame) -> None:
         """将匹配结果推送到 WebSocket + 产出 AlarmEvent。"""
