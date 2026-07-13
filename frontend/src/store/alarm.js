@@ -36,16 +36,6 @@ export const useAlarmStore = defineStore('alarm', {
         this.activeRegions[alarm.region_id] = 'green'
       }
     },
-    // 更新告警状态（确认、升级、片段就绪等）
-    update(id, updates) {
-      const alarm = this.alarms.find((x) => x.id === id)
-      if (alarm) {
-        Object.assign(alarm, updates)
-        if (updates.status === 'confirmed') {
-          this.activeRegions[alarm.region_id] = 'green'
-        }
-      }
-    },
     // 初始化防区颜色（全部绿色）
     initRegions(regionIds) {
       regionIds.forEach(id => {
