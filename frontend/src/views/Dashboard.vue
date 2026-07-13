@@ -76,7 +76,7 @@ import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
 import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
-import { useAlarmStore } from '../store/alarm'
+import { MAX_ALARMS, useAlarmStore } from '../store/alarm'
 
 const streamUrl = ref('')
 const alarms = ref([])
@@ -319,6 +319,23 @@ function stopBeepLoop() {
   }
 }
 
+let flashTimer = null
+
+function startFlash() {
+  if (flashTimer) return
+  flashTimer = setInterval(() => {
+    flashOn.value = !flashOn.value
+  }, 500)
+}
+
+function stopFlash() {
+  if (flashTimer) {
+    clearInterval(flashTimer)
+    flashTimer = null
+  }
+  flashOn.value = true
+}
+
 function connectFaceWs() {
   wsFace = new WebSocket(`ws://${location.host}/ws/face_recognition`)
   wsFace.onmessage = (e) => {
@@ -400,8 +417,10 @@ watch(
     const hasRed = Object.values(alarmStore.activeRegions).some((status) => status === 'red')
     if (hasRed) {
       startBeepLoop()
+      startFlash()
     } else {
       stopBeepLoop()
+      stopFlash()
     }
   },
   { deep: true }
@@ -411,14 +430,10 @@ watch(flashOn, () => {
   drawOverlay()
 })
 
-let flashTimer = setInterval(() => {
-  flashOn.value = !flashOn.value
-}, 500)
-
 onMounted(() => {
   fetchStreamUrl()
   getAlarms().then((list) => {
-    alarms.value = Array.isArray(list) ? list : []
+    alarms.value = Array.isArray(list) ? list.slice(0, MAX_ALARMS) : []
     alarmStore.loadAlarms(alarms.value)
   })
   wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
@@ -432,6 +447,9 @@ onMounted(() => {
       }
     } else {
       alarms.value.unshift(data)
+      if (alarms.value.length > MAX_ALARMS) {
+        alarms.value.length = MAX_ALARMS
+      }
       alarmStore.push(data)
     }
   }
@@ -449,7 +467,7 @@ onUnmounted(() => {
   faceBoxesReconnect && clearTimeout(faceBoxesReconnect)
   rafId && cancelAnimationFrame(rafId)
   stopBeepLoop()
-  flashTimer && clearInterval(flashTimer)
+  stopFlash()
   window.removeEventListener('resize', updateOverlaySize)
   if (audioContext) {
     audioContext.close()
