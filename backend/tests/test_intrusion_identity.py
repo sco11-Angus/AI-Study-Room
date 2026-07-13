@@ -134,6 +134,21 @@ def test_stranger_entering_reserved_seat_raises_occupy(monkeypatch):
     assert events[0].extra["actual_face_match"] == "stranger"
 
 
+def test_reserved_seat_track_survives_scheduler_skip_gap(monkeypatch):
+    """Scheduler inference is normally frame 0, 5, 10 ... rather than 0, 1."""
+    Session = make_session(monkeypatch)
+    seed_reserved_seat(Session, stay_time=2)
+    plugin = IntrusionPlugin(FakePersonDetector(), FakeFaceMatcher("stranger"))
+    plugin.setup()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+
+    assert plugin.detect(Frame(image=image, ts=10, camera_id=0, frame_idx=0)) == []
+    events = plugin.detect(Frame(image=image, ts=12, camera_id=0, frame_idx=5))
+
+    assert len(events) == 1
+    assert events[0].type == "occupy"
+
+
 def test_normalized_reserved_seat_uses_actual_stream_resolution(monkeypatch):
     """A 1280x720 OBS frame must not use the old fixed 640x480 polygon."""
     Session = make_session(monkeypatch)
