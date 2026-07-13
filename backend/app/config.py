@@ -107,6 +107,19 @@ class Config:
     AUDIO_WINDOW = float(os.getenv("AUDIO_WINDOW", 1.0))  # 分析窗口(秒)
     AUDIO_SR = int(os.getenv("AUDIO_SR", 16000))          # 重采样率(单声道)
 
+    # 情感分析增强打架检测 (任务书 D2)
+    #  情绪作"闸门"而非加分项：无愤怒/恐惧时压制视觉冲突分，滤掉欢呼/嬉闹误报。
+    EMOTION_ENABLE = os.getenv("EMOTION_ENABLE", "false").lower() == "true"  # 灰度开关
+    EMOTION_DEVICE = os.getenv("EMOTION_DEVICE", "cpu")   # cpu / gpu(cuda)
+    # HSEmotion 模型名: enet_b0_8_best_vgaf(默认,8类,首次自动下载权重到 ~/.hsemotion)
+    EMOTION_MODEL_NAME = os.getenv("EMOTION_MODEL_NAME", "enet_b0_8_best_vgaf")
+    # 闸门系数: vis' = vis * (EMOTION_GATE_FLOOR + (1-FLOOR) * emo_gate)
+    #  emo_gate=0(无负面情绪) 时视觉分打 FLOOR 折; emo_gate=1 时保留全分。
+    EMOTION_GATE_FLOOR = float(os.getenv("EMOTION_GATE_FLOOR", 0.4))
+    # 音频侧: aud = W_EMO*声学情绪(尖叫/怒吼) + (1-W_EMO)*响度托底
+    AUDIO_EMO_WEIGHT = float(os.getenv("AUDIO_EMO_WEIGHT", 0.7))
+    YAMNET_MODEL_PATH = os.getenv("YAMNET_MODEL_PATH", "")  # 留空=音频情绪暂用纯声学
+
     # 告警升级 (§7.4)
     ESCALATE_TIMEOUT = int(os.getenv("ESCALATE_TIMEOUT", 180))  # 秒
 
