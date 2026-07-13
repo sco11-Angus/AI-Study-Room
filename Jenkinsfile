@@ -1,7 +1,8 @@
 // ============================================================
 // Jenkinsfile — 智慧自习室 AI 管家 CI/CD Pipeline
-// 模式: 增量构建 + 自动部署
+// 模式: 增量构建 + 自动部署（基于上次成功构建对比）
 // 架构: Python Flask + Vue 3 + Nginx-RTMP
+// 基准: 第12次成功构建
 // ============================================================
 
 pipeline {
@@ -10,6 +11,7 @@ pipeline {
     environment {
         PROJECT_NAME    = 'AI-Study-Room'
         DOCKER_REGISTRY = 'docker.io'
+        BRANCH_NAME     = 'main'
         IMAGE_TAG       = "${env.BUILD_NUMBER}"
         BACKEND_IMAGE   = "${DOCKER_REGISTRY}/sco11-angus/${PROJECT_NAME}-backend:${IMAGE_TAG}"
         BACKEND_IMAGE_LATEST = "${DOCKER_REGISTRY}/sco11-angus/${PROJECT_NAME}-backend:latest"
@@ -20,8 +22,10 @@ pipeline {
         DEPLOY_FRONTEND = "${DEPLOY_BASE}/frontend/dist"
         DEPLOY_BACKEND  = "${DEPLOY_BASE}/backend"
         
-        // 变更检测文件（放在 workspace 外，避免 cleanWs 清掉）
-        CHANGES_FILE    = '/tmp/AI-Study-Room_last_commit'
+        // 上次成功构建的代码保存目录（在 workspace 外，避免被 cleanWs 清理）
+        LAST_BUILD_DIR  = '/var/lib/jenkins/last_build/AI-Study-Room'
+        // 变更检测结果文件
+        CHANGED_FILES   = '/tmp/AI-Study-Room_changed_files'
     }
 
     triggers {
@@ -40,55 +44,124 @@ pipeline {
     stages {
 
         // ============================================================
-        // Stage 0: 变更检测（核心：决定哪些部分需要构建）
+        // Stage 0: 检出代码 + 变更检测（基于上一次成功构建）
         // ============================================================
-        stage('Change Detection') {
+        stage('Checkout & Change Detection') {
             steps {
-                echo '🔍 [Stage 0] 检测代码变更范围'
+                echo '🔍 [Stage 0] 检出代码 & 检测变更范围'
+                
                 script {
-                    // 获取本次构建的变更文件列表
+                    // 1. 浅克隆快速拉取最新代码
                     sh '''
-                        # 获取变更文件（与上一次构建对比）
-                        if [ -f ${CHANGES_FILE} ]; then
-                            PREVIOUS_COMMIT=$(cat ${CHANGES_FILE})
-                        else
-                            PREVIOUS_COMMIT="HEAD~1"
-                        fi
+                        echo "→ 拉取最新代码（浅克隆）..."
+                        # 如果 workspace 已有代码，先清理
+                        rm -rf .git
+                        git init
+                        git remote add origin https://github.com/sco11-Angus/AI-Study-Room.git
+                        git fetch --depth=1 origin ${BRANCH_NAME}
+                        git checkout FETCH_HEAD
                         
-                        # 获取变更文件列表
-                        git diff --name-only ${PREVIOUS_COMMIT} HEAD > changed_files.txt
-                        echo "变更文件列表:"
-                        cat changed_files.txt
-                        
-                        # 保存当前 commit 供下次使用
-                        git rev-parse HEAD > ${CHANGES_FILE}
+                        # 保存当前 commit
+                        git rev-parse HEAD > /tmp/current_commit
+                        echo "当前 commit: $(cat /tmp/current_commit)"
                     '''
                     
-                    // 检测哪些模块发生了变化
-                    script {
-                        def changedFiles = readFile('changed_files.txt').split('\n')
+                    // 2. 检查是否有上一次成功构建的代码
+                    def hasLastBuild = sh(
+                        script: "test -d ${LAST_BUILD_DIR} && echo 'true' || echo 'false'",
+                        returnStdout: true
+                    ).trim()
+                    
+                    echo "是否有上次成功构建的代码: ${hasLastBuild}"
+                    
+                    // 3. 对比变更
+                    sh '''
+                        echo "→ 检测变更文件..."
                         
-                        // 判断后端是否变更
+                        if [ -d ${LAST_BUILD_DIR} ]; then
+                            echo "📝 对比上次成功构建的代码 (${LAST_BUILD_DIR})"
+                            
+                            # 使用 rsync -n 模拟对比，只输出变更的文件
+                            rsync -n -a --delete --checksum \
+                                . \
+                                ${LAST_BUILD_DIR}/ \
+                                --exclude='.git' \
+                                --exclude='*.pyc' \
+                                --exclude='__pycache__' \
+                                --exclude='node_modules' \
+                                --exclude='.venv' \
+                                --exclude='dist' \
+                                --exclude='*.log' \
+                                --exclude='.env' \
+                                --exclude='.pytest_cache' \
+                                --exclude='.vscode' \
+                                --exclude='.idea' \
+                                --exclude='backend@tmp' \
+                                --exclude='frontend@tmp' \
+                                --exclude='venv' \
+                                --exclude='.reference' \
+                                --itemize-changes 2>/dev/null | \
+                                grep -E '^[><]' | \
+                                awk '{print $2}' | \
+                                sort -u > ${CHANGED_FILES} || echo "" > ${CHANGED_FILES}
+                            
+                            echo "变更文件列表:"
+                            cat ${CHANGED_FILES} || echo "(无变更)"
+                        else
+                            echo "⚠️ 没有上次成功构建的代码！"
+                            echo "⚠️ 请先运行一次完整构建（Build Now）"
+                            echo "⚠️ 或者手动创建基准代码目录"
+                            # 标记所有模块都需要构建
+                            echo "backend" > ${CHANGED_FILES}
+                            echo "frontend" >> ${CHANGED_FILES}
+                            echo "deploy" >> ${CHANGED_FILES}
+                        fi
+                        
+                        echo "=========================================="
+                        echo "变更文件列表:"
+                        cat ${CHANGED_FILES} || echo "(无变更)"
+                        echo "=========================================="
+                    '''
+                    
+                    // 4. 解析变更文件，判断哪些模块需要构建
+                    script {
+                        def changedFiles = sh(
+                            script: "cat ${CHANGED_FILES} 2>/dev/null || echo ''",
+                            returnStdout: true
+                        ).trim().split('\n')
+                        
+                        // 初始化
                         env.BACKEND_CHANGED = 'false'
                         env.FRONTEND_CHANGED = 'false'
                         env.DEPLOY_CHANGED = 'false'
+                        env.HAS_CHANGES = 'false'
                         
+                        // 如果没有变更文件或为空，跳过所有构建
+                        if (changedFiles.size() == 0 || (changedFiles.size() == 1 && changedFiles[0] == '')) {
+                            echo "⏭️ 未检测到任何代码变更，跳过本次构建"
+                            env.HAS_CHANGES = 'false'
+                            return
+                        }
+                        
+                        // 检查哪些模块变更了
                         changedFiles.each { file ->
-                            if (file.startsWith('backend/')) {
+                            if (file == 'backend' || file.startsWith('backend/')) {
                                 env.BACKEND_CHANGED = 'true'
+                                env.HAS_CHANGES = 'true'
                             }
-                            if (file.startsWith('frontend/')) {
+                            if (file == 'frontend' || file.startsWith('frontend/')) {
                                 env.FRONTEND_CHANGED = 'true'
+                                env.HAS_CHANGES = 'true'
                             }
-                            if (file.startsWith('deploy/') || file == 'docker-compose.yml') {
+                            if (file == 'deploy' || file.startsWith('deploy/') || file == 'docker-compose.yml') {
                                 env.DEPLOY_CHANGED = 'true'
+                                env.HAS_CHANGES = 'true'
                             }
                         }
                         
-                        // 如果没有变更任何代码，跳过本次构建
-                        if (changedFiles.size() == 0 || changedFiles[0] == '') {
-                            echo "⏭️ 未检测到代码变更，跳过本次构建（所有 stage 将被跳过）"
-                            // 不设置 BACKEND_CHANGED / FRONTEND_CHANGED，所有 stage 因 when 条件不满足而自动跳过
+                        // 如果没有任何模块变更，但文件列表不为空（比如只改了 README），跳过构建
+                        if (env.HAS_CHANGES == 'false') {
+                            echo "⏭️ 变更文件不影响构建模块（如 README），跳过构建"
                             return
                         }
                         
@@ -104,7 +177,7 @@ pipeline {
         }
 
         // ============================================================
-        // Stage 1: Backend 增量构建（仅在 backend 变更时执行）
+        // Stage 1: Backend 增量构建
         // ============================================================
         stage('Backend Incremental Build') {
             when {
@@ -115,8 +188,8 @@ pipeline {
                 sh '''
                     cd backend
                     
-                    # 检查 Python 依赖是否变更（如果有 requirements.txt 变更才重新安装依赖）
-                    if git diff --name-only HEAD~1 HEAD | grep -q "backend/requirements.txt"; then
+                    # 检查 Python 依赖是否变更
+                    if grep -q "backend/requirements.txt" ${CHANGED_FILES} 2>/dev/null; then
                         echo "📦 requirements.txt 已变更，重新安装依赖..."
                         python3 -m venv .venv
                         . .venv/bin/activate
@@ -125,8 +198,8 @@ pipeline {
                         echo "✅ requirements.txt 未变更，跳过依赖安装"
                     fi
                     
-                    # 检查模型权重是否变更（如果有新权重才下载）
-                    if git diff --name-only HEAD~1 HEAD | grep -q "backend/model_weights/"; then
+                    # 检查模型权重是否变更
+                    if grep -q "backend/model_weights/" ${CHANGED_FILES} 2>/dev/null; then
                         echo "📦 模型权重已变更，下载新权重..."
                         mkdir -p model_weights
                         # 下载模型权重逻辑...
@@ -134,33 +207,33 @@ pipeline {
                         echo "✅ 模型权重未变更，跳过下载"
                     fi
                     
-                    # 运行单元测试（只测试变更相关的模块）
-                    if git diff --name-only HEAD~1 HEAD | grep -q "backend/tests/"; then
+                    # 运行单元测试
+                    if grep -q "backend/tests/" ${CHANGED_FILES} 2>/dev/null; then
                         echo "🧪 运行测试..."
                         . .venv/bin/activate
                         python -m pytest tests/ -v --tb=short || true
                     else
-                        echo "✅ 测试代码未变更，跳过测试（可选）"
+                        echo "✅ 测试代码未变更，跳过测试"
                     fi
                 '''
             }
         }
 
         // ============================================================
-        // Stage 2: Backend Docker 增量构建
+        // Stage 2: Backend Docker 构建
         // ============================================================
         stage('Backend Docker Build') {
             when {
                 expression { return env.BACKEND_CHANGED == 'true' }
             }
             steps {
-                echo '🐳 [Stage 2] 构建 Backend Docker 镜像（仅当变更时）'
+                echo '🐳 [Stage 2] 构建 Backend Docker 镜像'
                 sh '''
                     cd backend
                     
                     # 检查 Dockerfile 是否变更
-                    if git diff --name-only HEAD~1 HEAD | grep -q "backend/Dockerfile"; then
-                        echo "📦 Dockerfile 已变更，重新构建镜像..."
+                    if grep -q "backend/Dockerfile" ${CHANGED_FILES} 2>/dev/null; then
+                        echo "📦 Dockerfile 已变更，重新构建镜像（无缓存）..."
                         docker build --no-cache \
                             -t ${BACKEND_IMAGE} \
                             -t ${BACKEND_IMAGE_LATEST} \
@@ -192,7 +265,7 @@ pipeline {
         }
 
         // ============================================================
-        // Stage 3: Frontend 增量构建（仅在 frontend 变更时执行）
+        // Stage 3: Frontend 增量构建
         // ============================================================
         stage('Frontend Incremental Build') {
             when {
@@ -203,21 +276,20 @@ pipeline {
                 sh '''
                     cd frontend
                     
-                    # 检查 package.json 是否变更（决定是否需要 npm install）
-                    if git diff --name-only HEAD~1 HEAD | grep -q "frontend/package.json"; then
+                    # 检查 package.json 是否变更
+                    if grep -q "frontend/package.json" ${CHANGED_FILES} 2>/dev/null; then
                         echo "📦 package.json 已变更，重新安装依赖..."
                         npm ci
                     else
                         echo "✅ package.json 未变更，使用已有 node_modules"
                     fi
                     
-                    # 检查 src 目录是否有变更（决定是否需要重新构建）
-                    if git diff --name-only HEAD~1 HEAD | grep -q "frontend/src/"; then
+                    # 检查 src 目录是否有变更
+                    if grep -q "frontend/src/" ${CHANGED_FILES} 2>/dev/null; then
                         echo "📦 前端源码已变更，执行构建..."
                         npm run build
                     else
                         echo "✅ 前端源码未变更，跳过构建（使用上次构建产物）"
-                        # 但如果 dist 不存在，强制构建
                         if [ ! -d dist ] || [ -z "$(ls -A dist)" ]; then
                             echo "⚠️ dist 目录不存在，强制构建..."
                             npm run build
@@ -228,7 +300,7 @@ pipeline {
         }
 
         // ============================================================
-        // Stage 4: 自动部署（仅当有变更时）
+        // Stage 4: 自动部署
         // ============================================================
         stage('Auto Deploy') {
             when {
@@ -274,20 +346,17 @@ services:
 EOF
 
                         # ========================================
-                        # 3. 增量部署 Backend（仅当有变更）
+                        # 3. 增量部署 Backend
                         # ========================================
                         if [ "${BACKEND_CHANGED}" = "true" ]; then
                             echo "🔄 部署 Backend（已变更）..."
                             
-                            # 同步后端配置文件
                             rsync -a --checksum deploy/docker-compose.yml ${DEPLOY_COMPOSE}/
                             
-                            # 拉取新镜像
                             docker compose -f ${DEPLOY_COMPOSE}/docker-compose.yml \
                                 -f ${DEPLOY_COMPOSE}/docker-compose.override.yml \
                                 pull backend
                             
-                            # 重启 backend（强制重建）
                             docker compose -f ${DEPLOY_COMPOSE}/docker-compose.yml \
                                 -f ${DEPLOY_COMPOSE}/docker-compose.override.yml \
                                 up -d --no-deps --force-recreate backend
@@ -298,19 +367,16 @@ EOF
                         fi
                         
                         # ========================================
-                        # 4. 增量部署 Frontend（仅当有变更）
+                        # 4. 增量部署 Frontend
                         # ========================================
                         if [ "${FRONTEND_CHANGED}" = "true" ]; then
                             echo "🔄 部署 Frontend（已变更）..."
                             
-                            # 检查构建产物是否存在
                             if [ -d ${WORKSPACE}/frontend/dist ] && [ -n "$(ls -A ${WORKSPACE}/frontend/dist)" ]; then
-                                # 增量同步前端文件
                                 rsync -a --checksum --delete \
                                     ${WORKSPACE}/frontend/dist/ \
                                     ${DEPLOY_FRONTEND}/
                                 
-                                # 重启 nginx（重新加载静态文件）
                                 docker compose -f ${DEPLOY_COMPOSE}/docker-compose.yml \
                                     -f ${DEPLOY_COMPOSE}/docker-compose.override.yml \
                                     restart nginx-rtmp
@@ -357,10 +423,8 @@ EOF
                 sh '''
                     cd ${DEPLOY_BASE}
                     
-                    # 等待服务启动
                     sleep 10
                     
-                    # 健康检查（重试 10 次）
                     for i in {1..10}; do
                         if curl -sf http://127.0.0.1:5000/health; then
                             echo "✅ Backend 健康"
@@ -391,8 +455,49 @@ EOF
     post {
         success {
             echo '🎉 增量构建 + 自动部署成功！'
+            
+            // 保存本次构建的代码，供下次对比
+            sh '''
+                echo "→ 保存本次构建代码，供下次增量构建使用..."
+                
+                # 删除旧的备份
+                rm -rf ${LAST_BUILD_DIR}
+                
+                # 复制当前代码（排除不需要的目录）
+                mkdir -p ${LAST_BUILD_DIR}
+                rsync -a \
+                    --exclude='.git' \
+                    --exclude='*.pyc' \
+                    --exclude='__pycache__' \
+                    --exclude='node_modules' \
+                    --exclude='.venv' \
+                    --exclude='dist' \
+                    --exclude='*.log' \
+                    --exclude='.env' \
+                    --exclude='.pytest_cache' \
+                    --exclude='.vscode' \
+                    --exclude='.idea' \
+                    --exclude='backend@tmp' \
+                    --exclude='frontend@tmp' \
+                    --exclude='venv' \
+                    . ${LAST_BUILD_DIR}/
+                
+                # 保存 commit（如果有）
+                if git rev-parse HEAD 2>/dev/null; then
+                    git rev-parse HEAD > ${LAST_BUILD_DIR}/.commit_hash
+                else
+                    echo "no_git" > ${LAST_BUILD_DIR}/.commit_hash
+                fi
+                
+                # 添加标记
+                echo "build_${BUILD_NUMBER}_success" > ${LAST_BUILD_DIR}/.reference
+                
+                echo "✅ 已保存代码到 ${LAST_BUILD_DIR}"
+                echo "📝 Commit: $(cat ${LAST_BUILD_DIR}/.commit_hash 2>/dev/null || echo '无')"
+                echo "📊 目录大小: $(du -sh ${LAST_BUILD_DIR} | cut -f1)"
+            '''
+            
             script {
-                // 输出构建摘要
                 sh '''
                     echo "=========================================="
                     echo "📊 构建摘要:"
@@ -403,9 +508,11 @@ EOF
                 '''
             }
         }
+        
         failure {
             echo '❌ 构建或部署失败'
         }
+        
         always {
             cleanWs()
             echo '🧹 工作空间已清理'
