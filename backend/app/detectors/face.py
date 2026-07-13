@@ -212,7 +212,13 @@ class FaceMatcher:
                     continue
                 try:
                     refs = FaceMatcher._load_features(m.feature)
-                    dist = min(float(np.linalg.norm(feature - ref)) for ref in refs)
+                    dists = sorted(float(np.linalg.norm(feature - ref)) for ref in refs)
+                    dist = dists[0]
+                    # 聚集度检查：多照片时最优距离若为"幸运孤点"（其余照片距离远），跳过该会员
+                    if len(dists) > 1:
+                        rest_mean = float(np.mean(dists[1:]))
+                        if rest_mean - dist > 0.15:
+                            continue
                     if dist < best_dist:
                         second_best_dist = best_dist
                         best_dist = dist
@@ -572,7 +578,13 @@ class FaceDetector(Detector):
                     continue
                 try:
                     refs = FaceMatcher._load_features(m.feature)
-                    dist = min(float(np.linalg.norm(feature - ref)) for ref in refs)
+                    dists = sorted(float(np.linalg.norm(feature - ref)) for ref in refs)
+                    dist = dists[0]
+                    # 聚集度检查：多照片时最优距离若为"幸运孤点"（其余照片距离远），跳过该会员
+                    if len(dists) > 1:
+                        rest_mean = float(np.mean(dists[1:]))
+                        if rest_mean - dist > 0.15:
+                            continue
                     all_dists.append((m.member_id, m.name, dist))
                     if dist < best_dist:
                         second_best_dist = best_dist
