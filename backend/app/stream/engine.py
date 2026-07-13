@@ -135,6 +135,19 @@ class InferenceEngine:
                     if "level" in evt.extra and evt.level == 1:
                         evt.level = int(evt.extra["level"])
 
+                    if evt.extra.get("lifecycle") == "cleared":
+                        from ..api.ws import broadcast_alarm
+
+                        broadcast_alarm({
+                            "event": "region_state",
+                            "state": "cleared",
+                            "region_id": evt.region_id,
+                            "camera_id": evt.camera_id,
+                            "alarm_type": evt.type,
+                            "track_key": evt.extra.get("track_key", ""),
+                        })
+                        continue
+
                     snapshot = evt.snapshot if evt.snapshot is not None else frame.image
                     svc.raise_alarm(evt, frame=snapshot)
                 except Exception:

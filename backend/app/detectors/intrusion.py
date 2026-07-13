@@ -173,6 +173,7 @@ class IntrusionPlugin(Detector):
         self.shared_ctx = shared_ctx
         self._regions: dict[int, RegionRuntime] = {}
         self._seats: dict[int, SeatRuntime] = {}
+        self._region_tracks: dict[int, dict[int, SeatTrack]] = {}
         self._seat_tracks: dict[int, dict[int, SeatTrack]] = {}
         self._next_track_id = 1
 
@@ -209,6 +210,7 @@ class IntrusionPlugin(Detector):
                     logger.exception("[intrusion] invalid region skipped id=%s", row.id)
             self._regions = runtimes
             self._seats = self._load_active_seats(session)
+            self._region_tracks.clear()
             self._seat_tracks.clear()
             logger.info("[intrusion] active danger zones: %s", sorted(self._regions))
             logger.info("[intrusion] active reserved seats: %s", sorted(self._seats))
@@ -256,28 +258,76 @@ class IntrusionPlugin(Detector):
             self.shared_ctx.set(frame.camera_id, frame.frame_idx, people)
 
         events: list[AlarmEvent] = []
-        ts = frame.ts or time.time()
+        ts = frame.ts if frame.ts is not None else time.time()
         for region in regions:
             region.detector.prepare_frame(frame.image)
-            for box in people:
-                if region.detector.judge(box, ts):
-                    events.append(
-                        AlarmEvent(
-                            type="intrusion",
-                            region_id=region.id,
-                            camera_id=frame.camera_id,
-                            ts=ts,
-                            level=1,
-                            extra={
-                                "region_name": region.name,
-                                "person_box": [round(float(v), 2) for v in box],
-                            },
-                        )
-                    )
-                    break
+            events.extend(self._detect_danger_zone(region, people, frame, ts))
         for seat in seats:
             seat.detector.prepare_frame(frame.image)
             events.extend(self._detect_reserved_seat(seat, people, frame, ts))
+        return events
+
+    def _detect_danger_zone(
+        self,
+        region: RegionRuntime,
+        people: list[Box],
+        frame: Frame,
+        ts: float,
+    ) -> list[AlarmEvent]:
+        """Advance each danger-zone occupant through enter, dwell, and exit."""
+        tracks = self._region_tracks.setdefault(region.id, {})
+        active_boxes = [box for box in people if region.detector.is_in_danger(box)]
+        if not active_boxes:
+            removed = list(tracks.items()) if people else self._expire_unmatched_tracks(
+                tracks, people, set(), region
+            )
+            if people:
+                tracks.clear()
+            return self._clear_events(region, "intrusion", "danger_zone", frame, ts, removed)
+
+        matched_track_ids: set[int] = set()
+        events: list[AlarmEvent] = []
+        for box in active_boxes:
+            track_id = self._match_track(tracks, box, frame.frame_idx, matched_track_ids)
+            if track_id is None:
+                track_id = self._next_track_id
+                self._next_track_id += 1
+                tracks[track_id] = SeatTrack(box=box, entered_at=ts, last_seen_frame=frame.frame_idx)
+            else:
+                track = tracks[track_id]
+                track.box = box
+                track.last_seen_frame = frame.frame_idx
+                track.seen_count += 1
+                track.missed_inferences = 0
+
+            matched_track_ids.add(track_id)
+            track = tracks[track_id]
+            if (
+                not track.evaluated
+                and track.seen_count >= 2
+                and ts - track.entered_at >= region.detector.y_stay_time
+            ):
+                track.evaluated = True
+                track.alerted = True
+                events.append(
+                    AlarmEvent(
+                        type="intrusion",
+                        region_id=region.id,
+                        camera_id=frame.camera_id,
+                        ts=ts,
+                        level=1,
+                        extra={
+                            "kind": "danger_zone",
+                            "lifecycle": "active",
+                            "region_name": region.name,
+                            "person_box": [round(float(v), 2) for v in box],
+                            "track_key": f"region-{region.id}-track-{track_id}",
+                        },
+                    )
+                )
+
+        removed = self._expire_unmatched_tracks(tracks, people, matched_track_ids, region)
+        events.extend(self._clear_events(region, "intrusion", "danger_zone", frame, ts, removed))
         return events
 
     def _detect_reserved_seat(
@@ -296,10 +346,11 @@ class IntrusionPlugin(Detector):
             # misses everybody, keep the track for a few inference passes so a
             # single detector miss cannot reset a real occupant's dwell timer.
             if people:
+                removed = list(tracks.items())
                 tracks.clear()
             else:
-                self._expire_unmatched_tracks(tracks, people, set())
-            return []
+                removed = self._expire_unmatched_tracks(tracks, people, set(), seat)
+            return self._clear_events(seat, "occupy", "unauthorized_seat", frame, ts, removed)
         matched_track_ids: set[int] = set()
         eligible: list[tuple[int, SeatTrack, Box]] = []
 
@@ -329,12 +380,11 @@ class IntrusionPlugin(Detector):
             ):
                 eligible.append((track_id, track, box))
 
-        self._expire_unmatched_tracks(tracks, people, matched_track_ids, seat)
+        removed = self._expire_unmatched_tracks(tracks, people, matched_track_ids, seat)
 
+        events = self._clear_events(seat, "occupy", "unauthorized_seat", frame, ts, removed)
         if not eligible:
-            return []
-
-        events: list[AlarmEvent] = []
+            return events
         expected = f"member:{seat.member_id}"
         for track_id, track, box in eligible:
             face_match, face_crop = self._match_person_fullframe(frame.image, box, face_rects)
@@ -367,6 +417,7 @@ class IntrusionPlugin(Detector):
                         "actual_face_match": face_match,
                         "person_box": [round(float(v), 2) for v in box],
                         "track_key": f"seat-{seat.id}-track-{track_id}",
+                        "lifecycle": "active",
                     },
                 )
             )
@@ -377,8 +428,8 @@ class IntrusionPlugin(Detector):
         tracks: dict[int, SeatTrack],
         people: list[Box],
         matched_track_ids: set[int],
-        seat: SeatRuntime | None = None,
-    ) -> None:
+        runtime: RegionRuntime | SeatRuntime | None = None,
+    ) -> list[tuple[int, SeatTrack]]:
         """Expire after three *inference* misses, never raw video-frame gaps.
 
         The scheduler calls intrusion only every ``SKIP_N`` decoded frames.
@@ -386,19 +437,75 @@ class IntrusionPlugin(Detector):
         like more than three misses when ``SKIP_N`` was 5, so a seat track was
         deleted before it could ever reach the two-observation dwell gate.
         """
+        removed: list[tuple[int, SeatTrack]] = []
         for track_id, track in list(tracks.items()):
             if track_id in matched_track_ids:
                 continue
-            exited = bool(seat) and any(
-                self._iou(track.box, box) >= 0.3 and not seat.detector.is_in_danger(box)
+            exited = runtime is not None and any(
+                self._iou(track.box, box) >= 0.3 and not runtime.detector.is_in_danger(box)
                 for box in people
             )
             if exited:
+                removed.append((track_id, track))
                 del tracks[track_id]
                 continue
             track.missed_inferences += 1
             if track.missed_inferences > 3:
+                removed.append((track_id, track))
                 del tracks[track_id]
+        return removed
+
+    def _clear_events(
+        self,
+        runtime: RegionRuntime | SeatRuntime,
+        alarm_type: str,
+        kind: str,
+        frame: Frame,
+        ts: float,
+        removed: list[tuple[int, SeatTrack]],
+    ) -> list[AlarmEvent]:
+        """Emit non-persistent clear messages for tracks that had alerted."""
+        prefix = "seat" if isinstance(runtime, SeatRuntime) else "region"
+        events: list[AlarmEvent] = []
+        for track_id, track in removed:
+            if not track.alerted:
+                continue
+            events.append(
+                AlarmEvent(
+                    type=alarm_type,
+                    region_id=runtime.id,
+                    camera_id=frame.camera_id,
+                    ts=ts,
+                    level=0,
+                    extra={
+                        "kind": kind,
+                        "lifecycle": "cleared",
+                        "track_key": f"{prefix}-{runtime.id}-track-{track_id}",
+                    },
+                )
+            )
+        return events
+
+    def get_active_alarm_states(self) -> list[dict]:
+        """Return alerting tracks so a reloaded dashboard restores live state."""
+        states: list[dict] = []
+        for region_id, tracks in self._region_tracks.items():
+            region = self._regions.get(region_id)
+            if region is None:
+                continue
+            for track_id, track in tracks.items():
+                if track.alerted:
+                    states.append({"region_id": region_id, "camera_id": region.camera_id,
+                                   "alarm_type": "intrusion", "track_key": f"region-{region_id}-track-{track_id}"})
+        for seat_id, tracks in self._seat_tracks.items():
+            seat = self._seats.get(seat_id)
+            if seat is None:
+                continue
+            for track_id, track in tracks.items():
+                if track.alerted:
+                    states.append({"region_id": seat_id, "camera_id": seat.camera_id,
+                                   "alarm_type": "occupy", "track_key": f"seat-{seat_id}-track-{track_id}"})
+        return states
 
     @staticmethod
     def _box_contains_point(box: Box, x: float, y: float) -> bool:

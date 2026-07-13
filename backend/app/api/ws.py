@@ -144,6 +144,19 @@ def register_ws_routes(sock: Sock) -> None:
         """看板订阅告警事件：格子 绿->红闪烁 + 蜂鸣。"""
         with _alarm_lock:
             _alarm_subscribers.add(ws)
+
+        # Historical alarms are not equivalent to somebody currently in a
+        # zone. Send a live track snapshot whenever a dashboard reconnects.
+        try:
+            from ..stream.scheduler import get_scheduler
+
+            scheduler = get_scheduler()
+            engine = getattr(scheduler, "_engine", None) if scheduler else None
+            detector = getattr(engine, "_detectors", {}).get("intrusion") if engine else None
+            states = detector.get_active_alarm_states() if detector else []
+            ws.send(json.dumps({"event": "region_state_snapshot", "states": states}, ensure_ascii=False))
+        except Exception:
+            logger.exception("[alarm_ws] failed to send live region-state snapshot")
         logger.info("[alarm_ws] 客户端已连接")
 
         try:

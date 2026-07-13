@@ -674,4 +674,18 @@
   - `python -m py_compile app/detectors/intrusion.py tests/test_intrusion_identity.py` passed.
   - `npm.cmd run spec:validate` passed: 8 OpenSpec items, 0 failures.
 - Remaining action:
-  - Restart the currently running backend process before live verification, then keep a stranger in the bound seat for more than two seconds and verify a new `occupy` alarm appears in the dashboard.
+- Restart the currently running backend process before live verification, then keep a stranger in the bound seat for more than two seconds and verify a new `occupy` alarm appears in the dashboard.
+
+## Session 2026-07-14 Intrusion Track Lifecycle
+
+- Goal: make intrusion display state follow each person trajectory instead of leaving a region permanently red after a historic alarm.
+- Actions:
+  - Added independent enter, dwell, alerted, and exited track state for ordinary danger zones and reserved seats.
+  - Active tracks produce one persisted `intrusion` or `occupy` alarm. Alerted tracks emit a non-persistent `region_state: cleared` WebSocket message on exit or after tolerated inference misses expire.
+  - Added a live active-track snapshot when the dashboard reconnects. The frontend now maintains red/green overlays from active track keys only, so alarm confirmation and old history do not clear or reactivate a live region incorrectly.
+- Validation:
+  - `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_alarm_center.py -q` passed: 32 passed.
+  - `npm.cmd run build` in `frontend/` passed.
+  - `npm.cmd run spec:validate` passed: 8 items, 0 failures.
+- Remaining action:
+  - Restart backend and frontend, then perform real OBS acceptance: enter a bound seat or danger zone until one alarm appears, leave until the red overlay and beep stop, then re-enter to confirm a new alarm is created.

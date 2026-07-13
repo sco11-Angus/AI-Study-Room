@@ -30,6 +30,30 @@
 - 不改变危险防区（`danger_zone`）的入侵检测逻辑
 - 不改变 `seat_status` 的自习/休息/疲劳检测职责
 
+### D6: 将实时防区状态与历史告警记录分离
+
+**选择：** 告警首次触发仍持久化为 `AlarmEvent`；轨迹离开时不再新增或修改
+历史告警，而是通过告警 WebSocket 发送瞬态 `region_state` 事件：
+
+```json
+{
+  "event": "region_state",
+  "state": "cleared",
+  "region_id": 10,
+  "camera_id": 6,
+  "alarm_type": "occupy",
+  "track_key": "seat-10-track-3"
+}
+```
+
+前端按当前活跃 `track_key` 集合决定一个防区是否闪红；历史中未确认的
+告警仅用于告警记录列表，不能重新激活红框。多人同时处于一个防区时，只在
+最后一个活跃告警轨迹解除后恢复绿色。
+
+**理由：** 人员是否仍在场是实时观测状态，人工确认是告警处置状态；将两者
+混在 `alarm_event.status` 会导致离开后持续闪红，也会在确认其中一条多人告警时
+错误地清除整个防区。
+
 ## Decisions
 
 ### D1: 新增 `seat_reservation` 表，以 `region_id` 唯一绑定 `member_id`

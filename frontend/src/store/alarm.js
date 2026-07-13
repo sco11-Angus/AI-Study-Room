@@ -2,54 +2,70 @@ import { defineStore } from 'pinia'
 
 export const MAX_ALARMS = 100
 
-// 告警全局状态 (§7.3)
+// Alarm history and currently occupied regions are intentionally separate.
 export const useAlarmStore = defineStore('alarm', {
   state: () => ({
     alarms: [],
-    activeRegions: {} // { regionId: 'green' | 'red' }
+    activeRegions: {}, // { regionId: 'green' | 'red' }
+    activeTrackKeys: {} // { regionId: { [trackKey]: true } }
   }),
   actions: {
-    // 加载历史告警，并为存在未确认的高等级告警设置红色状态
     loadAlarms(alarms) {
+      // A historical, unconfirmed alarm does not prove that the person is
+      // still in the region. Live state comes from the alarm WebSocket.
       this.alarms = Array.isArray(alarms) ? alarms.slice(0, MAX_ALARMS) : []
-      this.alarms.forEach((alarm) => {
-        if (alarm.level !== 0 && alarm.status !== 'confirmed') {
-          this.activeRegions[alarm.region_id] = 'red'
-        }
-      })
     },
-    // 添加告警，对应格子转红闪烁
     push(alarm) {
       this.alarms.unshift(alarm)
       if (this.alarms.length > MAX_ALARMS) {
         this.alarms.length = MAX_ALARMS
       }
-      if (alarm.level !== 0) { // level=0 疲劳弱提醒不红闪
-        this.activeRegions[alarm.region_id] = 'red'
+      if (this.isRegionAlarm(alarm) && alarm.level !== 0) {
+        this.activateRegionTrack(alarm.region_id, alarm.extra?.track_key || `alarm-${alarm.id}`)
       }
     },
-    // 确认告警，格子恢复绿色
     confirm(id) {
       const alarm = this.alarms.find((x) => x.id === id)
-      if (alarm) {
-        alarm.status = 'confirmed'
-        this.activeRegions[alarm.region_id] = 'green'
-      }
+      if (alarm) alarm.status = 'confirmed'
     },
-    // 更新告警状态（确认、升级、片段就绪等）
     update(id, updates) {
       const alarm = this.alarms.find((x) => x.id === id)
-      if (alarm) {
-        Object.assign(alarm, updates)
-        if (updates.status === 'confirmed') {
-          this.activeRegions[alarm.region_id] = 'green'
-        }
+      if (alarm) Object.assign(alarm, updates)
+    },
+    isRegionAlarm(alarm) {
+      return alarm?.type === 'intrusion' || alarm?.type === 'occupy'
+    },
+    activateRegionTrack(regionId, trackKey) {
+      if (regionId === undefined || regionId === null || !trackKey) return
+      const key = String(regionId)
+      this.activeTrackKeys[key] ||= {}
+      this.activeTrackKeys[key][trackKey] = true
+      this.activeRegions[regionId] = 'red'
+    },
+    clearRegionTrack(regionId, trackKey) {
+      const key = String(regionId)
+      if (this.activeTrackKeys[key] && trackKey) {
+        delete this.activeTrackKeys[key][trackKey]
+      }
+      if (!this.activeTrackKeys[key] || Object.keys(this.activeTrackKeys[key]).length === 0) {
+        delete this.activeTrackKeys[key]
+        this.activeRegions[regionId] = 'green'
       }
     },
-    // 初始化防区颜色（全部绿色）
+    replaceActiveRegionTracks(states) {
+      this.activeTrackKeys = {}
+      Object.keys(this.activeRegions).forEach((regionId) => {
+        this.activeRegions[regionId] = 'green'
+      })
+      ;(Array.isArray(states) ? states : []).forEach((state) => {
+        if (state?.alarm_type === 'intrusion' || state?.alarm_type === 'occupy') {
+          this.activateRegionTrack(state.region_id, state.track_key)
+        }
+      })
+    },
     initRegions(regionIds) {
-      regionIds.forEach(id => {
-        this.activeRegions[id] = 'green'
+      regionIds.forEach((id) => {
+        if (!this.activeRegions[id]) this.activeRegions[id] = 'green'
       })
     }
   }

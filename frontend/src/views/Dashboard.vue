@@ -433,7 +433,11 @@ onMounted(() => {
   wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
   wsAlarms.onmessage = (e) => {
     const data = JSON.parse(e.data)
-    if (data.type === 'update') {
+    if (data.event === 'region_state_snapshot') {
+      alarmStore.replaceActiveRegionTracks(data.states)
+    } else if (data.event === 'region_state' && data.state === 'cleared') {
+      alarmStore.clearRegionTrack(data.region_id, data.track_key)
+    } else if (data.type === 'update') {
       const idx = alarms.value.findIndex(a => a.id === data.id)
       if (idx !== -1) {
         alarms.value[idx] = { ...alarms.value[idx], ...data }
