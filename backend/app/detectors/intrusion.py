@@ -153,6 +153,7 @@ class SeatTrack:
     entered_at: float
     last_seen_frame: int
     seen_count: int = 1
+    missed_inferences: int = 0
     evaluated: bool = False
     alerted: bool = False
 
@@ -291,10 +292,13 @@ class IntrusionPlugin(Detector):
         face_rects = detect_faces(frame.image) if callable(detect_faces) else None
         active_boxes = self._active_seat_boxes(seat, people, face_rects)
         if not active_boxes:
-            # YOLO still saw people, but none remain in this seat: reset all
-            # seat timers immediately instead of carrying a previous occupant.
+            # A person box outside the seat is an explicit exit.  When YOLO
+            # misses everybody, keep the track for a few inference passes so a
+            # single detector miss cannot reset a real occupant's dwell timer.
             if people:
                 tracks.clear()
+            else:
+                self._expire_unmatched_tracks(tracks, people, set())
             return []
         matched_track_ids: set[int] = set()
         eligible: list[tuple[int, SeatTrack, Box]] = []
@@ -314,6 +318,7 @@ class IntrusionPlugin(Detector):
                 track.box = box
                 track.last_seen_frame = frame.frame_idx
                 track.seen_count += 1
+                track.missed_inferences = 0
 
             matched_track_ids.add(track_id)
             track = tracks[track_id]
@@ -324,16 +329,7 @@ class IntrusionPlugin(Detector):
             ):
                 eligible.append((track_id, track, box))
 
-        # Three missed inference frames means the person has left or the track is stale.
-        for track_id, track in list(tracks.items()):
-            # A matching person box outside the seat is an explicit exit and resets
-            # immediately. Missing detections get a small tolerance window instead.
-            exited = any(
-                self._iou(track.box, box) >= 0.3 and not seat.detector.is_in_danger(box)
-                for box in people
-            )
-            if exited or frame.frame_idx - track.last_seen_frame > 3:
-                del tracks[track_id]
+        self._expire_unmatched_tracks(tracks, people, matched_track_ids, seat)
 
         if not eligible:
             return []
@@ -375,6 +371,34 @@ class IntrusionPlugin(Detector):
                 )
             )
         return events
+
+    def _expire_unmatched_tracks(
+        self,
+        tracks: dict[int, SeatTrack],
+        people: list[Box],
+        matched_track_ids: set[int],
+        seat: SeatRuntime | None = None,
+    ) -> None:
+        """Expire after three *inference* misses, never raw video-frame gaps.
+
+        The scheduler calls intrusion only every ``SKIP_N`` decoded frames.
+        Comparing its raw frame indexes made every healthy next inference look
+        like more than three misses when ``SKIP_N`` was 5, so a seat track was
+        deleted before it could ever reach the two-observation dwell gate.
+        """
+        for track_id, track in list(tracks.items()):
+            if track_id in matched_track_ids:
+                continue
+            exited = bool(seat) and any(
+                self._iou(track.box, box) >= 0.3 and not seat.detector.is_in_danger(box)
+                for box in people
+            )
+            if exited:
+                del tracks[track_id]
+                continue
+            track.missed_inferences += 1
+            if track.missed_inferences > 3:
+                del tracks[track_id]
 
     @staticmethod
     def _box_contains_point(box: Box, x: float, y: float) -> bool:
@@ -440,7 +464,10 @@ class IntrusionPlugin(Detector):
         candidates = [
             (self._iou(track.box, box), track_id)
             for track_id, track in tracks.items()
-            if track_id not in matched_track_ids and frame_idx - track.last_seen_frame <= 3
+            # ``frame_idx`` advances for every decoded frame while this
+            # method is called only for inference frames.  Use the explicit
+            # inference-miss counter instead of mixing those two clocks.
+            if track_id not in matched_track_ids and track.missed_inferences <= 3
         ]
         if not candidates:
             return None
