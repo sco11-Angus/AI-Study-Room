@@ -621,3 +621,17 @@
 - Remaining risks:
   - The running backend process used for the real server test was already active before this code change. Restart the backend to load the code-level recorder fixes for future alarms.
   - Full pytest remains blocked in the available local environments: WSL lacks pytest, `.venv` lacks Flask/pytest, and Anaconda lacks project dependencies such as `flask_cors`/`cv2`.
+
+## Session 2026-07-13 Frontend Dashboard Rendering Optimization
+
+- Goal: implement the frontend-only P0 rendering optimizations documented in `直播界面卡顿-前端渲染优化方案.md`.
+- Actions:
+  - Replaced the always-running 500ms overlay flash timer with `startFlash()`/`stopFlash()` controlled by whether a red alarm region exists.
+  - Added a shared `MAX_ALARMS = 100` limit to initial alarm loading and live WebSocket alarm insertion in both the dashboard display state and Pinia store.
+  - Preserved the pre-existing uncommitted face-result layout changes in `Dashboard.vue`.
+- Validation:
+  - `.\init.cmd` passed.
+  - `npm.cmd --prefix frontend run build` passed; Vite transformed 1668 modules.
+- Remaining risks:
+  - Chrome Performance comparison and the documented 10-minute continuous-alarm acceptance test require a live interactive browser session.
+  - No commit was created because `Dashboard.vue` already contained overlapping user changes before this session; committing the file would also commit those unrelated changes.
