@@ -60,12 +60,33 @@ def test_open_eye_resets_closed_eye_timer():
     assert detector.detect(_landmarks(eye="closed"), ts=12.5) is None
 
 
-def test_yawn_returns_yawn_immediately():
+def test_yawn_requires_window_hits():
+    from app.detectors.fatigue import FatigueDetector
+
+    detector = FatigueDetector(
+        ear_thresh=0.2,
+        ear_duration=2.0,
+        mar_thresh=0.6,
+        yawn_window=3,
+        yawn_hits=2,
+    )
+
+    assert detector.detect(_landmarks(eye="open", mouth="yawn"), ts=10.0) is None
+    result = detector.detect(_landmarks(eye="open", mouth="yawn"), ts=10.2)
+    assert result == "yawn"
+    assert result.mar > 0.6
+    assert result.yawn_hits == 2
+    assert result.yawn_window == 3
+
+
+def test_blink_does_not_accumulate_into_sleepy():
     from app.detectors.fatigue import FatigueDetector
 
     detector = FatigueDetector(ear_thresh=0.2, ear_duration=2.0, mar_thresh=0.6)
 
-    assert detector.detect(_landmarks(eye="open", mouth="yawn"), ts=10.0) == "yawn"
+    assert detector.detect(_landmarks(eye="closed"), ts=10.0) is None
+    assert detector.detect(_landmarks(eye="open"), ts=10.2) is None
+    assert detector.detect(_landmarks(eye="closed"), ts=11.9) is None
 
 
 class _FakeRect:
@@ -179,6 +200,33 @@ def test_fatigue_plugin_emits_dingtalk_level_event_with_kind():
     assert events[0].extra["kind"] == "sleepy"
     assert events[0].extra["user_id"] == 1001
     assert events[0].extra["level"] == 1
+    assert events[0].extra["ear"] < 0.2
+    assert "mar" in events[0].extra
+    assert "closed_duration" in events[0].extra
+    assert "yawn_hits" in events[0].extra
+    assert "yawn_window" in events[0].extra
+
+
+def test_fatigue_plugin_cooldown_suppresses_repeated_alerts(monkeypatch):
+    from app.detectors.base import Frame
+    from app.detectors.fatigue import FatigueDetector, FatiguePlugin
+
+    monkeypatch.setattr("app.detectors.fatigue.Config.FATIGUE_ALERT_COOLDOWN", 60)
+    plugin = FatiguePlugin(
+        session_factory=_FakeSessionFactory([_seat_row()]),
+        detector_factory=lambda: FatigueDetector(ear_thresh=0.2, ear_duration=0.0, mar_thresh=0.6),
+        face_detector=_FakeFaceDetector(),
+        shape_predictor=_FakeShapePredictor(_landmarks(eye="closed")),
+    )
+    plugin.setup()
+
+    first = Frame(image=np.zeros((120, 120, 3), dtype=np.uint8), ts=10.0, camera_id=7, frame_idx=1)
+    second = Frame(image=np.zeros((120, 120, 3), dtype=np.uint8), ts=20.0, camera_id=7, frame_idx=2)
+    third = Frame(image=np.zeros((120, 120, 3), dtype=np.uint8), ts=71.0, camera_id=7, frame_idx=3)
+
+    assert len(plugin.detect(first)) == 1
+    assert plugin.detect(second) == []
+    assert len(plugin.detect(third)) == 1
 
 
 def test_fatigue_plugin_resting_hot_update_disables_region():
@@ -285,3 +333,33 @@ def test_disabling_one_region_keeps_fatigue_enabled_when_another_is_studying(mon
 
     assert response.status_code == 200
     assert scheduler.engine.enabled[-1] == ("fatigue", True)
+
+
+def test_companion_status_reports_latest_fatigue(monkeypatch, seat_api_db):
+    from app.models.entities import AlarmEvent, SeatStatus
+
+    session = seat_api_db()
+    try:
+        session.add(SeatStatus(user_id=1001, region_id=5, status="studying"))
+        session.add(AlarmEvent(
+            type="fatigue",
+            region_id=5,
+            camera_id=7,
+            level=1,
+            status="notified",
+            extra=json.dumps({"kind": "yawn", "ear": 0.31, "mar": 0.82}),
+        ))
+        session.commit()
+    finally:
+        session.close()
+
+    monkeypatch.setattr("app.api.seat_status.Config.DINGTALK_WEBHOOK", "")
+    client = _client(monkeypatch, _FakeScheduler())
+
+    response = client.get("/api/seat-status/companion?user_id=1001&region_id=5")
+
+    assert response.status_code == 200
+    data = response.get_json()["data"]
+    assert data["status"] == "studying"
+    assert data["dingtalk_configured"] is False
+    assert data["latest_fatigue"]["extra"]["kind"] == "yawn"

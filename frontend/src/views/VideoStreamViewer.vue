@@ -16,7 +16,7 @@
     </div>
 
     <div class="video-container">
-      <canvas ref="canvasEl" class="video-canvas" width="640" height="360" />
+      <img ref="imageEl" class="video-image" alt="实时视频流" />
       <div v-if="!streaming" class="overlay">
         <p>等待推流...</p>
       </div>
@@ -28,12 +28,17 @@
 import { ref, onMounted, onUnmounted, watch } from "vue";
 
 const cameraId = ref(0);
-const canvasEl = ref(null);
+const imageEl = ref(null);
 const statusText = ref("");
 const streaming = ref(false);
 
 let ws = null;
 let reconnectTimer = null;
+let lastFrameTime = 0;
+let rendering = false;
+let currentFrameUrl = null;
+
+const FRAME_INTERVAL = 1000 / 15;
 
 const connect = () => {
   if (ws) {
@@ -76,7 +81,13 @@ const connect = () => {
 
     // 二进制 JPEG 帧 → 渲染到 canvas
     if (e.data instanceof Blob) {
-      renderFrame(e.data);
+      const now = Date.now();
+      if (rendering || now - lastFrameTime < FRAME_INTERVAL) return;
+      lastFrameTime = now;
+      rendering = true;
+      renderFrame(e.data).finally(() => {
+        rendering = false;
+      });
     }
   };
 
@@ -91,52 +102,24 @@ const connect = () => {
   };
 };
 
-const renderFrame = (blob) => {
-  const canvas = canvasEl.value;
-  if (!canvas) return;
-  const ctx = canvas.getContext("2d");
-
-  const applyBitmap = (bitmap) => {
-    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-    }
-    ctx.drawImage(bitmap, 0, 0);
-    streaming.value = true;
-    statusText.value = "";
-  };
-
-  const fallback = () => {
-    const img = new Image();
-    const url = URL.createObjectURL(blob);
-
-    img.onload = () => {
-      if (canvas.width !== img.width || canvas.height !== img.height) {
-        canvas.width = img.width;
-        canvas.height = img.height;
-      }
-      ctx.drawImage(img, 0, 0);
-      URL.revokeObjectURL(url);
+const renderFrame = async (blob) => {
+  const image = imageEl.value;
+  if (!image) return;
+  const nextUrl = URL.createObjectURL(blob);
+  await new Promise((resolve) => {
+    image.onload = () => {
+      if (currentFrameUrl) URL.revokeObjectURL(currentFrameUrl);
+      currentFrameUrl = nextUrl;
       streaming.value = true;
       statusText.value = "";
+      resolve();
     };
-
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
+    image.onerror = () => {
+      URL.revokeObjectURL(nextUrl);
+      resolve();
     };
-
-    img.src = url;
-  };
-
-  try {
-    if (typeof createImageBitmap === "function") {
-      createImageBitmap(blob).then(applyBitmap, () => fallback());
-    } else {
-      fallback();
-    }
-  } catch {
-    fallback();
-  }
+    image.src = nextUrl;
+  });
 };
 
 const scheduleReconnect = () => {
@@ -158,6 +141,7 @@ onMounted(connect);
 onUnmounted(() => {
   if (reconnectTimer) clearTimeout(reconnectTimer);
   if (ws) ws.close();
+  if (currentFrameUrl) URL.revokeObjectURL(currentFrameUrl);
 });
 </script>
 
@@ -223,8 +207,10 @@ h2 {
   justify-content: center;
 }
 
-.video-canvas {
+.video-image {
   width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
   display: block;
 }
 

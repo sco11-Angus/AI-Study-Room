@@ -55,6 +55,36 @@ def _default_database_uri() -> str:
     return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}?charset=utf8mb4"
 
 
+def _fatigue_preset(name: str) -> dict[str, float | int]:
+    presets = {
+        "light": {
+            "EAR_THRESH": 0.18,
+            "EAR_DURATION": 3.0,
+            "MAR_THRESH": 0.7,
+            "FATIGUE_YAWN_WINDOW": 6,
+            "FATIGUE_YAWN_HITS": 4,
+            "FATIGUE_ALERT_COOLDOWN": 180,
+        },
+        "normal": {
+            "EAR_THRESH": 0.2,
+            "EAR_DURATION": 2.0,
+            "MAR_THRESH": 0.6,
+            "FATIGUE_YAWN_WINDOW": 5,
+            "FATIGUE_YAWN_HITS": 3,
+            "FATIGUE_ALERT_COOLDOWN": 120,
+        },
+        "exam": {
+            "EAR_THRESH": 0.22,
+            "EAR_DURATION": 1.5,
+            "MAR_THRESH": 0.55,
+            "FATIGUE_YAWN_WINDOW": 4,
+            "FATIGUE_YAWN_HITS": 2,
+            "FATIGUE_ALERT_COOLDOWN": 90,
+        },
+    }
+    return presets.get(name, presets["normal"])
+
+
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
@@ -69,10 +99,16 @@ class Config:
     _stream_local_camera = os.getenv("STREAM_LOCAL_CAMERA", "").strip()
     STREAM_LOCAL_CAMERA = int(_stream_local_camera) if _stream_local_camera else None
 
+    FATIGUE_PRESET = os.getenv("FATIGUE_PRESET", "normal")
+    _FATIGUE_DEFAULTS = _fatigue_preset(FATIGUE_PRESET)
+
     # 疲劳检测 (§4.3)
-    EAR_THRESH = float(os.getenv("EAR_THRESH", 0.2))  # 闭眼阈值
-    EAR_DURATION = float(os.getenv("EAR_DURATION", 2))  # 闭眼持续(秒)
-    MAR_THRESH = float(os.getenv("MAR_THRESH", 0.6))  # 打哈欠阈值
+    EAR_THRESH = float(os.getenv("EAR_THRESH", _FATIGUE_DEFAULTS["EAR_THRESH"]))  # 闭眼阈值
+    EAR_DURATION = float(os.getenv("EAR_DURATION", _FATIGUE_DEFAULTS["EAR_DURATION"]))  # 闭眼持续(秒)
+    MAR_THRESH = float(os.getenv("MAR_THRESH", _FATIGUE_DEFAULTS["MAR_THRESH"]))  # 打哈欠阈值
+    FATIGUE_YAWN_WINDOW = int(os.getenv("FATIGUE_YAWN_WINDOW", _FATIGUE_DEFAULTS["FATIGUE_YAWN_WINDOW"]))
+    FATIGUE_YAWN_HITS = int(os.getenv("FATIGUE_YAWN_HITS", _FATIGUE_DEFAULTS["FATIGUE_YAWN_HITS"]))
+    FATIGUE_ALERT_COOLDOWN = float(os.getenv("FATIGUE_ALERT_COOLDOWN", _FATIGUE_DEFAULTS["FATIGUE_ALERT_COOLDOWN"]))
     FATIGUE_ALERT_LEVEL = int(os.getenv("FATIGUE_ALERT_LEVEL", 1))
 
     # 烟火检测 (§6.2)
