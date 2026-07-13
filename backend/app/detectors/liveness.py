@@ -426,7 +426,7 @@ class LivenessDetector:
                 curr_r = cv2.resize(gray, (64, 64)).astype(np.float32)
                 mad = float(np.mean(np.abs(curr_r - prev_r)))
                 if mad < 2.0:  # avg pixel diff < 2/255 → 几乎完全静止（照片/死循环）
-                    return 0.10  # 极低分，直接触发 temporal_zero_motion 快拒
+                    return 0.25  # 不进 temporal_critical (<0.20)，真人静坐不会被误判
             except Exception:
                 pass  # resize 失败则跳过零运动检测，继续常规流程
 
