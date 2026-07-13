@@ -113,7 +113,7 @@ def list_alarms():
         query = session.query(AlarmEvent)
         if status:
             query = query.filter(AlarmEvent.status == status)
-        records = query.order_by(AlarmEvent.created_at.desc()).all()
+        records = query.order_by(AlarmEvent.created_at.desc()).limit(20).all()
         return jsonify(code=0, message="ok", data=[_serialize_alarm(r) for r in records])
     finally:
         session.close()
