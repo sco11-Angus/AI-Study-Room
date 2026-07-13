@@ -639,3 +639,17 @@
   - `./init.cmd` passed after running OpenSpec strict validation and the existing markdown smoke checks.
 - Remaining risk:
   - This Windows host only exposes the WSL bash shim, so `init.sh` could not be executed locally. It mirrors the validated PowerShell gate and should be exercised on a shell-capable CI/Linux environment.
+
+## Session 2026-07-13 Frontend Dashboard Rendering Optimization
+
+- Goal: implement the frontend-only P0 rendering optimizations documented in `直播界面卡顿-前端渲染优化方案.md`.
+- Actions:
+  - Replaced the always-running 500ms overlay flash timer with `startFlash()`/`stopFlash()` controlled by whether a red alarm region exists.
+  - Added a shared `MAX_ALARMS = 100` limit to initial alarm loading and live WebSocket alarm insertion in both the dashboard display state and Pinia store.
+  - Preserved the pre-existing uncommitted face-result layout changes in `Dashboard.vue`.
+- Validation:
+  - `.\init.cmd` passed.
+  - `npm.cmd --prefix frontend run build` passed; Vite transformed 1668 modules.
+- Remaining risks:
+  - Chrome Performance comparison and the documented 10-minute continuous-alarm acceptance test require a live interactive browser session.
+  - No commit was created because `Dashboard.vue` already contained overlapping user changes before this session; committing the file would also commit those unrelated changes.

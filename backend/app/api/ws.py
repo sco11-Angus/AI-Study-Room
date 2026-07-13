@@ -88,6 +88,22 @@ def broadcast_face_result(result: dict) -> None:
         pass
 
 
+# ---- 人脸框列表（供前端画框 + 平滑跟随）----
+
+# maxsize=2：只保留最新框，满了丢旧，避免慢客户端积压延迟
+face_boxes_queue = queue.Queue(maxsize=2)
+
+
+def broadcast_face_boxes(faces: list) -> None:
+    """推送本帧所有人脸框（归一化坐标 + 身份）到广播队列。"""
+    try:
+        if face_boxes_queue.full():
+            face_boxes_queue.get_nowait()   # 丢最旧，只推最新
+        face_boxes_queue.put_nowait({"type": "faces", "faces": faces})
+    except Exception:
+        pass
+
+
 # ---- REST API（直接写在 ws 模块里，零跨文件导入） ----
 
 @bp.get("/api/face_result")
@@ -158,6 +174,24 @@ def register_ws_routes(sock: Sock) -> None:
             logger.exception("[face_ws] WebSocket 异常")
         finally:
             logger.info("[face_ws] 客户端断开 face_recognition")
+
+    @sock.route("/ws/face_boxes")
+    def ws_face_boxes(ws):
+        """看板订阅人脸框列表：每帧所有脸的归一化坐标 + 身份。"""
+        logger.info("[face_boxes_ws] 客户端已连接 face_boxes")
+        try:
+            while True:
+                try:
+                    msg = face_boxes_queue.get(timeout=0.5)
+                    _safe_send(ws, json.dumps(msg, ensure_ascii=False))
+                except queue.Empty:
+                    continue
+        except ConnectionClosed:
+            pass
+        except Exception:
+            logger.exception("[face_boxes_ws] WebSocket 异常")
+        finally:
+            logger.info("[face_boxes_ws] 客户端断开 face_boxes")
 
 
 def _safe_send(ws, data):

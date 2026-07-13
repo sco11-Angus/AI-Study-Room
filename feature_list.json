@@ -1,6 +1,26 @@
 {
   "features": [
     {
+      "id": "frontend-dashboard-rendering-optimization",
+      "name": "Optimize dashboard alarm rendering",
+      "priority": 1,
+      "status": "completed",
+      "description": "Limit dashboard alarm rows and run the overlay flash timer only while red alarms exist.",
+      "required_validation": [
+        ".\\init.cmd",
+        "npm.cmd --prefix frontend run build"
+      ],
+      "evidence": [
+        "Dashboard flash timer now starts only when a red alarm exists and is stopped and reset when no red alarm remains or the component unmounts.",
+        "Initial and WebSocket alarm lists are capped at 100 rows in both the dashboard display state and Pinia alarm store.",
+        ".\\init.cmd passed on 2026-07-13.",
+        "npm.cmd --prefix frontend run build passed on 2026-07-13 with 1668 modules transformed."
+      ],
+      "blockers": [
+        "Chrome Performance before/after profiling and the 10-minute continuous-alarm browser acceptance test still require an interactive live stream session."
+      ]
+    },
+    {
       "id": "project-init-docs",
       "name": "Initialize repository and publish markdown docs",
       "priority": 1,

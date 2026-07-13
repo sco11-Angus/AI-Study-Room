@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 
+export const MAX_ALARMS = 100
+
 // 告警全局状态 (§7.3)
 export const useAlarmStore = defineStore('alarm', {
   state: () => ({
@@ -9,7 +11,7 @@ export const useAlarmStore = defineStore('alarm', {
   actions: {
     // 加载历史告警，并为存在未确认的高等级告警设置红色状态
     loadAlarms(alarms) {
-      this.alarms = Array.isArray(alarms) ? alarms.slice() : []
+      this.alarms = Array.isArray(alarms) ? alarms.slice(0, MAX_ALARMS) : []
       this.alarms.forEach((alarm) => {
         if (alarm.level !== 0 && alarm.status !== 'confirmed') {
           this.activeRegions[alarm.region_id] = 'red'
@@ -19,6 +21,9 @@ export const useAlarmStore = defineStore('alarm', {
     // 添加告警，对应格子转红闪烁
     push(alarm) {
       this.alarms.unshift(alarm)
+      if (this.alarms.length > MAX_ALARMS) {
+        this.alarms.length = MAX_ALARMS
+      }
       if (alarm.level !== 0) { // level=0 疲劳弱提醒不红闪
         this.activeRegions[alarm.region_id] = 'red'
       }
