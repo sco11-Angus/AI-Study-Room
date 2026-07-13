@@ -72,6 +72,20 @@ CREATE TABLE IF NOT EXISTS seat_status (
     FOREIGN KEY (guard_id) REFERENCES guard(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='座位自习状态表';
 
+-- 表4-4a seat_reservation 座位预约绑定
+CREATE TABLE IF NOT EXISTS seat_reservation (
+    id INT PRIMARY KEY AUTO_INCREMENT COMMENT '预约绑定ID',
+    region_id INT NOT NULL COMMENT '座位防区，唯一绑定一个预约成员',
+    member_id INT NOT NULL COMMENT '预约成员，关联人脸会员表',
+    enabled TINYINT(1) NOT NULL DEFAULT 1 COMMENT '是否启用身份核验',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY idx_seat_reservation_region (region_id),
+    INDEX idx_seat_reservation_member (member_id),
+    FOREIGN KEY (region_id) REFERENCES region(id) ON DELETE CASCADE,
+    FOREIGN KEY (member_id) REFERENCES member(member_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='座位预约成员绑定表';
+
 -- 表4-5 alarm_event 告警事件
 CREATE TABLE IF NOT EXISTS alarm_event (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '告警ID',

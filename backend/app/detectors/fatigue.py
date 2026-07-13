@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections import deque
 from dataclasses import dataclass
 from typing import Callable
 
@@ -17,6 +18,21 @@ from ..config import Config
 from .base import AlarmEvent, Detector, Frame
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FatigueResult:
+    kind: str
+    ear: float
+    mar: float
+    closed_duration: float
+    yawn_hits: int
+    yawn_window: int
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return self.kind == other
+        return super().__eq__(other)
 
 
 def eye_aspect_ratio(eye) -> float:
@@ -57,18 +73,29 @@ class FatigueDetector:
         ear_thresh: float | None = None,
         ear_duration: float | None = None,
         mar_thresh: float | None = None,
+        yawn_window: int | None = None,
+        yawn_hits: int | None = None,
     ):
         self.ear_thresh = Config.EAR_THRESH if ear_thresh is None else ear_thresh
         self.ear_duration = Config.EAR_DURATION if ear_duration is None else ear_duration
         self.mar_thresh = Config.MAR_THRESH if mar_thresh is None else mar_thresh
+        self.yawn_window = max(1, int(Config.FATIGUE_YAWN_WINDOW if yawn_window is None else yawn_window))
+        self.yawn_hits = max(1, int(Config.FATIGUE_YAWN_HITS if yawn_hits is None else yawn_hits))
         self._closed_since: float | None = None
+        self._yawn_votes = deque(maxlen=self.yawn_window)
+        self.last_metrics = self._metrics(ear=0.0, mar=0.0, ts=0.0)
 
     def reset(self) -> None:
         """Clear accumulated closed-eye state."""
         self._closed_since = None
+        self._yawn_votes.clear()
+        self.last_metrics = self._metrics(ear=0.0, mar=0.0, ts=0.0)
 
-    def detect(self, landmarks, ts: float) -> str | None:
-        """Return ``sleepy``, ``yawn``, or ``None`` for one landmark set."""
+    def _reset_closed_eye(self) -> None:
+        self._closed_since = None
+
+    def detect(self, landmarks, ts: float) -> FatigueResult | None:
+        """Return fatigue result for one landmark set, or ``None``."""
         if landmarks is None:
             self.reset()
             return None
@@ -82,23 +109,42 @@ class FatigueDetector:
         right_ear = eye_aspect_ratio(points[42:48])
         ear = (left_ear + right_ear) / 2.0
         mar = mouth_aspect_ratio(points[60:68])
+        self._yawn_votes.append(mar > self.mar_thresh)
+        self.last_metrics = self._metrics(ear=ear, mar=mar, ts=ts)
 
-        if mar > self.mar_thresh:
-            self.reset()
-            return "yawn"
+        if sum(self._yawn_votes) >= self.yawn_hits and len(self._yawn_votes) >= self.yawn_hits:
+            self._reset_closed_eye()
+            result = FatigueResult(kind="yawn", **self.last_metrics)
+            self._yawn_votes.clear()
+            return result
 
         if ear < self.ear_thresh:
             if self._closed_since is None:
                 self._closed_since = ts
                 if self.ear_duration <= 0:
-                    return "sleepy"
+                    self.last_metrics = self._metrics(ear=ear, mar=mar, ts=ts)
+                    return FatigueResult(kind="sleepy", **self.last_metrics)
                 return None
             if ts - self._closed_since >= self.ear_duration:
-                return "sleepy"
+                self.last_metrics = self._metrics(ear=ear, mar=mar, ts=ts)
+                return FatigueResult(kind="sleepy", **self.last_metrics)
             return None
 
-        self.reset()
+        self._reset_closed_eye()
+        self.last_metrics = self._metrics(ear=ear, mar=mar, ts=ts)
         return None
+
+    def _metrics(self, ear: float, mar: float, ts: float) -> dict:
+        closed_duration = 0.0
+        if self._closed_since is not None and ts:
+            closed_duration = max(0.0, ts - self._closed_since)
+        return {
+            "ear": round(float(ear), 4),
+            "mar": round(float(mar), 4),
+            "closed_duration": round(float(closed_duration), 3),
+            "yawn_hits": int(sum(self._yawn_votes)),
+            "yawn_window": int(self.yawn_window),
+        }
 
 
 @dataclass
@@ -134,6 +180,7 @@ class FatiguePlugin(Detector):
         self._dlib_loaded = bool(face_detector and shape_predictor)
         self._active_seats: dict[int, ActiveSeat] = {}
         self._detectors: dict[int, FatigueDetector] = {}
+        self._last_alert_at: dict[tuple[int, str], float] = {}
 
     def setup(self) -> None:
         """Load Dlib models once and then active studying seats."""
@@ -160,9 +207,13 @@ class FatiguePlugin(Detector):
         for seat in seats:
             detector = self._detectors.setdefault(seat.region_id, self._detector_factory())
             landmarks = landmarks_by_seat.get(seat.region_id)
-            kind = detector.detect(landmarks, frame.ts)
-            if not kind:
+            result = detector.detect(landmarks, frame.ts)
+            if not result:
                 continue
+            kind = result.kind
+            if self._in_cooldown(seat.region_id, kind, frame.ts):
+                continue
+            self._last_alert_at[(seat.region_id, kind)] = frame.ts
             level = int(getattr(Config, "FATIGUE_ALERT_LEVEL", 1))
             events.append(
                 AlarmEvent(
@@ -177,6 +228,11 @@ class FatiguePlugin(Detector):
                         "kind": kind,
                         "user_id": seat.user_id,
                         "level": level,
+                        "ear": result.ear,
+                        "mar": result.mar,
+                        "closed_duration": result.closed_duration,
+                        "yawn_hits": result.yawn_hits,
+                        "yawn_window": result.yawn_window,
                     },
                 )
             )
@@ -203,8 +259,18 @@ class FatiguePlugin(Detector):
             detector = self._detectors.pop(region_id, None)
             if detector:
                 detector.reset()
+            for key in list(self._last_alert_at):
+                if key[0] == region_id:
+                    self._last_alert_at.pop(key, None)
 
         self.enabled = bool(self._active_seats)
+
+    def _in_cooldown(self, region_id: int, kind: str, ts: float) -> bool:
+        cooldown = max(0.0, float(getattr(Config, "FATIGUE_ALERT_COOLDOWN", 120)))
+        if cooldown <= 0:
+            return False
+        last = self._last_alert_at.get((region_id, kind))
+        return last is not None and ts - last < cooldown
 
     def _load_dlib(self) -> None:
         if not os.path.exists(self._shape_predictor_path):
@@ -264,8 +330,6 @@ class FatiguePlugin(Detector):
             session.close()
 
     def _seat_from_models(self, seat_status, region) -> ActiveSeat | None:
-        from .intrusion import denormalize_polygon
-
         try:
             polygon = json.loads(region.polygon or "[]")
         except json.JSONDecodeError:
@@ -274,7 +338,7 @@ class FatiguePlugin(Detector):
         if not polygon:
             return None
         # 座位防区以归一化坐标入库，还原为像素供人脸中心点判定
-        polygon = denormalize_polygon(polygon, Config.FRAME_WIDTH, Config.FRAME_HEIGHT)
+        polygon = _denormalize_polygon(polygon, Config.FRAME_WIDTH, Config.FRAME_HEIGHT)
         return ActiveSeat(
             region_id=int(region.id),
             user_id=int(seat_status.user_id),
@@ -337,3 +401,13 @@ def _point_in_polygon(point: tuple[float, float], polygon: np.ndarray) -> bool:
                 inside = not inside
         j = i
     return inside
+
+
+def _denormalize_polygon(points: list[list[float]], width: int, height: int) -> list[list[float]]:
+    """Convert normalized [0, 1] polygon coordinates to pixels when needed."""
+    if not points:
+        return []
+    max_coord = max(max(abs(float(x)), abs(float(y))) for x, y in points)
+    if max_coord <= 1.0:
+        return [[float(x) * width, float(y) * height] for x, y in points]
+    return [[float(x), float(y)] for x, y in points]
