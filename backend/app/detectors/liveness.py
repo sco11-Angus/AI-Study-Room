@@ -87,6 +87,16 @@ class LivenessDetector:
         self._static_low_streak: int = 0
         self._liveness_low_streak: int = 0
         self._temporal_low_streak: int = 0
+        self._deepfake_low_streak: int = 0
+        self._tzero_low_streak: int = 0
+        self._noblink_streak: int = 0
+
+        # ---- 各层分数 EMA 平滑（α=0.3，源头上过滤帧间噪声） ----
+        self._ema_static: Optional[float] = None
+        self._ema_media: Optional[float] = None
+        self._ema_liveness: Optional[float] = None
+        self._ema_temporal: Optional[float] = None
+        self._ema_alpha: float = 0.3
 
         # ---- Layer 3 内部状态 ----
         self._ear_history: deque[float] = deque(maxlen=30)
@@ -169,62 +179,115 @@ class LivenessDetector:
 
         self._temporal_score_hist.append(temporal_score)
 
+        # ---- EMA 平滑：各层独立平滑，过滤帧间噪声 ----
+        a = self._ema_alpha
+        if self._ema_static is None:
+            self._ema_static = static_score
+            self._ema_media = media_score
+            self._ema_liveness = liveness_score
+            self._ema_temporal = temporal_score
+        else:
+            self._ema_static = a * static_score + (1.0 - a) * self._ema_static
+            self._ema_media = a * media_score + (1.0 - a) * self._ema_media
+            self._ema_liveness = a * liveness_score + (1.0 - a) * self._ema_liveness
+            self._ema_temporal = a * temporal_score + (1.0 - a) * self._ema_temporal
+        _static = float(np.clip(self._ema_static, 0.0, 1.0))
+        _media = float(np.clip(self._ema_media, 0.0, 1.0))
+        _liveness = float(np.clip(self._ema_liveness, 0.0, 1.0))
+        _temporal = float(np.clip(self._ema_temporal, 0.0, 1.0))
+
+        # ---- 低质量帧跳过：模糊/过暗/过曝 → 返回中性分，不累加 streak ----
+        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+        lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+        brightness = float(np.mean(gray))
+        if lap_var < 8 or brightness < 25 or brightness > 245:
+            return {
+                "score": 0.5,
+                "is_spoof": False,
+                "reasons": [],
+                "details": {
+                    "deepfake_score": round(deepfake, 3),
+                    "minifas_score": round(minifas, 3),
+                    "static_score": round(static_score, 3),
+                    "fsd_score": round(fsd_score, 3),
+                    "temporal_score": round(temporal_score, 3),
+                    "liveness_score": round(liveness_score, 3),
+                    "media_score": round(media_score, 3),
+                    "final_raw": 0.5,
+                    "final_smoothed": 0.5,
+                    "frames_cached": len(self._face_crop_history),
+                    "skipped_low_quality": True,
+                },
+            }
+
         # ---- Layer 5: 快速判定 ----
         reasons: list[str] = []
 
-        # 快速判定 1: 深度伪造模型强检测
+        # 快速判定 1: 深度伪造模型强检测（需连续 ≥5 帧确认，防单帧噪声误判）
         if deepfake < 0.15 and len(self._face_crop_history) > 3:
+            self._deepfake_low_streak += 1
+        else:
+            self._deepfake_low_streak = 0
+        if self._deepfake_low_streak >= 5:
             reasons.append("deepfake_fast_reject")
             return self._spoof_result(0.15, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.15, fsd_score)
 
-        # 快速判定 2: 三模型综合静态分过低（需连续 ≥3 帧确认，防单帧噪声误判）
-        if static_score < 0.25:
+        # 快速判定 2: 三模型综合静态分过低（需连续 ≥5 帧确认，EMA 平滑后比较）
+        if _static < 0.25:
             self._static_low_streak += 1
         else:
             self._static_low_streak = 0
-        if self._static_low_streak >= 3:
+        if self._static_low_streak >= 5:
             reasons.append("static_fast_reject")
             return self._spoof_result(0.20, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.20, fsd_score)
 
-        # 快速判定 3: 物理媒体伪影（需连续 ≥3 帧确认，防单帧噪声误判）
-        if media_score < 0.30:
+        # 快速判定 3: 物理媒体伪影（需连续 ≥5 帧确认，EMA 平滑后比较）
+        if _media < 0.30:
             self._media_low_streak += 1
         else:
             self._media_low_streak = 0
-        if self._media_low_streak >= 3:
+        if self._media_low_streak >= 5:
             reasons.append("media_fast_reject")
             return self._spoof_result(0.25, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.25, fsd_score)
 
-        # 快速判定 4: 长时间无眨眼（真人可能盯着屏幕，放宽到 60 帧 ~12s）
+        # 快速判定 4: 长时间无眨眼（需连续 ≥5 帧确认，防真人盯屏误判）
         if self._frames_no_blink > 50:
+            self._noblink_streak += 1
+        else:
+            self._noblink_streak = 0
+        if self._noblink_streak >= 5:
             reasons.append("prolonged_no_blink")
             return self._spoof_result(0.25, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.25, fsd_score)
 
-        # 快速判定 5: 活体关键拦截（需连续 ≥3 帧确认，防侧脸/暗光误判）
-        if liveness_score < 0.35:
+        # 快速判定 5: 活体关键拦截（需连续 ≥5 帧确认，EMA 平滑后比较）
+        if _liveness < 0.35:
             self._liveness_low_streak += 1
         else:
             self._liveness_low_streak = 0
-        if self._liveness_low_streak >= 3 and len(self._face_crop_history) > 10:
+        if self._liveness_low_streak >= 5 and len(self._face_crop_history) > 10:
             reasons.append("liveness_critical")
             return self._spoof_result(0.30, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.30, fsd_score)
 
-        # 快速判定 6: 时序异常
-        #   score < 0.10 → 零运动（静态照片），需 15 帧累积避免真人静坐误判
-        if temporal_score < 0.10 and len(self._face_crop_history) > 15:
+        # 快速判定 6: 时序异常（需连续 ≥5 帧确认，EMA 平滑后比较）
+        #   score < 0.10 → 零运动（静态照片），需 15 帧累积 + 连续 5 帧避免真人静坐误判
+        if _temporal < 0.10:
+            self._tzero_low_streak += 1
+        else:
+            self._tzero_low_streak = 0
+        if self._tzero_low_streak >= 5 and len(self._face_crop_history) > 15:
             reasons.append("temporal_zero_motion")
             return self._spoof_result(0.10, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.10, fsd_score)
-        if temporal_score < 0.20:
+        if _temporal < 0.20:
             self._temporal_low_streak += 1
         else:
             self._temporal_low_streak = 0
-        if self._temporal_low_streak >= 3 and len(self._face_crop_history) > 10:
+        if self._temporal_low_streak >= 5 and len(self._face_crop_history) > 10:
             reasons.append("temporal_critical")
             return self._spoof_result(0.30, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.30, fsd_score)
@@ -232,7 +295,7 @@ class LivenessDetector:
         # 快速判定 8: 刚性运动检测（手持照片/屏幕平移晃动）
         # 人脸区域内帧差空间方差极低 → 整张照片在平移而非真人局部形变
         # 附加条件：时序子特征也必须给出低分（< 0.45），避免真人微动误判
-        if self._rigid_motion_streak >= 5 and temporal_score < 0.45:
+        if self._rigid_motion_streak >= 5 and _temporal < 0.45:
             reasons.append("temporal_rigid_motion")
             return self._spoof_result(0.20, reasons, deepfake, minifas, static_score,
                                        temporal_score, liveness_score, media_score, 0.20, fsd_score)
@@ -370,8 +433,15 @@ class LivenessDetector:
         self._static_low_streak = 0
         self._liveness_low_streak = 0
         self._temporal_low_streak = 0
+        self._deepfake_low_streak = 0
+        self._tzero_low_streak = 0
+        self._noblink_streak = 0
         self._ear_history.clear()
         self._was_below_thresh = False
+        self._ema_static = None
+        self._ema_media = None
+        self._ema_liveness = None
+        self._ema_temporal = None
 
     # ==================================================================
     # Layer 1: 三模型静态检测
@@ -426,7 +496,7 @@ class LivenessDetector:
                 curr_r = cv2.resize(gray, (64, 64)).astype(np.float32)
                 mad = float(np.mean(np.abs(curr_r - prev_r)))
                 if mad < 2.0:  # avg pixel diff < 2/255 → 几乎完全静止（照片/死循环）
-                    return 0.10  # 极低分，直接触发 temporal_zero_motion 快拒
+                    return 0.25  # 不进 temporal_critical (<0.20)，真人静坐不会被误判
             except Exception:
                 pass  # resize 失败则跳过零运动检测，继续常规流程
 
