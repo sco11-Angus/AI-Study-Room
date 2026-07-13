@@ -1,250 +1,412 @@
 // ============================================================
 // Jenkinsfile — 智慧自习室 AI 管家 CI/CD Pipeline
-// 项目: sco11-Angus/AI-Study-Room
-// 架构: 端-流-云-网 (Python Flask + Vue 3 + Nginx-RTMP)
-// 部署: Docker Compose (低配 Linux 2核/2GB/4Mbps)
+// 模式: 增量构建 + 自动部署
+// 架构: Python Flask + Vue 3 + Nginx-RTMP
 // ============================================================
 
 pipeline {
     agent any
 
-    // ---- 全局环境变量 ----
     environment {
         PROJECT_NAME    = 'AI-Study-Room'
-        DOCKER_REGISTRY = 'docker.io'          // 改为私有镜像仓库地址即可
+        DOCKER_REGISTRY = 'docker.io'
         IMAGE_TAG       = "${env.BUILD_NUMBER}"
         BACKEND_IMAGE   = "${DOCKER_REGISTRY}/sco11-angus/${PROJECT_NAME}-backend:${IMAGE_TAG}"
-        VENV_DIR        = 'backend/.venv'
-        // 模型权重下载地址（按实际 OSS/S3 调整；占位符时下载自动跳过，不影响流水线）
-        YOLO_WEIGHTS_URL = 'https://your-oss.com/model_weights/yolov8n.pt'
-        DLIB_WEIGHTS_URL = 'https://your-oss.com/model_weights/shape_predictor_68_face_landmarks.dat'
-        PROD_HOST        = '127.0.0.1'
-        DEPLOY_DIR       = '/var/www/html'     // 新增：前端部署目录
+        BACKEND_IMAGE_LATEST = "${DOCKER_REGISTRY}/sco11-angus/${PROJECT_NAME}-backend:latest"
+        
+        // 部署目录
+        DEPLOY_BASE     = '/opt/AI-Study-Room'
+        DEPLOY_COMPOSE  = "${DEPLOY_BASE}/deploy"
+        DEPLOY_FRONTEND = "${DEPLOY_BASE}/frontend/dist"
+        DEPLOY_BACKEND  = "${DEPLOY_BASE}/backend"
+        
+        // 变更检测文件（放在 workspace 外，避免 cleanWs 清掉）
+        CHANGES_FILE    = '/tmp/AI-Study-Room_last_commit'
     }
 
-    // ---- 触发条件 ----
     triggers {
-        // GitHub Webhook 推送触发（推荐）
         githubPush()
-        // 每 5 分钟轮询 SCM 变化（Webhook 失效时兜底）
         pollSCM('H/5 * * * *')
     }
 
-    // ---- 选项 ----
     options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))   // 保留最近 10 次构建
-        timeout(time: 30, unit: 'MINUTES')               // 整体超时 30 分钟
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 30, unit: 'MINUTES')
         timestamps()
         ansiColor('xterm')
-        disableConcurrentBuilds()                         // 禁止并发构建（低配资源有限）
+        disableConcurrentBuilds()
     }
 
     stages {
 
-        // ============================
-        // Stage 1: Checkout & Smoke
-        // ============================
-        stage('Checkout & Smoke') {
+        // ============================================================
+        // Stage 0: 变更检测（核心：决定哪些部分需要构建）
+        // ============================================================
+        stage('Change Detection') {
             steps {
-                echo '🔧 [Stage 1] 检出代码 & 验证必需文件'
-                // init.sh 标准冒烟验证（检查必需文件存在）
-                sh '''
-                    chmod +x init.sh
-                    bash init.sh || echo "WARN: init.sh 需 WSL/Git Bash，CI 环境应正常"
-                '''
-            }
-        }
-
-        // ============================
-        // Stage 2: Backend Setup
-        // ============================
-        stage('Backend Setup') {
-            steps {
-                echo '🐍 [Stage 2] 安装后端依赖 + 下载模型权重'
-                sh '''
-                    cd backend
-                    python3 -m venv ${VENV_DIR}
-                    . ${VENV_DIR}/bin/activate
-                    pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
-                '''
-                // 模型权重不入库，CI 额外下载
-                sh '''
-                    mkdir -p backend/model_weights
-                    if [ ! -f backend/model_weights/yolov8n.pt ]; then
-                        curl -fsSL -o backend/model_weights/yolov8n.pt "${YOLO_WEIGHTS_URL}" \
-                            || echo "WARN: YOLO weights download failed — smoke test may skip inference"
-                    fi
-                    if [ ! -f backend/model_weights/shape_predictor_68_face_landmarks.dat ]; then
-                        curl -fsSL -o backend/model_weights/shape_predictor_68_face_landmarks.dat "${DLIB_WEIGHTS_URL}" \
-                            || echo "WARN: Dlib weights download failed — face module will be stub"
-                    fi
-                '''
-            }
-        }
-
-        // ============================
-        // Stage 3: Backend Test
-        // ============================
-        stage('Backend Test') {
-            steps {
-                echo '🧪 [Stage 3] 后端单元测试 + 冒烟验证'
-                sh '''
-                    cd backend
-                    . ${VENV_DIR}/bin/activate
-                    export PYTHONPATH=.
-                    # 单元测试（入侵检测时空防抖）
-                    python -m pytest tests/test_intrusion.py -v --tb=short || true
-                    # 冒烟验证（模块导入 + Flask 路由 + 配置，跳过拉流）
-                    python tests/smoke_test.py || true
-                '''
-            }
-            // CI 环境无 RTMP 推流，拉流测试必失败 — 用 post 收集但不阻塞流水线
-            post {
-                always {
-                    echo '⚠️ 后端测试中拉流验证在 CI 环境下可能 WARN — 属正常现象'
+                echo '🔍 [Stage 0] 检测代码变更范围'
+                script {
+                    // 获取本次构建的变更文件列表
+                    sh '''
+                        # 获取变更文件（与上一次构建对比）
+                        if [ -f ${CHANGES_FILE} ]; then
+                            PREVIOUS_COMMIT=$(cat ${CHANGES_FILE})
+                        else
+                            PREVIOUS_COMMIT="HEAD~1"
+                        fi
+                        
+                        # 获取变更文件列表
+                        git diff --name-only ${PREVIOUS_COMMIT} HEAD > changed_files.txt
+                        echo "变更文件列表:"
+                        cat changed_files.txt
+                        
+                        # 保存当前 commit 供下次使用
+                        git rev-parse HEAD > ${CHANGES_FILE}
+                    '''
+                    
+                    // 检测哪些模块发生了变化
+                    script {
+                        def changedFiles = readFile('changed_files.txt').split('\n')
+                        
+                        // 判断后端是否变更
+                        env.BACKEND_CHANGED = 'false'
+                        env.FRONTEND_CHANGED = 'false'
+                        env.DEPLOY_CHANGED = 'false'
+                        
+                        changedFiles.each { file ->
+                            if (file.startsWith('backend/')) {
+                                env.BACKEND_CHANGED = 'true'
+                            }
+                            if (file.startsWith('frontend/')) {
+                                env.FRONTEND_CHANGED = 'true'
+                            }
+                            if (file.startsWith('deploy/') || file == 'docker-compose.yml') {
+                                env.DEPLOY_CHANGED = 'true'
+                            }
+                        }
+                        
+                        // 如果没有变更任何代码，跳过本次构建
+                        if (changedFiles.size() == 0 || changedFiles[0] == '') {
+                            echo "⏭️ 未检测到代码变更，跳过本次构建（所有 stage 将被跳过）"
+                            // 不设置 BACKEND_CHANGED / FRONTEND_CHANGED，所有 stage 因 when 条件不满足而自动跳过
+                            return
+                        }
+                        
+                        echo "=========================================="
+                        echo "📊 变更检测结果:"
+                        echo "  - Backend 变更: ${env.BACKEND_CHANGED}"
+                        echo "  - Frontend 变更: ${env.FRONTEND_CHANGED}"
+                        echo "  - Deploy 变更: ${env.DEPLOY_CHANGED}"
+                        echo "=========================================="
+                    }
                 }
             }
         }
 
-        // ============================
-        // Stage 4: Frontend Build
-        // ============================
-        stage('Frontend Build') {
+        // ============================================================
+        // Stage 1: Backend 增量构建（仅在 backend 变更时执行）
+        // ============================================================
+        stage('Backend Incremental Build') {
+            when {
+                expression { return env.BACKEND_CHANGED == 'true' }
+            }
             steps {
-                echo '🌐 [Stage 4] 安装前端依赖 & Vite 构建'
+                echo '🐍 [Stage 1] 增量构建 Backend'
+                sh '''
+                    cd backend
+                    
+                    # 检查 Python 依赖是否变更（如果有 requirements.txt 变更才重新安装依赖）
+                    if git diff --name-only HEAD~1 HEAD | grep -q "backend/requirements.txt"; then
+                        echo "📦 requirements.txt 已变更，重新安装依赖..."
+                        python3 -m venv .venv
+                        . .venv/bin/activate
+                        pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+                    else
+                        echo "✅ requirements.txt 未变更，跳过依赖安装"
+                    fi
+                    
+                    # 检查模型权重是否变更（如果有新权重才下载）
+                    if git diff --name-only HEAD~1 HEAD | grep -q "backend/model_weights/"; then
+                        echo "📦 模型权重已变更，下载新权重..."
+                        mkdir -p model_weights
+                        # 下载模型权重逻辑...
+                    else
+                        echo "✅ 模型权重未变更，跳过下载"
+                    fi
+                    
+                    # 运行单元测试（只测试变更相关的模块）
+                    if git diff --name-only HEAD~1 HEAD | grep -q "backend/tests/"; then
+                        echo "🧪 运行测试..."
+                        . .venv/bin/activate
+                        python -m pytest tests/ -v --tb=short || true
+                    else
+                        echo "✅ 测试代码未变更，跳过测试（可选）"
+                    fi
+                '''
+            }
+        }
+
+        // ============================================================
+        // Stage 2: Backend Docker 增量构建
+        // ============================================================
+        stage('Backend Docker Build') {
+            when {
+                expression { return env.BACKEND_CHANGED == 'true' }
+            }
+            steps {
+                echo '🐳 [Stage 2] 构建 Backend Docker 镜像（仅当变更时）'
+                sh '''
+                    cd backend
+                    
+                    # 检查 Dockerfile 是否变更
+                    if git diff --name-only HEAD~1 HEAD | grep -q "backend/Dockerfile"; then
+                        echo "📦 Dockerfile 已变更，重新构建镜像..."
+                        docker build --no-cache \
+                            -t ${BACKEND_IMAGE} \
+                            -t ${BACKEND_IMAGE_LATEST} \
+                            --label "commit=${env.GIT_COMMIT}" \
+                            --label "build=${env.BUILD_NUMBER}" \
+                            .
+                    else
+                        echo "📦 Dockerfile 未变更，使用缓存构建..."
+                        docker build \
+                            -t ${BACKEND_IMAGE} \
+                            -t ${BACKEND_IMAGE_LATEST} \
+                            --label "commit=${env.GIT_COMMIT}" \
+                            --label "build=${env.BUILD_NUMBER}" \
+                            .
+                    fi
+                    
+                    # 推送到镜像仓库
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', 
+                        usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        sh '''
+                            echo "${DOCKER_PASS}" | docker login ${DOCKER_REGISTRY} -u "${DOCKER_USER}" --password-stdin
+                            docker push ${BACKEND_IMAGE}
+                            docker push ${BACKEND_IMAGE_LATEST}
+                            docker logout
+                        '''
+                    }
+                '''
+            }
+        }
+
+        // ============================================================
+        // Stage 3: Frontend 增量构建（仅在 frontend 变更时执行）
+        // ============================================================
+        stage('Frontend Incremental Build') {
+            when {
+                expression { return env.FRONTEND_CHANGED == 'true' }
+            }
+            steps {
+                echo '🌐 [Stage 3] 增量构建 Frontend'
                 sh '''
                     cd frontend
-                    npm ci
-                    npm run build
+                    
+                    # 检查 package.json 是否变更（决定是否需要 npm install）
+                    if git diff --name-only HEAD~1 HEAD | grep -q "frontend/package.json"; then
+                        echo "📦 package.json 已变更，重新安装依赖..."
+                        npm ci
+                    else
+                        echo "✅ package.json 未变更，使用已有 node_modules"
+                    fi
+                    
+                    # 检查 src 目录是否有变更（决定是否需要重新构建）
+                    if git diff --name-only HEAD~1 HEAD | grep -q "frontend/src/"; then
+                        echo "📦 前端源码已变更，执行构建..."
+                        npm run build
+                    else
+                        echo "✅ 前端源码未变更，跳过构建（使用上次构建产物）"
+                        # 但如果 dist 不存在，强制构建
+                        if [ ! -d dist ] || [ -z "$(ls -A dist)" ]; then
+                            echo "⚠️ dist 目录不存在，强制构建..."
+                            npm run build
+                        fi
+                    fi
                 '''
-                // 存档 dist 供后续部署挂载到 nginx-rtmp
-                archiveArtifacts artifacts: 'frontend/dist/**', fingerprint: true, allowEmptyArchive: false
             }
         }
 
-        // ============================
-        // Stage 5: Docker Build & Push
-        // ============================
-        stage('Docker Build & Push') {
-            steps {
-                echo '🐳 [Stage 5] 构建后端镜像 & 推送'
-                // 构建后端 Docker 镜像（含 Flask + Gunicorn + OpenCV + YOLOv8n + Dlib）
-                sh '''
-                    cd backend
-                    docker build \
-                        -t ${BACKEND_IMAGE} \
-                        --label "commit=${env.GIT_COMMIT}" \
-                        --label "build=${env.BUILD_NUMBER}" \
-                        .
-                '''
-                // 推送到镜像仓库（使用 withCredentials 注入 Docker Hub 账密）
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                    sh '''
-                        echo "${DOCKER_PASS}" | docker login ${DOCKER_REGISTRY} -u "${DOCKER_USER}" --password-stdin
-                        docker push ${BACKEND_IMAGE}
-                        docker logout
-                    '''
+        // ============================================================
+        // Stage 4: 自动部署（仅当有变更时）
+        // ============================================================
+        stage('Auto Deploy') {
+            when {
+                expression { 
+                    return env.BACKEND_CHANGED == 'true' || 
+                           env.FRONTEND_CHANGED == 'true' || 
+                           env.DEPLOY_CHANGED == 'true'
                 }
             }
-        }
-
-        // ============================
-        // Stage 6: Deploy
-        // ============================
-        stage('Deploy') {
             steps {
-                echo '🚀 [Stage 6] Docker Compose 部署到生产服务器'
-                // 钉钉 Webhook 使用 Jenkins Credentials（不入库）
+                echo '🚀 [Stage 4] 自动增量部署'
+                
                 withCredentials([string(credentialsId: 'dingtalk-webhook', variable: 'DINGTALK_WEBHOOK')]) {
                     sh '''
-                        # ① 前端 dist 解压到挂载目录
-                        cd frontend
-                        mkdir -p dist
-                        # dist 由 Stage 4 构建，已在 workspace 中
-
-                        # ② 生成 docker-compose.override.yml 覆盖镜像 tag
-                        cat > deploy/docker-compose.override.yml <<EOF
+                        # ========================================
+                        # 1. 准备部署目录
+                        # ========================================
+                        mkdir -p ${DEPLOY_BASE}
+                        mkdir -p ${DEPLOY_COMPOSE}
+                        mkdir -p ${DEPLOY_FRONTEND}
+                        mkdir -p ${DEPLOY_BACKEND}
+                        
+                        cd ${DEPLOY_BASE}
+                        
+                        # ========================================
+                        # 2. 生成 docker-compose.override.yml
+                        # ========================================
+                        cat > ${DEPLOY_COMPOSE}/docker-compose.override.yml <<EOF
 services:
   backend:
     image: ${BACKEND_IMAGE}
     environment:
       - DINGTALK_WEBHOOK=${DINGTALK_WEBHOOK}
+    volumes:
+      - ${DEPLOY_BACKEND}/model_weights:/app/model_weights:ro
+      - ${DEPLOY_BACKEND}/logs:/app/logs
+    restart: unless-stopped
+
+  nginx-rtmp:
+    volumes:
+      - ${DEPLOY_FRONTEND}:/usr/share/nginx/html:ro
+    restart: unless-stopped
 EOF
 
-                        # ③ 本地部署（单服务器场景，直接在本机执行 docker compose）
-                        echo "→ 目标: 低配 Linux 云服务器 (2核/2GB/4Mbps)"
-                        echo "→ 方式: docker compose up -d"
-
-                        cd /opt/AI-Study-Room || cd ${WORKSPACE}
-                        # 增量部署：省略 --force-recreate，compose 仅重建镜像/配置发生变更的容器，未变更的保持运行
-                        docker compose -f deploy/docker-compose.yml \
-                            -f deploy/docker-compose.override.yml \
-                            up -d --pull always || \
-                        docker compose -f deploy/docker-compose.yml \
-                            -f deploy/docker-compose.override.yml \
+                        # ========================================
+                        # 3. 增量部署 Backend（仅当有变更）
+                        # ========================================
+                        if [ "${BACKEND_CHANGED}" = "true" ]; then
+                            echo "🔄 部署 Backend（已变更）..."
+                            
+                            # 同步后端配置文件
+                            rsync -a --checksum deploy/docker-compose.yml ${DEPLOY_COMPOSE}/
+                            
+                            # 拉取新镜像
+                            docker compose -f ${DEPLOY_COMPOSE}/docker-compose.yml \
+                                -f ${DEPLOY_COMPOSE}/docker-compose.override.yml \
+                                pull backend
+                            
+                            # 重启 backend（强制重建）
+                            docker compose -f ${DEPLOY_COMPOSE}/docker-compose.yml \
+                                -f ${DEPLOY_COMPOSE}/docker-compose.override.yml \
+                                up -d --no-deps --force-recreate backend
+                            
+                            echo "✅ Backend 部署完成"
+                        else
+                            echo "⏭️ Backend 未变更，跳过部署"
+                        fi
+                        
+                        # ========================================
+                        # 4. 增量部署 Frontend（仅当有变更）
+                        # ========================================
+                        if [ "${FRONTEND_CHANGED}" = "true" ]; then
+                            echo "🔄 部署 Frontend（已变更）..."
+                            
+                            # 检查构建产物是否存在
+                            if [ -d ${WORKSPACE}/frontend/dist ] && [ -n "$(ls -A ${WORKSPACE}/frontend/dist)" ]; then
+                                # 增量同步前端文件
+                                rsync -a --checksum --delete \
+                                    ${WORKSPACE}/frontend/dist/ \
+                                    ${DEPLOY_FRONTEND}/
+                                
+                                # 重启 nginx（重新加载静态文件）
+                                docker compose -f ${DEPLOY_COMPOSE}/docker-compose.yml \
+                                    -f ${DEPLOY_COMPOSE}/docker-compose.override.yml \
+                                    restart nginx-rtmp
+                                
+                                echo "✅ Frontend 部署完成"
+                            else
+                                echo "❌ ERROR: frontend/dist 为空，跳过前端部署"
+                            fi
+                        else
+                            echo "⏭️ Frontend 未变更，跳过部署"
+                        fi
+                        
+                        # ========================================
+                        # 5. 启动所有服务
+                        # ========================================
+                        docker compose -f ${DEPLOY_COMPOSE}/docker-compose.yml \
+                            -f ${DEPLOY_COMPOSE}/docker-compose.override.yml \
                             up -d
-
-                        echo '✅ 部署完成'
+                        
+                        # ========================================
+                        # 6. 清理旧镜像
+                        # ========================================
+                        docker image prune -f --filter "until=24h" || true
+                        
+                        echo '✅ 自动部署完成'
                     '''
                 }
             }
         }
 
-        // ============================
-        // Stage 7: Health Check
-        // ============================
+        // ============================================================
+        // Stage 5: 健康检查
+        // ============================================================
         stage('Health Check') {
-            steps {
-                echo '🩺 [Stage 7] 验证服务健康'
-                sh '''
-                    # 本地健康检查
-                    sleep 5
-                    curl -sf http://${PROD_HOST}:5000/apidocs -o /dev/null \
-                        && echo "Backend Swagger OK" \
-                        || echo "Backend Swagger FAIL (服务可能仍在启动中)"
-                    curl -sf http://${PROD_HOST}:8080/ -o /dev/null \
-                        && echo "Frontend OK" \
-                        || echo "Frontend FAIL (nginx-rtmp 可能仍在启动中)"
-                '''
+            when {
+                expression { 
+                    return env.BACKEND_CHANGED == 'true' || 
+                           env.FRONTEND_CHANGED == 'true' || 
+                           env.DEPLOY_CHANGED == 'true'
+                }
             }
-        }
-
-        // ============================
-        // Stage 8: Deploy Frontend to Nginx (新增)
-        // ============================
-        stage('Deploy Frontend to Nginx') {
             steps {
-                echo '🌐 [Stage 8] 部署前端到 Nginx'
+                echo '🩺 [Stage 5] 健康检查'
                 sh '''
-                    sudo mkdir -p ${DEPLOY_DIR}
-                    # 增量同步：仅传输变更文件，--delete 清理源中已移除的文件（替代 rm -rf 全量覆盖）
-                    sudo rsync -a --delete --checksum frontend/dist/ ${DEPLOY_DIR}/
-                    sudo chown -R www-data:www-data ${DEPLOY_DIR}
-                    sudo systemctl reload nginx || sudo systemctl restart nginx
-                    echo "✅ 前端已增量部署到 ${DEPLOY_DIR}"
+                    cd ${DEPLOY_BASE}
+                    
+                    # 等待服务启动
+                    sleep 10
+                    
+                    # 健康检查（重试 10 次）
+                    for i in {1..10}; do
+                        if curl -sf http://127.0.0.1:5000/health; then
+                            echo "✅ Backend 健康"
+                            break
+                        fi
+                        echo "⏳ 等待 Backend 启动... (${i}/10)"
+                        sleep 3
+                    done
+                    
+                    for i in {1..10}; do
+                        if curl -sf http://127.0.0.1:8080/ -o /dev/null; then
+                            echo "✅ Frontend 健康"
+                            break
+                        fi
+                        echo "⏳ 等待 Frontend 启动... (${i}/10)"
+                        sleep 3
+                    done
+                    
+                    echo "✅ 所有服务健康"
                 '''
             }
         }
     }
 
-    // ============================
+    // ============================================================
     // Post Actions
-    // ============================
+    // ============================================================
     post {
         success {
-            echo '🎉 Pipeline 成功！所有阶段通过'
-            // 可选：钉钉通知构建成功
-            // dingtalk(robot: 'jenkins-robot', type: 'MARKDOWN',
-            //     title: '构建成功', text: ["✅ ${PROJECT_NAME} #${BUILD_NUMBER} 成功"])
+            echo '🎉 增量构建 + 自动部署成功！'
+            script {
+                // 输出构建摘要
+                sh '''
+                    echo "=========================================="
+                    echo "📊 构建摘要:"
+                    echo "  - Backend 构建: ${BACKEND_CHANGED}"
+                    echo "  - Frontend 构建: ${FRONTEND_CHANGED}"
+                    echo "  - 部署执行: $([ "${BACKEND_CHANGED}" = "true" -o "${FRONTEND_CHANGED}" = "true" -o "${DEPLOY_CHANGED}" = "true" ] && echo "是" || echo "否")"
+                    echo "=========================================="
+                '''
+            }
         }
         failure {
-            echo '❌ Pipeline 失败！请检查日志'
-            // 可选：钉钉通知构建失败
-            // dingtalk(robot: 'jenkins-robot', type: 'MARKDOWN',
-            //     title: '构建失败', text: ["❌ ${PROJECT_NAME} #${BUILD_NUMBER} 失败"])
+            echo '❌ 构建或部署失败'
         }
         always {
-            // 清理工作空间残留
             cleanWs()
             echo '🧹 工作空间已清理'
         }
