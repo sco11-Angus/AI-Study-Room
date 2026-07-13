@@ -1,9 +1,0 @@
-- [x] FaceDetector 继承 Detector，正确实现 setup() / detect()
-- [x] detect() 对无脸帧返回空列表，不做无效推理
-- [x] detect() 对匹配帧返回 AlarmEvent(type="face_recognition")，extra 含 face_match 和 name
-- [x] `/ws/face_recognition` WebSocket 端点可连接，能推送 JSON 消息
-- [x] AlarmService.raise_alarm() 对 face_recognition 类型事件写入广播队列
-- [x] 前端 Dashboard 连接 `/ws/face_recognition` 并展示识别结果
-- [x] 会员匹配显示"欢迎你, XXX"，陌生人显示"陌生人"
-- [x] run.py 启动时注册 FaceDetector 到 InferenceEngine
-- [x] E2E 测试覆盖会员匹配、陌生人、无人脸三种场景且全部通过

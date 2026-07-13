@@ -1,7 +1,0 @@
-- [x] FFmpeg `threads;1` 单线程解码参数已添加
-- [x] FFmpeg `skip_loop_filter;all` 跳过环路滤波参数已添加
-- [x] 解码循环中有 `decode_dropped` 计数日志
-- [x] WebSocket 端点 `wait_frame()` 超时后重试最多 3 次
-- [x] 重试期间不发送 WS 消息
-- [x] latency_test 帧率 ≥ 20 FPS，错误数 = 0
-- [x] 终端 H.264 错误数显著减少

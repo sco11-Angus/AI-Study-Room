@@ -1,8 +1,0 @@
-- [x] `CameraStream.ring_buffer` 存储 JPEG bytes 而非 numpy 数组，有线程锁保护
-- [x] WebSocket `/ws/video_feed/<camera_id>` 端点可正常连接和推送帧
-- [x] WebSocket 推送频率接近源帧率（~30fps），无阻塞
-- [x] 前端 `<canvas>` 能正常渲染 WebSocket 推送的 JPEG 帧
-- [x] 断流时前端显示"等待推流"提示，恢复后自动恢复画面
-- [x] 多路摄像头各 WebSocket 连接互不干扰
-- [x] 原 MJPEG HTTP 路由 `/video_feed/<stream_id>` 已移除
-- [x] 旧 `<img>` + MJPEG 相关代码已从 `VideoStreamViewer.vue` 中清除
