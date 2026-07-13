@@ -41,6 +41,30 @@
       "blockers": []
     },
     {
+      "id": "openspec-standardization",
+      "name": "Standardize OpenSpec module workflow",
+      "priority": 1,
+      "status": "completed",
+      "description": "Make OpenSpec the required, repository-local workflow for every new module and cross-module change.",
+      "required_validation": [
+        "npm install",
+        "npm run spec:validate",
+        "npm run spec:list",
+        "npm run spec:status -- --change intrusion-detect-enhance",
+        ".\\init.cmd"
+      ],
+      "evidence": [
+        "Pinned @fission-ai/openspec 1.4.1 in the root tooling package and added repository-local npm commands for list, validate, status, new change, and archive.",
+        "Restored OpenSpec project context and capability index, documented legacy proposals as read-only references, and retained intrusion-detect-enhance as the active change for the complete seat-reservation intrusion work.",
+        "Expanded all six baseline capability purposes so npm run spec:validate passed with 7 items and 0 failures in strict mode.",
+        "Updated AGENTS.md, README.md, init.cmd, init.ps1, and init.sh so strict OpenSpec validation is a required startup gate and PowerShell uses the local npm-installed CLI instead of the policy-blocked global openspec.ps1.",
+        "On 2026-07-13, npm run spec:list showed intrusion-detect-enhance in progress and npm run spec:status reported all 4 required artifacts complete."
+      ],
+      "blockers": [
+        "This Windows host exposes the WSL bash shim but has no usable Git Bash path, so init.sh was updated by parity with init.ps1 but not executed locally; init.cmd passed."
+      ]
+    },
+    {
       "id": "jenkins-ci-stabilization",
       "name": "Stabilize Jenkins pipeline configuration",
       "priority": 2,

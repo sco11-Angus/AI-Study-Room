@@ -75,6 +75,26 @@
 | `feature_list.json` | 功能状态事实来源 |
 | `init.sh` | 标准 smoke test 入口 |
 
+## OpenSpec 工作流
+
+新增模块或跨模块功能必须先创建 OpenSpec change，再编写代码。首次在仓库根目录安装工具依赖：
+
+```powershell
+npm install
+```
+
+常用命令：
+
+```powershell
+npm run spec:list
+npm run spec:new -- <verb-noun-change-id>
+npm run spec:status -- --change <change-id>
+npm run spec:validate
+npm run spec:archive -- <change-id> --yes
+```
+
+每个 change 必须完成 `proposal.md`、`design.md`、`tasks.md` 和受影响能力的 delta spec；`npm run spec:validate` 通过前不得开始实现。`openspec/proposals/` 仅用于历史参考，新功能统一放在 `openspec/changes/`。
+
 ## 目录结构
 
 ```
@@ -135,6 +155,8 @@ Windows PowerShell:
 ```powershell
 .\init.cmd
 ```
+
+`init.cmd`、`init.ps1` 和 `init.sh` 会先执行 OpenSpec 严格校验；首次运行前请先在仓库根目录执行 `npm install`。
 
 PowerShell implementation script, if your execution policy allows it:
 

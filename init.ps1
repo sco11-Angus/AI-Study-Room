@@ -1,5 +1,6 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+Set-Location -LiteralPath $PSScriptRoot
 
 $requiredFiles = @(
     "AGENTS.md",
@@ -20,6 +21,18 @@ foreach ($file in $requiredFiles) {
     }
 }
 
+$openSpecCmd = Join-Path $PSScriptRoot "node_modules/.bin/openspec.cmd"
+if (-not (Test-Path -LiteralPath $openSpecCmd -PathType Leaf)) {
+    Write-Error "OpenSpec is not installed. Run 'npm install' from the repository root."
+    exit 1
+}
+
+& $openSpecCmd validate --all --strict
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "OpenSpec strict validation failed. Fix the specifications before continuing."
+    exit 1
+}
+
 $mdCount = @(
     Get-ChildItem -LiteralPath "openspec", "docs" -Recurse -Filter "*.md" -File
 ).Count
@@ -29,4 +42,4 @@ if ($mdCount -lt 8) {
     exit 1
 }
 
-Write-Output "Smoke test passed: required files present; markdown docs found."
+Write-Output "Smoke test passed: OpenSpec validation and required project files passed."

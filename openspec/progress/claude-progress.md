@@ -621,3 +621,21 @@
 - Remaining risks:
   - The running backend process used for the real server test was already active before this code change. Restart the backend to load the code-level recorder fixes for future alarms.
   - Full pytest remains blocked in the available local environments: WSL lacks pytest, `.venv` lacks Flask/pytest, and Anaconda lacks project dependencies such as `flask_cors`/`cv2`.
+
+## Session 2026-07-13 OpenSpec Standardization
+
+- Goal: make OpenSpec the required, reproducible workflow for every future module and cross-module change.
+- Completed:
+  - Added root tooling scripts and pinned `@fission-ai/openspec@1.4.1` so contributors use `npm run` instead of the PowerShell-policy-blocked global `openspec.ps1`.
+  - Restored `openspec/project.md` and `openspec/specs/spec.md`; capability contracts remain under `openspec/specs/<capability>/spec.md`.
+  - Added the active-change workflow to `AGENTS.md`, `README.md`, and all standard startup scripts. New work must be created in `openspec/changes/<change-id>/`, strictly validated before implementation, and archived only after evidence is recorded.
+  - Marked `openspec/proposals/` as historical reference material. `intrusion-detect-enhance` remains active and is the sole OpenSpec change for the complete seat-reservation intrusion enhancement.
+  - Expanded the six baseline capability specs so strict validation passes.
+- Validation:
+  - `npm install` completed successfully.
+  - `npm run spec:validate` passed: 7 items, 0 failures.
+  - `npm run spec:list` showed `intrusion-detect-enhance` as the active in-progress change.
+  - `npm run spec:status -- --change intrusion-detect-enhance` reported all 4 required artifacts complete.
+  - `./init.cmd` passed after running OpenSpec strict validation and the existing markdown smoke checks.
+- Remaining risk:
+  - This Windows host only exposes the WSL bash shim, so `init.sh` could not be executed locally. It mirrors the validated PowerShell gate and should be exercised on a shell-capable CI/Linux environment.

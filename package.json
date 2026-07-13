@@ -1,0 +1,16 @@
+{
+  "name": "ai-study-room-tooling",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Repository tooling for the AI Study Room project.",
+  "scripts": {
+    "spec:list": "openspec list --json",
+    "spec:validate": "openspec validate --all --strict",
+    "spec:status": "openspec status",
+    "spec:new": "openspec new change",
+    "spec:archive": "openspec archive"
+  },
+  "devDependencies": {
+    "@fission-ai/openspec": "1.4.1"
+  }
+}
