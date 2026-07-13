@@ -2,7 +2,8 @@
 // Jenkinsfile — 智慧自习室 AI 管家 CI/CD Pipeline
 // 模式: 增量构建 + 自动部署（基于上次成功构建对比）
 // 架构: Python Flask + Vue 3 + Nginx-RTMP
-// 基准: 第12次成功构建
+// 分支: frontend
+// 超时: 20分钟
 // ============================================================
 
 pipeline {
@@ -11,7 +12,7 @@ pipeline {
     environment {
         PROJECT_NAME    = 'AI-Study-Room'
         DOCKER_REGISTRY = 'docker.io'
-        BRANCH_NAME     = 'main'
+        BRANCH_NAME     = 'frontend'  // ✅ 改为 frontend
         IMAGE_TAG       = "${env.BUILD_NUMBER}"
         BACKEND_IMAGE   = "${DOCKER_REGISTRY}/sco11-angus/${PROJECT_NAME}-backend:${IMAGE_TAG}"
         BACKEND_IMAGE_LATEST = "${DOCKER_REGISTRY}/sco11-angus/${PROJECT_NAME}-backend:latest"
@@ -35,7 +36,7 @@ pipeline {
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')  // ✅ 改为 20 分钟
         timestamps()
         ansiColor('xterm')
         disableConcurrentBuilds()
@@ -501,6 +502,7 @@ EOF
                 sh '''
                     echo "=========================================="
                     echo "📊 构建摘要:"
+                    echo "  - 分支: ${BRANCH_NAME}"
                     echo "  - Backend 构建: ${BACKEND_CHANGED}"
                     echo "  - Frontend 构建: ${FRONTEND_CHANGED}"
                     echo "  - 部署执行: $([ "${BACKEND_CHANGED}" = "true" -o "${FRONTEND_CHANGED}" = "true" -o "${DEPLOY_CHANGED}" = "true" ] && echo "是" || echo "否")"
