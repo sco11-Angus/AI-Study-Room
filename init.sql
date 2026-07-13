@@ -7,25 +7,25 @@ USE study_room;
 -- 表4-1 camera 摄像头
 CREATE TABLE IF NOT EXISTS camera (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '摄像头ID',
-    name VARCHAR(128) NOT NULL COMMENT '名称/安装位置',
-    stream_url VARCHAR(256) NOT NULL COMMENT 'RTMP拉流地址',
-    resolution VARCHAR(32) NOT NULL COMMENT '原始分辨率，如1920x1080，用于坐标映射',
-    status VARCHAR(32) NOT NULL DEFAULT 'offline' COMMENT 'online/offline',
+    name VARCHAR(128) NULL COMMENT '名称/安装位置',
+    stream_url VARCHAR(256) NULL COMMENT 'RTMP拉流地址',
+    resolution VARCHAR(32) NULL COMMENT '原始分辨率，如1920x1080，用于坐标映射',
+    status TEXT NULL COMMENT 'online/offline',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='摄像头表';
 
 -- 表4-3 app_user 自习用户
 CREATE TABLE IF NOT EXISTS app_user (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '用户ID',
-    nickname VARCHAR(64) NULL COMMENT '昵称',
-    device_token VARCHAR(256) NULL COMMENT '弱提醒推送目标',
+    nickname TEXT NULL COMMENT '昵称',
+    device_token TEXT NULL COMMENT '弱提醒推送目标',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='自习用户表';
 
 -- 表4-7 guard 安全员
 CREATE TABLE IF NOT EXISTS guard (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '安全员ID',
-    name VARCHAR(128) NOT NULL COMMENT '姓名',
+    name VARCHAR(128) NULL COMMENT '姓名',
     dingtalk_id VARCHAR(128) NULL COMMENT '钉钉用户标识',
     role VARCHAR(32) NOT NULL DEFAULT 'primary' COMMENT 'primary/leader',
     priority INT NOT NULL DEFAULT 0 COMMENT '升级顺序，越小越先通知',
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS guard (
 -- 表4-6 member 人员+人脸特征
 CREATE TABLE IF NOT EXISTS member (
     member_id INT PRIMARY KEY AUTO_INCREMENT COMMENT '会员ID',
-    name VARCHAR(128) NOT NULL COMMENT '姓名',
+    name TEXT NULL COMMENT '姓名',
     feature TEXT NULL COMMENT '128维人脸特征向量',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='人员人脸会员表';
@@ -43,13 +43,13 @@ CREATE TABLE IF NOT EXISTS member (
 -- 表4-2 region 防区/座位
 CREATE TABLE IF NOT EXISTS region (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '防区ID',
-    camera_id INT NOT NULL COMMENT '所属摄像头，外键camera.id',
+    camera_id INT NULL COMMENT '所属摄像头，外键camera.id',
     user_id INT NULL COMMENT '所属用户，外键app_user.id',
-    name VARCHAR(128) NOT NULL COMMENT '防区/座位名',
-    type VARCHAR(32) NOT NULL COMMENT 'danger_zone/seat',
-    polygon TEXT NOT NULL COMMENT '顶点数组(原始分辨率像素)',
-    x_distance INT NOT NULL DEFAULT 50 COMMENT '安全距离阈值(像素)',
-    y_stay_time INT NOT NULL DEFAULT 10 COMMENT '允许危险停留时间(秒)',
+    name VARCHAR(128) NULL COMMENT '防区/座位名',
+    type TEXT NULL COMMENT 'danger_zone/seat',
+    polygon TEXT NULL COMMENT '顶点数组(原始分辨率像素)',
+    x_distance INT NULL COMMENT '安全距离阈值(像素)',
+    y_stay_time INT NULL COMMENT '允许危险停留时间(秒)',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     INDEX idx_region_camera (camera_id),
     INDEX idx_region_user (user_id),
@@ -62,12 +62,14 @@ CREATE TABLE IF NOT EXISTS seat_status (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '状态ID',
     user_id INT NULL COMMENT '用户，外键app_user.id',
     region_id INT NULL COMMENT '座位，外键region.id',
-    status VARCHAR(32) NOT NULL COMMENT 'idle/studying/resting',
+    guard_id INT NULL COMMENT '安全员，外键guard.id',
+    status TEXT NULL COMMENT 'idle/studying/resting',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '状态变更时间',
     INDEX idx_seat_region (region_id),
     INDEX idx_seat_user (user_id),
     FOREIGN KEY (user_id) REFERENCES app_user(id) ON DELETE SET NULL,
-    FOREIGN KEY (region_id) REFERENCES region(id) ON DELETE CASCADE
+    FOREIGN KEY (region_id) REFERENCES region(id) ON DELETE CASCADE,
+    FOREIGN KEY (guard_id) REFERENCES guard(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='座位自习状态表';
 
 -- 表4-5 alarm_event 告警事件
@@ -106,3 +108,12 @@ CREATE TABLE IF NOT EXISTS notification_log (
     FOREIGN KEY (alarm_id) REFERENCES alarm_event(id) ON DELETE CASCADE,
     FOREIGN KEY (guard_id) REFERENCES guard(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='钉钉通知记录表';
+
+-- 初始化默认数据
+INSERT IGNORE INTO camera (id, name, stream_url, resolution, status) VALUES
+(1, '默认摄像头', '', '', 'offline'),
+(5, '云服务器摄像头', 'rtmp://49.233.71.82:9090/live/test', '1280x720', 'online');
+
+INSERT IGNORE INTO guard (id, name, role, priority) VALUES
+(1, '默认安全员', 'primary', 0),
+(2, '主管', 'leader', 1);
