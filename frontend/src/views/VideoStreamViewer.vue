@@ -26,8 +26,9 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from "vue";
+import { getSelectedCameraId, setSelectedCameraId } from "../utils/camera";
 
-const cameraId = ref(0);
+const cameraId = ref(getSelectedCameraId());
 const imageEl = ref(null);
 const statusText = ref("");
 const streaming = ref(false);
@@ -132,7 +133,8 @@ const reconnect = () => {
   connect();
 };
 
-watch(cameraId, () => {
+watch(cameraId, (selectedCameraId) => {
+  setSelectedCameraId(selectedCameraId);
   reconnect();
 });
 

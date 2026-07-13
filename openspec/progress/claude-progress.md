@@ -1,5 +1,12 @@
 # Progress
 
+### Session 2026-07-13 Reserved Seat Live-Debug
+
+- Verified the live SQLite database `backend/local_e2e.db` contains the active binding `region_id=1 -> member_id=3` for camera 6.
+- Fixed normalized intrusion polygons to scale against each actual decoded frame, preventing an OBS 1280x720 stream from being judged against the old fixed 640x480 coordinate space.
+- Added a focused 1280x720 reserved-seat regression case; `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_seat_reservations.py -q` passed with 14 tests.
+- Remaining acceptance evidence: restart the backend using `scripts/start-obs-cam6.ps1`, set the seat dwell time to a short test value, and capture a real `occupy` alarm for a non-reserved person.
+
 ## Session 2026-07-06
 
 - Goal: initialize the local project and push markdown documents to `sco11-Angus/AI-Study-Room`.

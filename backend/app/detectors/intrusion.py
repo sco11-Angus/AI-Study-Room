@@ -28,24 +28,49 @@ def denormalize_polygon(polygon: list, width: int, height: int) -> list:
     """
     if not polygon:
         return polygon
-    is_normalized = all(
+    if not is_normalized_polygon(polygon):
+        return polygon
+    return [[pt[0] * width, pt[1] * height] for pt in polygon]
+
+
+def is_normalized_polygon(polygon: list) -> bool:
+    return bool(polygon) and all(
         isinstance(pt, (list, tuple)) and len(pt) == 2
         and abs(pt[0]) <= 1.0 and abs(pt[1]) <= 1.0
         for pt in polygon
     )
-    if not is_normalized:
-        return polygon
-    return [[pt[0] * width, pt[1] * height] for pt in polygon]
 
 
 class IntrusionDetector:
     """Per-region danger timer using bottom-center person point."""
 
     def __init__(self, polygon: list, x_distance: int, y_stay_time: int):
+        self._source_polygon = polygon
+        self._normalized_polygon = is_normalized_polygon(polygon)
+        self._frame_size: tuple[int, int] | None = None
         self.polygon = np.array(polygon, dtype=np.int32)
         self.x_distance = x_distance
         self.y_stay_time = y_stay_time
         self._danger_since = None
+
+    def prepare_frame(self, image: np.ndarray) -> None:
+        """Scale normalized polygons against the actual decoded frame size.
+
+        Streams can be 640x480 locally and 1280x720 through OBS.  Keeping a
+        fixed configured size here shifts the persisted polygon away from the
+        YOLO person boxes when a stream resolution changes.
+        """
+        if not self._normalized_polygon:
+            return
+        height, width = image.shape[:2]
+        frame_size = (width, height)
+        if frame_size == self._frame_size:
+            return
+        self.polygon = np.array(
+            denormalize_polygon(self._source_polygon, width, height),
+            dtype=np.int32,
+        )
+        self._frame_size = frame_size
 
     @staticmethod
     def base_point(box) -> tuple[int, int]:
@@ -66,7 +91,10 @@ class IntrusionDetector:
 
     def is_in_danger(self, box) -> bool:
         cx, cy = self.base_point(box)
-        d = cv2.pointPolygonTest(self.polygon, (cx, cy), True)
+        return self.is_point_in_danger(cx, cy)
+
+    def is_point_in_danger(self, x: float, y: float) -> bool:
+        d = cv2.pointPolygonTest(self.polygon, (int(x), int(y)), True)
         return d >= 0 or (d < 0 and abs(d) <= self.x_distance)
 
 
@@ -166,9 +194,6 @@ class IntrusionPlugin(Detector):
                     polygon = json.loads(row.polygon or "[]")
                     if len(polygon) < 3:
                         continue
-                    polygon = denormalize_polygon(
-                        polygon, Config.FRAME_WIDTH, Config.FRAME_HEIGHT
-                    )
                     runtimes[int(row.id)] = RegionRuntime(
                         id=int(row.id),
                         camera_id=int(row.camera_id or 0),
@@ -203,9 +228,6 @@ class IntrusionPlugin(Detector):
                 polygon = json.loads(region.polygon or "[]")
                 if len(polygon) < 3 or reservation.member_id is None:
                     continue
-                polygon = denormalize_polygon(
-                    polygon, Config.FRAME_WIDTH, Config.FRAME_HEIGHT
-                )
                 seats[int(region.id)] = SeatRuntime(
                     id=int(region.id),
                     camera_id=int(region.camera_id or 0),
@@ -235,6 +257,7 @@ class IntrusionPlugin(Detector):
         events: list[AlarmEvent] = []
         ts = frame.ts or time.time()
         for region in regions:
+            region.detector.prepare_frame(frame.image)
             for box in people:
                 if region.detector.judge(box, ts):
                     events.append(
@@ -252,6 +275,7 @@ class IntrusionPlugin(Detector):
                     )
                     break
         for seat in seats:
+            seat.detector.prepare_frame(frame.image)
             events.extend(self._detect_reserved_seat(seat, people, frame, ts))
         return events
 
@@ -263,7 +287,9 @@ class IntrusionPlugin(Detector):
         ts: float,
     ) -> list[AlarmEvent]:
         tracks = self._seat_tracks.setdefault(seat.id, {})
-        active_boxes = [box for box in people if seat.detector.is_in_danger(box)]
+        detect_faces = getattr(self.face_matcher, "detect_faces", None)
+        face_rects = detect_faces(frame.image) if callable(detect_faces) else None
+        active_boxes = self._active_seat_boxes(seat, people, face_rects)
         if not active_boxes:
             # YOLO still saw people, but none remain in this seat: reset all
             # seat timers immediately instead of carrying a previous occupant.
@@ -312,8 +338,6 @@ class IntrusionPlugin(Detector):
         if not eligible:
             return []
 
-        detect_faces = getattr(self.face_matcher, "detect_faces", None)
-        face_rects = detect_faces(frame.image) if callable(detect_faces) else None
         events: list[AlarmEvent] = []
         expected = f"member:{seat.member_id}"
         for track_id, track, box in eligible:
@@ -323,6 +347,13 @@ class IntrusionPlugin(Detector):
                 continue
 
             track.alerted = True
+            logger.info(
+                "[intrusion] unauthorized seat: camera_id=%s seat_id=%s reserved=%s actual=%s",
+                frame.camera_id,
+                seat.id,
+                seat.member_id,
+                face_match,
+            )
             events.append(
                 AlarmEvent(
                     type="occupy",
@@ -344,6 +375,48 @@ class IntrusionPlugin(Detector):
                 )
             )
         return events
+
+    @staticmethod
+    def _box_contains_point(box: Box, x: float, y: float) -> bool:
+        return box[0] <= x <= box[2] and box[1] <= y <= box[3]
+
+    def _active_seat_boxes(self, seat: SeatRuntime, people: list[Box], face_rects) -> list[Box]:
+        """Treat a seated face in the polygon as occupancy too.
+
+        A seated person's YOLO box often extends below the drawn desk/seat
+        area, so its bottom-center can be outside even while the person is
+        clearly occupying that seat.  Face-center is an additional geometry
+        signal for reserved seats only; ordinary danger zones remain unchanged.
+        """
+        faces = list(face_rects or [])
+        active: list[Box] = []
+        for box in people:
+            has_face_in_seat = any(
+                seat.detector.is_point_in_danger(
+                    (rect.left() + rect.right()) / 2,
+                    (rect.top() + rect.bottom()) / 2,
+                )
+                and self._box_contains_point(
+                    box,
+                    (rect.left() + rect.right()) / 2,
+                    (rect.top() + rect.bottom()) / 2,
+                )
+                for rect in faces
+            )
+            if seat.detector.is_in_danger(box) or has_face_in_seat:
+                active.append(box)
+
+        # If YOLO misses a seated upper body, an in-seat face still produces a
+        # stable pseudo-person track instead of silently disabling the alarm.
+        for rect in faces:
+            center_x = (rect.left() + rect.right()) / 2
+            center_y = (rect.top() + rect.bottom()) / 2
+            if not seat.detector.is_point_in_danger(center_x, center_y):
+                continue
+            if any(self._box_contains_point(box, center_x, center_y) for box in people):
+                continue
+            active.append((float(rect.left()), float(rect.top()), float(rect.right()), float(rect.bottom())))
+        return active
 
     @staticmethod
     def _iou(a: Box, b: Box) -> float:

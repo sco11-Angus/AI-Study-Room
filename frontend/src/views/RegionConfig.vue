@@ -74,9 +74,18 @@
           <el-table-column prop="type" label="类型" />
           <el-table-column prop="x_distance" label="X_distance" width="110" />
           <el-table-column prop="y_stay_time" label="Y_stay_time" width="110" />
-          <el-table-column label="操作" width="180">
+          <el-table-column label="预约成员" min-width="150">
+            <template #default="{ row }">
+              <template v-if="row.type === 'seat'">
+                {{ reservationLabel(row.id) }}
+              </template>
+              <template v-else>-</template>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="230">
             <template #default="{ row }">
               <el-button type="text" size="small" @click="selectRegion(row)">回显</el-button>
+              <el-button v-if="row.type === 'seat'" type="text" size="small" @click="selectRegion(row)">配置预约</el-button>
               <el-button type="text" size="small" @click="removeRegion(row.id)">删除</el-button>
             </template>
           </el-table-column>
@@ -101,6 +110,7 @@ import {
   updateRegion,
   upsertSeatReservation,
 } from '../api'
+import { ensureSelectedCamera, getSelectedCameraId, setSelectedCameraId } from '../utils/camera'
 
 const DEFAULT_STREAM_URL = ''
 const streamUrl = ref(DEFAULT_STREAM_URL)
@@ -111,7 +121,7 @@ const selectedRegionId = ref(null)
 const members = ref([])
 const reservations = ref({})
 const selectedReservationMemberId = ref(null)
-const form = ref({ camera_id: null, name: '', type: 'danger_zone', polygon: [], x_distance: 50, y_stay_time: 10 })
+const form = ref({ camera_id: getSelectedCameraId(), name: '', type: 'danger_zone', polygon: [], x_distance: 50, y_stay_time: 10 })
 
 const selectedReservation = computed(() => reservations.value[selectedRegionId.value] || null)
 
@@ -124,12 +134,9 @@ const resolveStreamUrl = (cameraId) => {
 const loadCameras = () => {
   getCameras()
     .then((list) => {
-      cameras.value = Array.isArray(list) ? list : []
-      if (cameras.value.length && !form.value.camera_id) {
-        form.value.camera_id = cameras.value[0].id
-        streamUrl.value = resolveStreamUrl(cameras.value[0].id)
-        fetchRegions(form.value.camera_id)
-      }
+      cameras.value = ensureSelectedCamera(list)
+      streamUrl.value = resolveStreamUrl(form.value.camera_id)
+      fetchRegions(form.value.camera_id)
     })
     .catch(() => {
       cameras.value = []
@@ -144,17 +151,26 @@ const loadReservations = (cameraId) => getSeatReservations(cameraId)
     }, {})
   })
 
-const fetchRegions = (cameraId) => {
-  if (!cameraId) {
+const fetchRegions = (cameraId, preferredRegionId = selectedRegionId.value) => {
+  if (cameraId === null || cameraId === undefined) {
     regions.value = []
-    return
+    return Promise.resolve([])
   }
-  Promise.all([getRegions(cameraId), loadReservations(cameraId)])
+  return Promise.all([getRegions(cameraId), loadReservations(cameraId)])
     .then(([list]) => {
       regions.value = Array.isArray(list) ? list : []
-      selectedRegionId.value = null
-      selectedPolygon.value = []
-      selectedReservationMemberId.value = null
+      const preferred = regions.value.find((region) => region.id === preferredRegionId)
+      const onlySeat = regions.value.filter((region) => region.type === 'seat')
+      const regionToSelect = preferred || (onlySeat.length === 1 ? onlySeat[0] : null)
+
+      if (regionToSelect) {
+        selectRegion(regionToSelect)
+      } else {
+        selectedRegionId.value = null
+        selectedPolygon.value = []
+        selectedReservationMemberId.value = null
+      }
+      return regions.value
     })
     .catch(() => {
       regions.value = []
@@ -165,7 +181,8 @@ const fetchRegions = (cameraId) => {
 watch(
   () => form.value.camera_id,
   (cameraId) => {
-    if (!cameraId) return
+    if (cameraId === null || cameraId === undefined) return
+    setSelectedCameraId(cameraId)
     streamUrl.value = resolveStreamUrl(cameraId)
     fetchRegions(cameraId)
     clearSelection()
@@ -200,6 +217,11 @@ const selectRegion = (region) => {
   selectedReservationMemberId.value = reservations.value[region.id]?.member_id || null
 }
 
+const reservationLabel = (regionId) => {
+  const reservation = reservations.value[regionId]
+  return reservation ? `${reservation.member_name} (#${reservation.member_id})` : '未绑定，点击配置预约'
+}
+
 const clearSelection = () => {
   selectedRegionId.value = null
   selectedPolygon.value = []
@@ -208,7 +230,7 @@ const clearSelection = () => {
 }
 
 const submit = () => {
-  if (!form.value.camera_id) {
+  if (form.value.camera_id === null || form.value.camera_id === undefined) {
     ElMessage.warning('请先选择摄像头')
     return
   }
@@ -226,10 +248,14 @@ const submit = () => {
     : createRegion(form.value)
 
   action
-    .then(() => {
+    .then((savedRegion) => {
       ElMessage.success(selectedRegionId.value ? '防区已更新' : '防区已提交')
-      fetchRegions(form.value.camera_id)
-      if (!selectedRegionId.value) {
+      const savedSeatId = savedRegion?.type === 'seat' ? savedRegion.id : null
+      return fetchRegions(form.value.camera_id, savedSeatId || selectedRegionId.value)
+        .then(() => savedSeatId)
+    })
+    .then((savedSeatId) => {
+      if (!savedSeatId && !selectedRegionId.value) {
         form.value.name = ''
         form.value.type = 'danger_zone'
         form.value.polygon = []
