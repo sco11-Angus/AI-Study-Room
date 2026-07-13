@@ -25,7 +25,12 @@ export const getRegions = (cameraId) => http.get('/regions', { params: { camera_
 export const createRegion = (data) => http.post('/regions', data)
 export const updateRegion = (id, data) => http.put(`/regions/${id}`, data)
 export const deleteRegion = (id) => http.delete(`/regions/${id}`)
+export const getMembers = () => http.get('/members', { params: { face_enrolled: true } })
+export const getSeatReservations = (cameraId) => http.get('/seat-reservations', { params: { camera_id: cameraId } })
+export const upsertSeatReservation = (regionId, memberId) => http.put(`/seat-reservations/${regionId}`, { member_id: memberId })
+export const deleteSeatReservation = (regionId) => http.delete(`/seat-reservations/${regionId}`)
 export const switchSeatStatus = (data) => http.post('/seat-status', data)
+export const getSeatCompanionStatus = (userId, regionId) => http.get('/seat-status/companion', { params: { user_id: userId, region_id: regionId } })
 export const getAlarms = (status) => http.get('/alarms', { params: { status } })
 export const confirmAlarm = (id) => http.post(`/alarms/${id}/confirm`)
 

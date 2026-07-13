@@ -10,7 +10,7 @@ import numpy as np
 
 from ..config import Config
 from ..models.database import SessionLocal
-from ..models.entities import Region, SeatStatus
+from ..models.entities import Member, Region, SeatReservation
 from .face import FaceMatcher
 from .base import AlarmEvent, Detector, Frame
 
@@ -53,10 +53,8 @@ class IntrusionDetector:
         return int((x1 + x2) / 2), int(y2)
 
     def judge(self, box, ts: float) -> bool:
-        cx, cy = self.base_point(box)
-        d = cv2.pointPolygonTest(self.polygon, (cx, cy), True)
+        in_danger = self.is_in_danger(box)
 
-        in_danger = d >= 0 or (d < 0 and abs(d) <= self.x_distance)
         if in_danger:
             if self._danger_since is None:
                 self._danger_since = ts
@@ -65,6 +63,11 @@ class IntrusionDetector:
         else:
             self._danger_since = None
         return False
+
+    def is_in_danger(self, box) -> bool:
+        cx, cy = self.base_point(box)
+        d = cv2.pointPolygonTest(self.polygon, (cx, cy), True)
+        return d >= 0 or (d < 0 and abs(d) <= self.x_distance)
 
 
 class PersonDetector:
@@ -111,8 +114,19 @@ class SeatRuntime:
     id: int
     camera_id: int
     name: str
-    user_id: int
+    member_id: int
+    member_name: str
     detector: IntrusionDetector
+
+
+@dataclass
+class SeatTrack:
+    box: Box
+    entered_at: float
+    last_seen_frame: int
+    seen_count: int = 1
+    evaluated: bool = False
+    alerted: bool = False
 
 
 class IntrusionPlugin(Detector):
@@ -130,6 +144,8 @@ class IntrusionPlugin(Detector):
         self.shared_ctx = shared_ctx
         self._regions: dict[int, RegionRuntime] = {}
         self._seats: dict[int, SeatRuntime] = {}
+        self._seat_tracks: dict[int, dict[int, SeatTrack]] = {}
+        self._next_track_id = 1
 
     def setup(self) -> None:
         self.person_detector.setup()
@@ -167,6 +183,7 @@ class IntrusionPlugin(Detector):
                     logger.exception("[intrusion] invalid region skipped id=%s", row.id)
             self._regions = runtimes
             self._seats = self._load_active_seats(session)
+            self._seat_tracks.clear()
             logger.info("[intrusion] active danger zones: %s", sorted(self._regions))
             logger.info("[intrusion] active reserved seats: %s", sorted(self._seats))
         finally:
@@ -174,16 +191,17 @@ class IntrusionPlugin(Detector):
 
     def _load_active_seats(self, session) -> dict[int, SeatRuntime]:
         rows = (
-            session.query(SeatStatus, Region)
-            .join(Region, SeatStatus.region_id == Region.id)
-            .filter(SeatStatus.status == "studying", Region.type == "seat")
+            session.query(SeatReservation, Region, Member)
+            .join(Region, SeatReservation.region_id == Region.id)
+            .join(Member, SeatReservation.member_id == Member.member_id)
+            .filter(SeatReservation.enabled.is_(True), Region.type == "seat")
             .all()
         )
         seats: dict[int, SeatRuntime] = {}
-        for status, region in rows:
+        for reservation, region, member in rows:
             try:
                 polygon = json.loads(region.polygon or "[]")
-                if len(polygon) < 3 or status.user_id is None:
+                if len(polygon) < 3 or reservation.member_id is None:
                     continue
                 polygon = denormalize_polygon(
                     polygon, Config.FRAME_WIDTH, Config.FRAME_HEIGHT
@@ -192,7 +210,8 @@ class IntrusionPlugin(Detector):
                     id=int(region.id),
                     camera_id=int(region.camera_id or 0),
                     name=region.name or f"seat-{region.id}",
-                    user_id=int(status.user_id),
+                    member_id=int(reservation.member_id),
+                    member_name=member.name or f"member-{reservation.member_id}",
                     detector=IntrusionDetector(
                         polygon=polygon,
                         x_distance=int(region.x_distance or 0),
@@ -233,35 +252,159 @@ class IntrusionPlugin(Detector):
                     )
                     break
         for seat in seats:
-            for box in people:
-                if not seat.detector.judge(box, ts):
-                    continue
-                face_match, face_crop = self._match_person(frame.image, box)
-                expected = f"member:{seat.user_id}"
-                if face_match == expected:
-                    break
-                events.append(
-                    AlarmEvent(
-                        type="occupy",
-                        region_id=seat.id,
-                        camera_id=frame.camera_id,
-                        ts=ts,
-                        level=1,
-                        face_match=face_match,
-                        face_crop=face_crop,
-                        extra={
-                            "kind": "unauthorized_seat",
-                            "seat_name": seat.name,
-                            "expected_user_id": seat.user_id,
-                            "actual_face_match": face_match,
-                            "person_box": [round(float(v), 2) for v in box],
-                        },
-                    )
-                )
-                break
+            events.extend(self._detect_reserved_seat(seat, people, frame, ts))
         return events
 
-    def _match_person(self, image: np.ndarray, box: Box) -> tuple[str, np.ndarray | None]:
+    def _detect_reserved_seat(
+        self,
+        seat: SeatRuntime,
+        people: list[Box],
+        frame: Frame,
+        ts: float,
+    ) -> list[AlarmEvent]:
+        tracks = self._seat_tracks.setdefault(seat.id, {})
+        active_boxes = [box for box in people if seat.detector.is_in_danger(box)]
+        if not active_boxes:
+            # YOLO still saw people, but none remain in this seat: reset all
+            # seat timers immediately instead of carrying a previous occupant.
+            if people:
+                tracks.clear()
+            return []
+        matched_track_ids: set[int] = set()
+        eligible: list[tuple[int, SeatTrack, Box]] = []
+
+        for box in active_boxes:
+            track_id = self._match_track(tracks, box, frame.frame_idx, matched_track_ids)
+            if track_id is None:
+                track_id = self._next_track_id
+                self._next_track_id += 1
+                tracks[track_id] = SeatTrack(
+                    box=box,
+                    entered_at=ts,
+                    last_seen_frame=frame.frame_idx,
+                )
+            else:
+                track = tracks[track_id]
+                track.box = box
+                track.last_seen_frame = frame.frame_idx
+                track.seen_count += 1
+
+            matched_track_ids.add(track_id)
+            track = tracks[track_id]
+            if (
+                not track.evaluated
+                and track.seen_count >= 2
+                and ts - track.entered_at >= seat.detector.y_stay_time
+            ):
+                eligible.append((track_id, track, box))
+
+        # Three missed inference frames means the person has left or the track is stale.
+        for track_id, track in list(tracks.items()):
+            # A matching person box outside the seat is an explicit exit and resets
+            # immediately. Missing detections get a small tolerance window instead.
+            exited = any(
+                self._iou(track.box, box) >= 0.3 and not seat.detector.is_in_danger(box)
+                for box in people
+            )
+            if exited or frame.frame_idx - track.last_seen_frame > 3:
+                del tracks[track_id]
+
+        if not eligible:
+            return []
+
+        detect_faces = getattr(self.face_matcher, "detect_faces", None)
+        face_rects = detect_faces(frame.image) if callable(detect_faces) else None
+        events: list[AlarmEvent] = []
+        expected = f"member:{seat.member_id}"
+        for track_id, track, box in eligible:
+            face_match, face_crop = self._match_person_fullframe(frame.image, box, face_rects)
+            track.evaluated = True
+            if face_match == expected:
+                continue
+
+            track.alerted = True
+            events.append(
+                AlarmEvent(
+                    type="occupy",
+                    region_id=seat.id,
+                    camera_id=frame.camera_id,
+                    ts=ts,
+                    level=1,
+                    face_match=face_match,
+                    face_crop=face_crop,
+                    extra={
+                        "kind": "unauthorized_seat",
+                        "seat_name": seat.name,
+                        "reserved_member_id": seat.member_id,
+                        "reserved_member_name": seat.member_name,
+                        "actual_face_match": face_match,
+                        "person_box": [round(float(v), 2) for v in box],
+                        "track_key": f"seat-{seat.id}-track-{track_id}",
+                    },
+                )
+            )
+        return events
+
+    @staticmethod
+    def _iou(a: Box, b: Box) -> float:
+        left, top = max(a[0], b[0]), max(a[1], b[1])
+        right, bottom = min(a[2], b[2]), min(a[3], b[3])
+        intersection = max(0.0, right - left) * max(0.0, bottom - top)
+        if intersection <= 0:
+            return 0.0
+        area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+        area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+        union = area_a + area_b - intersection
+        return intersection / union if union else 0.0
+
+    def _match_track(
+        self,
+        tracks: dict[int, SeatTrack],
+        box: Box,
+        frame_idx: int,
+        matched_track_ids: set[int],
+    ) -> int | None:
+        candidates = [
+            (self._iou(track.box, box), track_id)
+            for track_id, track in tracks.items()
+            if track_id not in matched_track_ids and frame_idx - track.last_seen_frame <= 3
+        ]
+        if not candidates:
+            return None
+        score, track_id = max(candidates)
+        return track_id if score >= 0.3 else None
+
+    def _match_person_fullframe(
+        self,
+        image: np.ndarray,
+        box: Box,
+        face_rects,
+    ) -> tuple[str, np.ndarray | None]:
+        """Associate whole-frame faces with a person box before encoding."""
+        if face_rects is not None:
+            for rect in face_rects:
+                center_x = (rect.left() + rect.right()) / 2
+                center_y = (rect.top() + rect.bottom()) / 2
+                if box[0] <= center_x <= box[2] and box[1] <= center_y <= box[3]:
+                    feature = self.face_matcher.encode_from_rect(image, rect)
+                    face_crop = self._crop_rect(image, rect)
+                    return (
+                        self.face_matcher.match(feature) if feature is not None else "stranger",
+                        face_crop,
+                    )
+            return "stranger", None
+
+        # Test doubles and older integrations may expose only encode()/match().
+        return self._match_person_legacy(image, box)
+
+    @staticmethod
+    def _crop_rect(image: np.ndarray, rect) -> np.ndarray | None:
+        h, w = image.shape[:2]
+        x1, y1 = max(0, rect.left()), max(0, rect.top())
+        x2, y2 = min(w, rect.right()), min(h, rect.bottom())
+        return image[y1:y2, x1:x2] if x2 > x1 and y2 > y1 else None
+
+    def _match_person_legacy(self, image: np.ndarray, box: Box) -> tuple[str, np.ndarray | None]:
         h, w = image.shape[:2]
         x1, y1, x2, y2 = [int(round(v)) for v in box]
         x1, y1 = max(0, x1), max(0, y1)

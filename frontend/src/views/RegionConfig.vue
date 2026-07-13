@@ -39,6 +39,24 @@
             <div v-else class="empty-state">请先在视频上画一个多边形并双击闭合</div>
           </div>
         </el-form-item>
+        <el-form-item v-if="selectedRegionId && form.type === 'seat'" label="预约成员">
+          <div class="reservation-control">
+            <el-select v-model="selectedReservationMemberId" placeholder="选择已录入人脸的成员" clearable>
+              <el-option
+                v-for="member in members"
+                :key="member.member_id"
+                :label="`${member.name} (#${member.member_id})`"
+                :value="member.member_id"
+              />
+            </el-select>
+            <el-button type="primary" :disabled="!selectedReservationMemberId" @click="bindReservation">绑定</el-button>
+            <el-button v-if="selectedReservation" type="danger" @click="unbindReservation">解绑</el-button>
+          </div>
+          <div v-if="selectedReservation" class="reservation-hint">
+            当前绑定：{{ selectedReservation.member_name }} (#{{ selectedReservation.member_id }})
+          </div>
+          <div v-else class="reservation-hint">未绑定预约成员，不进行座位身份核验。</div>
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="submit">{{ selectedRegionId ? '更新防区' : '提交并持久化' }}</el-button>
           <el-button type="default" @click="clearSelection" v-if="selectedRegionId">取消回显</el-button>
@@ -69,10 +87,20 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import CanvasDraw from '../components/CanvasDraw.vue'
-import { createRegion, getCameras, getRegions, updateRegion, deleteRegion } from '../api'
+import {
+  createRegion,
+  deleteRegion,
+  deleteSeatReservation,
+  getCameras,
+  getMembers,
+  getRegions,
+  getSeatReservations,
+  updateRegion,
+  upsertSeatReservation,
+} from '../api'
 
 const DEFAULT_STREAM_URL = ''
 const streamUrl = ref(DEFAULT_STREAM_URL)
@@ -80,7 +108,12 @@ const cameras = ref([])
 const regions = ref([])
 const selectedPolygon = ref([])
 const selectedRegionId = ref(null)
+const members = ref([])
+const reservations = ref({})
+const selectedReservationMemberId = ref(null)
 const form = ref({ camera_id: null, name: '', type: 'danger_zone', polygon: [], x_distance: 50, y_stay_time: 10 })
+
+const selectedReservation = computed(() => reservations.value[selectedRegionId.value] || null)
 
 // 与监测大屏一致：走后端 /ws/video_feed WebSocket 拿实时帧（VideoPlayer 解析 camera_id=）
 const resolveStreamUrl = (cameraId) => {
@@ -103,19 +136,29 @@ const loadCameras = () => {
     })
 }
 
+const loadReservations = (cameraId) => getSeatReservations(cameraId)
+  .then((reservationList) => {
+    reservations.value = (Array.isArray(reservationList) ? reservationList : []).reduce((byRegion, item) => {
+      byRegion[item.region_id] = item
+      return byRegion
+    }, {})
+  })
+
 const fetchRegions = (cameraId) => {
   if (!cameraId) {
     regions.value = []
     return
   }
-  getRegions(cameraId)
-    .then((list) => {
+  Promise.all([getRegions(cameraId), loadReservations(cameraId)])
+    .then(([list]) => {
       regions.value = Array.isArray(list) ? list : []
       selectedRegionId.value = null
       selectedPolygon.value = []
+      selectedReservationMemberId.value = null
     })
     .catch(() => {
       regions.value = []
+      reservations.value = {}
     })
 }
 
@@ -129,7 +172,14 @@ watch(
   }
 )
 
-onMounted(loadCameras)
+onMounted(() => {
+  loadCameras()
+  getMembers().then((list) => {
+    members.value = Array.isArray(list) ? list : []
+  }).catch(() => {
+    members.value = []
+  })
+})
 
 const onPolygon = (pts) => {
   form.value.polygon = pts
@@ -147,11 +197,13 @@ const selectRegion = (region) => {
     y_stay_time: region.y_stay_time || 0,
   }
   selectedPolygon.value = region.polygon
+  selectedReservationMemberId.value = reservations.value[region.id]?.member_id || null
 }
 
 const clearSelection = () => {
   selectedRegionId.value = null
   selectedPolygon.value = []
+  selectedReservationMemberId.value = null
   form.value.polygon = []
 }
 
@@ -199,6 +251,28 @@ const removeRegion = (regionId) => {
     })
     .catch(() => {})
 }
+
+const bindReservation = () => {
+  if (!selectedRegionId.value || !selectedReservationMemberId.value) return
+  upsertSeatReservation(selectedRegionId.value, selectedReservationMemberId.value)
+    .then(() => {
+      ElMessage.success('预约成员已绑定，身份核验已热更新')
+      return loadReservations(form.value.camera_id)
+    })
+    .catch(() => {})
+}
+
+const unbindReservation = () => {
+  if (!selectedRegionId.value) return
+  deleteSeatReservation(selectedRegionId.value)
+    .then(() => {
+      ElMessage.success('预约成员已解绑，座位身份核验已停止')
+      return loadReservations(form.value.camera_id).then(() => {
+        selectedReservationMemberId.value = null
+      })
+    })
+    .catch(() => {})
+}
 </script>
 
 <style scoped>
@@ -241,5 +315,23 @@ const removeRegion = (regionId) => {
 
 .empty-state {
   color: #909399;
+}
+
+.reservation-control {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.reservation-control :deep(.el-select) {
+  min-width: 220px;
+}
+
+.reservation-hint {
+  width: 100%;
+  margin-top: 8px;
+  color: #606266;
+  font-size: 13px;
 }
 </style>

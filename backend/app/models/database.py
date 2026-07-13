@@ -15,10 +15,11 @@ SessionLocal = scoped_session(sessionmaker(bind=_engine))
 
 
 def init_db():
-    """验证数据库连接；本地 SQLite 自动创建表。"""
+    """Validate the connection; SQLite development databases create all tables."""
     try:
         if Config.DATABASE_URI.startswith("sqlite"):
             from .entities import Base
+
             Base.metadata.create_all(_engine)
         with _engine.connect() as conn:
             conn.execute(text("SELECT 1"))
