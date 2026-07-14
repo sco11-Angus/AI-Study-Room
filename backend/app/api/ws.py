@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 _alarm_subscribers: set = set()
 _alarm_lock = threading.Lock()
+_companion_subscribers: dict[tuple[int, int], set] = {}
 
 
 def broadcast_alarm(payload: dict) -> int:
@@ -52,6 +53,37 @@ def broadcast_alarm(payload: dict) -> int:
         with _alarm_lock:
             for ws in dead:
                 _alarm_subscribers.discard(ws)
+    return sent
+
+
+def broadcast_companion_alarm(payload: dict) -> int:
+    """Deliver a fatigue reminder only to the matching companion session."""
+    if payload.get("type") != "fatigue":
+        return 0
+    extra = payload.get("extra") or {}
+    user_id = extra.get("user_id")
+    region_id = payload.get("region_id")
+    if user_id is None or region_id is None:
+        return 0
+    key = (int(user_id), int(region_id))
+    with _alarm_lock:
+        subscribers = list(_companion_subscribers.get(key, set()))
+    data = json.dumps(payload, ensure_ascii=False)
+    sent = 0
+    dead = []
+    for ws in subscribers:
+        try:
+            ws.send(data)
+            sent += 1
+        except ConnectionClosed:
+            dead.append(ws)
+        except Exception:
+            logger.exception("[companion_ws] reminder delivery failed")
+            dead.append(ws)
+    if dead:
+        with _alarm_lock:
+            for ws in dead:
+                _companion_subscribers.get(key, set()).discard(ws)
     return sent
 
 
@@ -144,6 +176,19 @@ def register_ws_routes(sock: Sock) -> None:
         """看板订阅告警事件：格子 绿->红闪烁 + 蜂鸣。"""
         with _alarm_lock:
             _alarm_subscribers.add(ws)
+
+        # Historical alarms are not equivalent to somebody currently in a
+        # zone. Send a live track snapshot whenever a dashboard reconnects.
+        try:
+            from ..stream.scheduler import get_scheduler
+
+            scheduler = get_scheduler()
+            engine = getattr(scheduler, "_engine", None) if scheduler else None
+            detector = getattr(engine, "_detectors", {}).get("intrusion") if engine else None
+            states = detector.get_active_alarm_states() if detector else []
+            ws.send(json.dumps({"event": "region_state_snapshot", "states": states}, ensure_ascii=False))
+        except Exception:
+            logger.exception("[alarm_ws] failed to send live region-state snapshot")
         logger.info("[alarm_ws] 客户端已连接")
 
         try:
@@ -157,6 +202,33 @@ def register_ws_routes(sock: Sock) -> None:
             with _alarm_lock:
                 _alarm_subscribers.discard(ws)
             logger.info("[alarm_ws] 客户端断开")
+
+    @sock.route("/ws/companion")
+    def companion_ws(ws):
+        """Subscribe to fatigue reminders for one selected demo companion."""
+        try:
+            user_id = int(request.args.get("user_id", ""))
+            region_id = int(request.args.get("region_id", ""))
+        except (TypeError, ValueError):
+            ws.close()
+            return
+        key = (user_id, region_id)
+        with _alarm_lock:
+            _companion_subscribers.setdefault(key, set()).add(ws)
+        try:
+            while True:
+                ws.receive()
+        except ConnectionClosed:
+            pass
+        except Exception:
+            logger.exception("[companion_ws] WebSocket error")
+        finally:
+            with _alarm_lock:
+                subscribers = _companion_subscribers.get(key)
+                if subscribers is not None:
+                    subscribers.discard(ws)
+                    if not subscribers:
+                        _companion_subscribers.pop(key, None)
 
     @sock.route("/ws/face_recognition")
     def ws_face_recognition(ws):

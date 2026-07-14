@@ -85,6 +85,10 @@ class DingTalkNotifier:
         self._session_factory = session_factory
         self._http_post = http_post or requests.post
         self._timers: dict[int, threading.Timer] = {}
+        if self.webhook:
+            logger.info("[dingtalk] primary webhook configured")
+        else:
+            logger.warning("[dingtalk] primary webhook is not configured; alarms will be recorded but not sent")
 
     def notify(self, alarm_id: int, title: str | None = None, text: str | None = None):
         """Notify the primary guard and start the escalation timer."""

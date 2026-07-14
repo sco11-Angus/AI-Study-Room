@@ -459,9 +459,10 @@ class AlarmService:
     def _broadcast(self, payload: dict) -> int:
         if self._broadcaster is not None:
             return self._broadcaster(payload) or 0
-        from ..api.ws import broadcast_alarm
+        from ..api.ws import broadcast_alarm, broadcast_companion_alarm
 
-        return broadcast_alarm(payload)
+        companion_sent = broadcast_companion_alarm(payload)
+        return broadcast_alarm(payload) + companion_sent
 
     def _notify(self, alarm_id: int) -> None:
         notifier = self._notifier
