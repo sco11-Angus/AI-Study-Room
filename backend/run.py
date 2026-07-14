@@ -15,11 +15,11 @@ def start_services():
     """启动推理引擎和拉流调度器。"""
     from app.detectors.face import FaceDetector
     from app.detectors.audio_event import AbnormalSoundPlugin
-    # from app.detectors.fire_smoke import FireSmokePlugin
-    # from app.detectors.fight import FightPlugin
-    # from app.detectors.fatigue import FatiguePlugin
-    # from app.detectors.intrusion import IntrusionPlugin
-    # from app.detectors.person_source import SharedContextProvider
+    from app.detectors.fire_smoke import FireSmokePlugin
+    from app.detectors.fight import FightPlugin
+    from app.detectors.fatigue import FatiguePlugin
+    from app.detectors.intrusion import IntrusionPlugin
+    from app.detectors.person_source import SharedContextProvider
     from app.config import Config
     from app.stream.engine import InferenceEngine
     from app.stream.scheduler import StreamScheduler, set_scheduler
