@@ -36,7 +36,7 @@ pipeline {
 
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        timeout(time: 100, unit: 'MINUTES')  // ✅ 改为 20 分钟
+        timeout(time: 120, unit: 'MINUTES')  // ✅ 改为 20 分钟
         timestamps()
         ansiColor('xterm')
         disableConcurrentBuilds()
