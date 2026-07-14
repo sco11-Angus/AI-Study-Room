@@ -199,6 +199,14 @@ class Config:
     # EMA 平滑系数（0~1，越大响应越快，越小越平滑）
     LIVENESS_EMA_ALPHA = float(os.getenv("LIVENESS_EMA_ALPHA", 0.3))
 
+    # 全帧静态检测（防静态照片）——默认关闭。
+    # 该方法用帧间 nmse 判"画面是否静止"，但在高稳定度/低噪声摄像头上，
+    # 真人 nmse 与照片重叠（实测真人 ~0.0002，与冻结帧同量级），会 100% 误判真人。
+    # 防照片改由 FSD（零样本AIGC）+ 眨眼(EAR) 等活体层负责。如需启用置 true。
+    FACE_STATIC_DETECT_ENABLED = os.getenv("FACE_STATIC_DETECT_ENABLED", "false").lower() == "true"
+    FACE_STATIC_NMSE_THRESHOLD = float(os.getenv("FACE_STATIC_NMSE_THRESHOLD", 0.0005))
+    FACE_STATIC_STREAK = int(os.getenv("FACE_STATIC_STREAK", 3))
+
     # 反欺骗模型 Ensemble 权重
     ANTISPOOF_WEIGHT_ONNX = float(os.getenv("ANTISPOOF_WEIGHT_ONNX", 0.5))
     ANTISPOOF_WEIGHT_PTH = float(os.getenv("ANTISPOOF_WEIGHT_PTH", 0.5))
