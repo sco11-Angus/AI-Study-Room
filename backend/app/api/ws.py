@@ -61,11 +61,18 @@ def broadcast_companion_alarm(payload: dict) -> int:
     if payload.get("type") != "fatigue":
         return 0
     extra = payload.get("extra") or {}
-    user_id = extra.get("user_id")
-    region_id = payload.get("region_id")
-    if user_id is None or region_id is None:
-        return 0
-    key = (int(user_id), int(region_id))
+    mode = extra.get("mode")
+    if mode == "demo":
+        camera_id = payload.get("camera_id")
+        if camera_id is None:
+            return 0
+        key = ("demo", int(camera_id))
+    else:
+        user_id = extra.get("user_id")
+        region_id = payload.get("region_id")
+        if user_id is None or region_id is None:
+            return 0
+        key = (int(user_id), int(region_id))
     with _alarm_lock:
         subscribers = list(_companion_subscribers.get(key, set()))
     data = json.dumps(payload, ensure_ascii=False)
@@ -225,13 +232,21 @@ def register_ws_routes(sock: Sock) -> None:
     @sock.route("/ws/companion")
     def companion_ws(ws):
         """Subscribe to fatigue reminders for one selected demo companion."""
-        try:
-            user_id = int(request.args.get("user_id", ""))
-            region_id = int(request.args.get("region_id", ""))
-        except (TypeError, ValueError):
-            ws.close()
-            return
-        key = (user_id, region_id)
+        camera_id = request.args.get("camera_id")
+        if camera_id is not None:
+            try:
+                key = ("demo", int(camera_id))
+            except (TypeError, ValueError):
+                ws.close()
+                return
+        else:
+            try:
+                user_id = int(request.args.get("user_id", ""))
+                region_id = int(request.args.get("region_id", ""))
+            except (TypeError, ValueError):
+                ws.close()
+                return
+            key = (user_id, region_id)
         with _alarm_lock:
             _companion_subscribers.setdefault(key, set()).add(ws)
         try:

@@ -161,7 +161,7 @@ class AlarmService:
             f.write(log_entry)
         
         logger.info(
-            "[alarm] 日志已记录 alarm_id=%d type=%s level=%d region=%d camera=%d message=%s",
+            "[alarm] 日志已记录 alarm_id=%d type=%s level=%d region=%s camera=%d message=%s",
             record.id, event.type, event.level, event.region_id, event.camera_id, record.message
         )
 

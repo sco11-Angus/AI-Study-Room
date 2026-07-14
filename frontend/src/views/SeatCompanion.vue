@@ -17,19 +17,20 @@
                 <el-option v-for="camera in cameras" :key="camera.id" :label="camera.name || `摄像头 ${camera.id}`" :value="camera.id" />
               </el-select>
             </el-form-item>
-            <el-form-item label="座位">
-              <el-select v-model="regionId" placeholder="选择座位" @change="onSeatChanged">
-                <el-option v-for="seat in seats" :key="seat.id" :label="seat.name || `座位 ${seat.id}`" :value="seat.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="演示用户 ID">
-              <el-input-number v-model="userId" :min="1" :controls="false" @change="loadCompanion" />
-            </el-form-item>
             <el-form-item label="检测模式">
               <el-radio-group v-model="mode" @change="onModeChanged">
                 <el-radio-button value="demo">演示模式</el-radio-button>
                 <el-radio-button value="verified">身份核验</el-radio-button>
               </el-radio-group>
+            </el-form-item>
+            <el-form-item v-if="mode === 'verified'" label="座位">
+              <el-select v-model="regionId" placeholder="选择座位" @change="onSeatChanged" :disabled="seats.length === 0">
+                <el-option v-for="seat in seats" :key="seat.id" :label="seat.name || `座位 ${seat.id}`" :value="seat.id" />
+              </el-select>
+              <div v-if="cameraId && seats.length === 0" class="field-hint">该摄像头下没有座位区域，请选择其他摄像头</div>
+            </el-form-item>
+            <el-form-item v-if="mode === 'verified'" label="演示用户 ID">
+              <el-input-number v-model="userId" :min="1" :controls="false" @change="loadCompanion" />
             </el-form-item>
           </div>
           <el-form-item v-if="mode === 'verified'" label="已录入人脸的预约成员">
@@ -39,13 +40,13 @@
             <div class="field-hint">{{ reservationHint }}</div>
           </el-form-item>
           <el-form-item label="自习状态">
-            <el-radio-group v-model="status">
-              <el-radio-button value="idle">空闲</el-radio-button>
-              <el-radio-button value="studying">开始自习</el-radio-button>
-              <el-radio-button value="resting">休息中</el-radio-button>
-            </el-radio-group>
+            <el-radio-group v-model="status" @change="() => dirty = true">
+                <el-radio-button value="idle">空闲</el-radio-button>
+                <el-radio-button value="studying">开始自习</el-radio-button>
+                <el-radio-button value="resting">休息中</el-radio-button>
+              </el-radio-group>
           </el-form-item>
-          <el-button type="primary" :loading="saving" :disabled="!regionId" @click="saveSession">更新本次自习</el-button>
+          <el-button type="primary" :loading="saving" :disabled="mode === 'verified' && !regionId" @click="saveSession">更新本次自习</el-button>
         </el-form>
       </section>
 
@@ -57,7 +58,7 @@
         <dl class="state-list">
           <div><dt>当前状态</dt><dd>{{ statusLabel(status) }}</dd></div>
           <div><dt>模式</dt><dd>{{ mode === 'verified' ? '身份核验' : '演示模式' }}</dd></div>
-          <div><dt>预约成员</dt><dd>{{ reservation?.member_name || '未绑定' }}</dd></div>
+          <div v-if="mode === 'verified'"><dt>预约成员</dt><dd>{{ reservation?.member_name || '未绑定' }}</dd></div>
           <div><dt>运行说明</dt><dd>{{ reasonLabel(runtime.reason) }}</dd></div>
           <div v-if="runtime.face_match"><dt>人脸结果</dt><dd>{{ runtime.face_match }}</dd></div>
         </dl>
@@ -85,7 +86,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   getCameraStreamStatus, getCameras, getMembers, getRegions, getSeatCompanionStatus,
-  getSeatReservations, switchSeatStatus,
+  getSeatReservations, switchSeatStatus, getDemoStatus, switchDemoStatus,
 } from '../api'
 
 const cameras = ref([])
@@ -103,6 +104,7 @@ const reminder = ref(null)
 const dingtalkConfigured = ref(false)
 const streamOnline = ref(false)
 const saving = ref(false)
+const dirty = ref(false)
 let companionWs = null
 let pollTimer = null
 
@@ -130,12 +132,30 @@ const loadStream = async () => {
 }
 
 const loadCompanion = async () => {
+  if (mode.value === 'demo') {
+    if (!cameraId.value) return
+    try {
+      const data = await getDemoStatus(cameraId.value)
+      if (!dirty.value) {
+        status.value = data.status || 'idle'
+      }
+      runtime.value = data.runtime || { eligible: false, reason: 'not_studying' }
+      dingtalkConfigured.value = !!data.dingtalk_configured
+      streamOnline.value = !!data.stream_online
+      connectCompanionWs()
+    } catch {
+      runtime.value = { eligible: false, reason: 'session_unavailable' }
+    }
+    return
+  }
   if (!regionId.value || !userId.value) return
   try {
     const data = await getSeatCompanionStatus(userId.value, regionId.value)
-    status.value = data.status || 'idle'
-    mode.value = data.mode || 'demo'
-    memberId.value = data.member_id || null
+    if (!dirty.value) {
+      status.value = data.status || 'idle'
+      mode.value = data.mode || 'demo'
+      memberId.value = data.member_id || null
+    }
     runtime.value = data.runtime || { eligible: false, reason: 'not_studying' }
     reminder.value = data.latest_fatigue || null
     dingtalkConfigured.value = !!data.dingtalk_configured
@@ -163,11 +183,25 @@ const onModeChanged = (value) => {
 }
 
 const saveSession = async () => {
+  if (mode.value === 'demo') {
+    if (!cameraId.value) return
+    saving.value = true
+    try {
+      await switchDemoStatus(cameraId.value, status.value)
+      ElMessage.success('检测状态已更新')
+      dirty.value = false
+      await loadCompanion()
+    } finally {
+      saving.value = false
+    }
+    return
+  }
   if (!regionId.value) return
   saving.value = true
   try {
     await switchSeatStatus({ user_id: userId.value, region_id: regionId.value, status: status.value, mode: mode.value, member_id: memberId.value })
     ElMessage.success('自习会话已更新')
+    dirty.value = false
     await loadCompanion()
   } finally {
     saving.value = false
@@ -175,10 +209,17 @@ const saveSession = async () => {
 }
 
 const connectCompanionWs = () => {
-  if (!regionId.value || !userId.value) return
   if (companionWs) companionWs.close()
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-  companionWs = new WebSocket(`${protocol}://${location.host}/ws/companion?user_id=${userId.value}&region_id=${regionId.value}`)
+  let url
+  if (mode.value === 'demo') {
+    if (!cameraId.value) return
+    url = `${protocol}://${location.host}/ws/companion?camera_id=${cameraId.value}`
+  } else {
+    if (!regionId.value || !userId.value) return
+    url = `${protocol}://${location.host}/ws/companion?user_id=${userId.value}&region_id=${regionId.value}`
+  }
+  companionWs = new WebSocket(url)
   companionWs.onmessage = ({ data }) => {
     const event = JSON.parse(data)
     if (event.type === 'fatigue') {
@@ -190,11 +231,13 @@ const connectCompanionWs = () => {
 
 const statusLabel = (value) => ({ idle: '空闲', studying: '自习中', resting: '休息中' }[value] || '未知')
 const reasonLabel = (value) => ({
-  detecting: '座位内已确认唯一对象，正在检测', demo_ready: '演示模式已准备', waiting_for_face: '等待座位内人脸',
+  detecting: '正在检测疲劳', demo_ready: '演示模式已准备', waiting_for_face: '等待镜头内人脸',
   no_in_seat_face: '未检测到座位内人脸', ambiguous_face: '座位内存在多人，已暂停',
   identity_verified: '预约成员身份已通过', identity_mismatch: '人脸与预约成员不匹配',
-  reservation_mismatch: '会话成员与预约不一致', not_studying: '当前座位未处于自习中',
+  reservation_mismatch: '会话成员与预约不一致', not_studying: '未开始检测',
   engine_unavailable: '推理引擎未就绪', session_unavailable: '无法读取当前会话',
+  no_face_detected: '未检测到人脸', multiple_faces: '镜头内存在多人，已暂停',
+  camera_not_active: '摄像头未启用检测',
 }[value] || '等待状态更新')
 const fatigueKindText = (kind) => kind === 'yawn' ? '检测到打哈欠' : kind === 'sleepy' ? '检测到闭眼疲劳' : '疲劳提醒'
 const fatigueMessage = (item) => {
@@ -205,7 +248,7 @@ const fatigueMessage = (item) => {
 }
 const formatTime = (value) => value ? new Date(value).toLocaleString() : '-'
 
-watch([cameraId, regionId, userId], () => loadCompanion())
+watch([cameraId, regionId, userId, mode], () => loadCompanion())
 onMounted(async () => {
   const cameraList = await getCameras()
   cameras.value = Array.isArray(cameraList) ? cameraList : []

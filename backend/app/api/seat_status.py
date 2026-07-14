@@ -59,6 +59,50 @@ def companion_status():
         session.close()
 
 
+@bp.get("/demo")
+def demo_status():
+    """Return camera-level fatigue status for demo mode."""
+    camera_id = request.args.get("camera_id", type=int)
+    if camera_id is None:
+        return err("camera_id is required"), 400
+
+    runtime = _fatigue_runtime_state_for_camera(camera_id)
+    scheduler = get_scheduler()
+    engine = getattr(scheduler, "engine", None) if scheduler else None
+    detector = getattr(engine, "_detectors", {}).get("fatigue") if engine else None
+    is_active = camera_id in getattr(detector, "_demo_cameras", set())
+    status = "studying" if is_active else "idle"
+    return ok({
+        "camera_id": camera_id,
+        "status": status,
+        "mode": "demo",
+        "runtime": runtime,
+        "stream_online": _stream_online(camera_id),
+        "dingtalk_configured": bool(Config.DINGTALK_WEBHOOK),
+        "latest_fatigue": None,
+    })
+
+
+@bp.post("/demo")
+def switch_demo_status():
+    """Start or stop camera-level fatigue detection for demo mode."""
+    payload = request.get_json(force=True) or {}
+    camera_id = payload.get("camera_id")
+    status = payload.get("status")
+
+    if camera_id is None or status is None:
+        return err("camera_id and status are required"), 400
+    if status not in _VALID_STATUSES:
+        return err("status must be one of idle/studying/resting"), 400
+    try:
+        camera_id = int(camera_id)
+    except (TypeError, ValueError):
+        return err("camera_id must be an integer"), 400
+
+    _notify_fatigue_plugin_for_camera({"camera_id": camera_id, "status": status, "mode": "demo"})
+    return ok({"camera_id": camera_id, "status": status, "mode": "demo"})
+
+
 @bp.post("")
 def switch_status():
     """Start, pause, or end one explicit demo/verified study session."""
@@ -226,7 +270,7 @@ def _stream_online(camera_id: int | None) -> bool:
     scheduler = get_scheduler()
     if scheduler is None or camera_id is None:
         return False
-    return bool(scheduler.status().get(camera_id, False))
+    return bool(scheduler.status.get(camera_id, False))
 
 
 def _has_active_studying_region() -> bool:
@@ -236,6 +280,22 @@ def _has_active_studying_region() -> bool:
         return session.query(SeatStatus).filter(SeatStatus.status == "studying").first() is not None
     finally:
         session.close()
+
+
+def _fatigue_runtime_state_for_camera(camera_id: int) -> dict:
+    scheduler = get_scheduler()
+    engine = getattr(scheduler, "engine", None) if scheduler else None
+    detector = getattr(engine, "_detectors", {}).get("fatigue") if engine else None
+    getter = getattr(detector, "get_runtime_state_for_camera", None)
+    return getter(camera_id) if callable(getter) else {"eligible": False, "reason": "engine_unavailable"}
+
+
+def _notify_fatigue_plugin_for_camera(session_data: dict) -> None:
+    scheduler = get_scheduler()
+    engine = getattr(scheduler, "engine", None) if scheduler else None
+    if engine is None:
+        return
+    engine.on_config_changed("fatigue", session_data)
 
 
 def _session():

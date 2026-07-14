@@ -24,7 +24,7 @@
           <el-option label="欺骗攻击" value="face_spoof" />
         </el-select>
         <el-select v-model="filterLevel" placeholder="告警级别" @change="onFilterChange">
-          <el-option label="全部" :value="null" />
+          <el-option label="全部" value="" />
           <el-option label="弱提醒(0)" :value="0" />
           <el-option label="普通告警(1)" :value="1" />
           <el-option label="高优先(2+)" :value="2" />
@@ -137,7 +137,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 const filterDate = ref('')
 const filterType = ref('')
-const filterLevel = ref(null)
+const filterLevel = ref('')
 const currentPage = ref(1)
 const pageSize = ref(50)
 const logEntries = ref([])
@@ -199,7 +199,7 @@ function fetchLogs() {
   const params = new URLSearchParams()
   if (filterDate.value) params.append('date', filterDate.value)
   if (filterType.value) params.append('type', filterType.value)
-  if (filterLevel.value !== null) params.append('level', filterLevel.value)
+  if (filterLevel.value !== '') params.append('level', filterLevel.value)
   params.append('page', currentPage.value)
   params.append('limit', pageSize.value)
 

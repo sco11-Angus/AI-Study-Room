@@ -22,12 +22,25 @@ def init_db():
 
             Base.metadata.create_all(_engine)
         _ensure_seat_status_session_columns()
+        _ensure_alarm_event_region_nullable()
         with _engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         print("数据库连接成功")
     except Exception as e:
         print(f"数据库连接失败: {e}")
         raise
+
+
+def _ensure_alarm_event_region_nullable() -> None:
+    """Allow alarm_event.region_id to be NULL for camera-level demo fatigue detection."""
+    inspector = inspect(_engine)
+    if "alarm_event" not in inspector.get_table_names():
+        return
+    columns = {col["name"]: col for col in inspector.get_columns("alarm_event")}
+    region_col = columns.get("region_id")
+    if region_col is not None and not region_col.get("nullable", True):
+        with _engine.begin() as conn:
+            conn.execute(text("ALTER TABLE alarm_event MODIFY COLUMN region_id INT NULL"))
 
 
 def _ensure_seat_status_session_columns() -> None:

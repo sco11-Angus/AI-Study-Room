@@ -140,6 +140,7 @@ class FatiguePlugin(Detector):
         self._detectors: dict[int, FatigueDetector] = {}
         self._last_alert_at: dict[tuple[int, str], float] = {}
         self._runtime: dict[int, dict] = {}
+        self._demo_cameras: set[int] = set()
 
     def setup(self) -> None:
         if not self._dlib_loaded:
@@ -149,11 +150,48 @@ class FatiguePlugin(Detector):
         logger.info("[fatigue] active studying seats: %s", sorted(self._active_seats))
 
     def detect(self, frame: Frame) -> list[AlarmEvent]:
-        if not self._dlib_loaded or not self._active_seats:
+        if not self._dlib_loaded:
             return []
         seats = [seat for seat in self._active_seats.values() if seat.camera_id == frame.camera_id]
-        if not seats:
+        events = []
+        if frame.camera_id in self._demo_cameras:
+            events.extend(self._detect_demo_camera(frame))
+        if seats:
+            events.extend(self._detect_seats(frame, seats))
+        return events
+
+    def _detect_demo_camera(self, frame: Frame) -> list[AlarmEvent]:
+        faces = list(self._face_detector(frame.image[..., ::-1].copy(), 1))
+        if not faces:
+            self._runtime[frame.camera_id] = {"eligible": False, "reason": "no_face_detected", "mode": "demo"}
             return []
+        if len(faces) > 1:
+            self._runtime[frame.camera_id] = {"eligible": False, "reason": "multiple_faces", "mode": "demo"}
+            return []
+        face = faces[0]
+        detector = self._detectors.setdefault(-frame.camera_id, self._detector_factory())
+        rgb = frame.image[..., ::-1].copy()
+        shape = self._shape_predictor(rgb, face)
+        landmarks = np.array([(shape.part(i).x, shape.part(i).y) for i in range(68)], dtype=np.float32)
+        self._runtime[frame.camera_id] = {"eligible": True, "reason": "detecting", "mode": "demo"}
+        result = detector.detect(landmarks, frame.ts)
+        if not result or self._in_cooldown(-frame.camera_id, result.kind, frame.ts):
+            return []
+        self._last_alert_at[(-frame.camera_id, result.kind)] = frame.ts
+        level = int(getattr(Config, "FATIGUE_ALERT_LEVEL", 1))
+        return [AlarmEvent(
+            type="fatigue", region_id=None, camera_id=frame.camera_id,
+            ts=frame.ts, level=level, confidence=1.0, snapshot=frame.image,
+            extra={
+                "kind": result.kind, "user_id": 0, "member_id": None,
+                "mode": "demo", "identity_state": "demo_ready", "presentation": "companion",
+                "level": level, "ear": result.ear, "mar": result.mar,
+                "closed_duration": result.closed_duration, "yawn_hits": result.yawn_hits,
+                "yawn_window": result.yawn_window,
+            },
+        )]
+
+    def _detect_seats(self, frame: Frame, seats: list[ActiveSeat]) -> list[AlarmEvent]:
         faces = list(self._face_detector(frame.image[..., ::-1].copy(), 1))
         events = []
         for seat in seats:
@@ -191,6 +229,20 @@ class FatiguePlugin(Detector):
         return events
 
     def on_config_changed(self, cfg: dict) -> None:
+        camera_id = cfg.get("camera_id")
+        if camera_id is not None:
+            camera_id = int(camera_id)
+            if cfg.get("status") == "studying":
+                self._demo_cameras.add(camera_id)
+                self._runtime[camera_id] = {"eligible": False, "reason": "waiting_for_face", "mode": "demo"}
+            else:
+                self._demo_cameras.discard(camera_id)
+                detector = self._detectors.pop(-camera_id, None)
+                if detector:
+                    detector.reset()
+                self._runtime[camera_id] = {"eligible": False, "reason": "not_studying", "mode": "demo"}
+            self.enabled = bool(self._active_seats) or bool(self._demo_cameras)
+            return
         region_id = cfg.get("region_id")
         if region_id is not None and cfg.get("status") != "studying":
             region_id = int(region_id)
@@ -199,13 +251,16 @@ class FatiguePlugin(Detector):
                 detector.reset()
             self._active_seats.pop(region_id, None)
             self._runtime[region_id] = {"eligible": False, "reason": "not_studying"}
-            self.enabled = bool(self._active_seats)
+            self.enabled = bool(self._active_seats) or bool(self._demo_cameras)
             return
         self._reload_active_seats()
-        self.enabled = bool(self._active_seats)
+        self.enabled = bool(self._active_seats) or bool(self._demo_cameras)
 
     def get_runtime_state(self, region_id: int) -> dict:
         return dict(self._runtime.get(region_id, {"eligible": False, "reason": "not_studying"}))
+
+    def get_runtime_state_for_camera(self, camera_id: int) -> dict:
+        return dict(self._runtime.get(camera_id, {"eligible": False, "reason": "camera_not_active", "mode": "demo"}))
 
     def _reload_active_seats(self) -> None:
         from ..models.entities import Region, SeatReservation, SeatStatus

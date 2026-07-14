@@ -31,6 +31,8 @@ export const upsertSeatReservation = (regionId, memberId) => http.put(`/seat-res
 export const deleteSeatReservation = (regionId) => http.delete(`/seat-reservations/${regionId}`)
 export const switchSeatStatus = (data) => http.post('/seat-status', data)
 export const getSeatCompanionStatus = (userId, regionId) => http.get('/seat-status/companion', { params: { user_id: userId, region_id: regionId } })
+export const getDemoStatus = (cameraId) => http.get('/seat-status/demo', { params: { camera_id: cameraId } })
+export const switchDemoStatus = (cameraId, status) => http.post('/seat-status/demo', { camera_id: cameraId, status })
 export const getCameraStreamStatus = (cameraId) => http.get(`/cameras/${cameraId}/stream-status`)
 export const getAlarms = (status, cameraId) => http.get('/alarms', { params: { status, camera_id: cameraId } })
 export const confirmAlarm = (id) => http.post(`/alarms/${id}/confirm`)
