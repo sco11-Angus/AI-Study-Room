@@ -400,14 +400,13 @@ class FaceDetector(Detector):
         self._frame_count += 1
 
         # ================================================================
-        # 全帧静态检测 — 每帧都跑，绕开 dlib bbox 抖动
-        # 单档阈值 nmse < 0.0005，连续 3 次确认。
-        # 静态照片/冻结帧：nmse ~0.00001~0.0002（像素级一致）
-        # 真人坐着不动：nmse ~0.001~0.005（呼吸+传感器噪声）
-        # 0.0005 安全裕量足够大，不会误判真人。
+        # 全帧静态检测 — 每帧都跑，绕开 dlib bbox 抖动。
+        # 默认关闭（Config.FACE_STATIC_DETECT_ENABLED）：在高稳定度摄像头上
+        # 真人 nmse(~0.0002) 与静态照片重叠，会 100% 误判真人。
+        # 防照片改由 FSD + 眨眼(EAR) 等活体层负责。阈值/连击可经环境变量调。
         # ================================================================
-        import time
-        try:
+        if Config.FACE_STATIC_DETECT_ENABLED:
+          try:
             curr_gray = cv2.cvtColor(frame.image, cv2.COLOR_BGR2GRAY)
             curr_small = cv2.resize(curr_gray, (64, 64)).astype(np.float32)
 
@@ -421,9 +420,9 @@ class FaceDetector(Detector):
                 if curr_var < 1.0:
                     # 合成帧不累积 streak，同时清除可能残留的旧计数
                     self._static_streak = 0
-                elif nmse < 0.0005:
+                elif nmse < Config.FACE_STATIC_NMSE_THRESHOLD:
                     self._static_streak += 1
-                    need = 3
+                    need = Config.FACE_STATIC_STREAK
                 else:
                     self._static_streak = 0
 
@@ -447,7 +446,7 @@ class FaceDetector(Detector):
                         )
                     ]
             self._prev_full_gray = curr_small
-        except Exception:
+          except Exception:
             pass  # 静态检测失败不阻塞正常流程
 
         if self._frame_count % self._skip_frames != 0:

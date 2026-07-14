@@ -9,16 +9,22 @@ from app import create_app
 logging.basicConfig(level=logging.INFO, stream=sys.stdout, format="%(levelname)s:%(name)s: %(message)s")
 
 app = create_app()
+_services_started = False
 
 
 def start_services():
     """启动推理引擎和拉流调度器。"""
+    global _services_started
+    if _services_started:
+        return
+    _services_started = True
+
     from app.detectors.face import FaceDetector
-    from app.detectors.fire_smoke import FireSmokePlugin
-    from app.detectors.fight import FightPlugin
     from app.detectors.fatigue import FatiguePlugin
     from app.detectors.intrusion import IntrusionPlugin
-    from app.detectors.person_source import SharedContextProvider
+    from app.detectors.fire_smoke import FireSmokePlugin
+    # from app.detectors.fight import FightPlugin
+    # from app.detectors.person_source import SharedContextProvider
     from app.config import Config
     from app.stream.engine import InferenceEngine
     from app.stream.scheduler import StreamScheduler, set_scheduler
@@ -28,9 +34,9 @@ def start_services():
     engine = InferenceEngine(max_workers=2)
     engine.register(IntrusionPlugin(shared_ctx=engine.shared_ctx))
     engine.register(FaceDetector(skip_frames=3, cooldown=1.0))
-    engine.register(FatiguePlugin())
-    engine.register(FireSmokePlugin())
-    engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
+    # engine.register(FatiguePlugin())
+    # engine.register(FireSmokePlugin())
+    # engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
     engine.setup_all()
     print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 
@@ -111,6 +117,10 @@ def _load_db_cameras() -> list[tuple[int, str, str]]:
     except Exception as e:
         print(f"[run] 数据库摄像头查询失败: {e}", flush=True)
         return []
+
+
+if os.getenv("DISABLE_BACKGROUND_SERVICES", "0").lower() not in ("1", "true", "yes"):
+    start_services()
 
 
 if __name__ == "__main__":

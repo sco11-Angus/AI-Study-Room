@@ -4,3 +4,6 @@ opencv-python~=4.13.0.92
 #dlib-bin~=20.0.1
 flask~=3.1.0
 pillow>=11.3.0
+# 情感分析增强打架检测 (任务书 D2): 人脸表情识别 HSEmotion(ONNX, CPU)
+onnxruntime~=1.27.0
+hsemotion-onnx~=0.3.1

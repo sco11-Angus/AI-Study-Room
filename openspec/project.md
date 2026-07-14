@@ -1,34 +1,29 @@
-# 项目上下文（OpenSpec project.md）
+# AI Study Room OpenSpec Context
 
-> 本文件为规范驱动开发的入口，向协作者与 AI 提供项目背景、技术栈与规范索引。
+## Product
 
-## 项目简介
+AI Study Room is a real-time video analysis and monitoring system for shared study rooms. It combines camera streams, computer-vision detectors, a Vue management dashboard, persistent alarms, and DingTalk notifications to turn detected risks into an auditable response loop.
 
-实时视频分析监测系统（智慧自习室 AI 管家）：面向共享自习室的智能管理平台，通过视频流、CV 算法、可视化看板和第三方通知，将被动监控升级为主动感知、及时告警、闭环处置。MVP 版本 V1.0.0。
+## Architecture
 
-## 技术栈
+- Backend: Python, Flask, OpenCV, YOLOv8n, Dlib, SQLAlchemy.
+- Streaming: RTMP through Nginx-RTMP and the backend stream scheduler.
+- Frontend: Vue 3, Element Plus, Pinia, and WebSocket/MJPEG video delivery.
+- Deployment: Docker and Jenkins.
 
-- 端：IP 摄像头，采集 H.264/AAC 音视频流
-- 流：Nginx-RTMP 推拉流转发
-- 云：Python Flask + OpenCV + YOLOv8n + Dlib
-- 网：Vue 3 + Element Plus
+## OpenSpec Rules
 
-## 约定
+- Every new module or cross-module behavior starts as an active change in `openspec/changes/<change-id>/`.
+- A change must contain `proposal.md`, `design.md`, `tasks.md`, and delta specs for every affected capability before implementation begins.
+- `npm run spec:validate` must pass before implementation and before a change is archived.
+- Capability contracts live in `openspec/specs/<capability>/spec.md`; `feature_list.json` remains the source of truth for delivery status.
+- Completed changes are archived only after implementation evidence, tests, and progress records have been updated.
 
-- 规范驱动：先在 `specs/` 明确能力边界，再编写代码。
-- 每个能力对应一份规范，变更走 `changes/` 提案流程。
-- 功能状态以根目录 `feature_list.json` 为唯一事实来源。
-- 会话流程见根目录 `AGENTS.md`。
+## Repository Map
 
-## 目录索引
-
-| 路径 | 说明 |
-| --- | --- |
-| `specs/spec.md` | 能力边界定义（真理源） |
-| `specs/PRD.md` | 产品需求文档 |
-| `specs/系统设计说明书.md` | 系统设计说明书（SDD） |
-| `specs/数据库设计.md` | 数据库设计 |
-| `changes/` | 变更提案与 `archive/` 归档 |
-| `tasks/` | 六人任务书与协作顺序 |
-| `progress/` | 会话进度与工作记录 |
-| `config.yaml` | OpenSpec 配置 |
+- `openspec/specs/spec.md`: capability index and ownership map.
+- `openspec/specs/<capability>/spec.md`: accepted capability contract.
+- `openspec/changes/`: active changes and OpenSpec-managed archives.
+- `openspec/proposals/`: legacy reference material only; do not create new proposals here.
+- `openspec/tasks/`: original assignment material and collaboration guidance.
+- `openspec/progress/`: verified state and engineering handoff notes.

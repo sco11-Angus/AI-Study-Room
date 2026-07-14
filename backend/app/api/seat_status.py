@@ -1,6 +1,9 @@
 """自习状态宣告接口 — 激活/挂起疲劳算法 (§4, §9)。"""
+import json
+
 from flask import Blueprint, request
 
+from ..config import Config
 from ..stream.scheduler import get_scheduler
 from .response import err, ok
 
@@ -8,6 +11,57 @@ bp = Blueprint("seat_status", __name__, url_prefix="/api/seat-status")
 
 _VALID_STATUSES = {"idle", "studying", "resting"}
 SessionLocal = None
+
+
+@bp.get("/companion")
+def companion_status():
+    """Return the current study companion state and latest fatigue reminder."""
+    user_id = request.args.get("user_id", type=int)
+    region_id = request.args.get("region_id", type=int)
+    if user_id is None or region_id is None:
+        return err("user_id and region_id are required"), 400
+
+    _, SeatStatus = _models()
+    from ..models.entities import AlarmEvent
+
+    session = _session()
+    try:
+        row = (
+            session.query(SeatStatus)
+            .filter(SeatStatus.user_id == user_id, SeatStatus.region_id == region_id)
+            .first()
+        )
+        alarm = (
+            session.query(AlarmEvent)
+            .filter(AlarmEvent.type == "fatigue", AlarmEvent.region_id == region_id)
+            .order_by(AlarmEvent.created_at.desc())
+            .first()
+        )
+        latest = None
+        if alarm is not None:
+            extra = {}
+            if alarm.extra:
+                try:
+                    extra = json.loads(alarm.extra)
+                except json.JSONDecodeError:
+                    extra = {}
+            latest = {
+                "id": alarm.id,
+                "type": alarm.type,
+                "level": alarm.level,
+                "status": alarm.status,
+                "extra": extra,
+                "created_at": alarm.created_at.isoformat() if alarm.created_at else None,
+            }
+        return ok({
+            "user_id": user_id,
+            "region_id": region_id,
+            "status": row.status if row else "idle",
+            "dingtalk_configured": bool(Config.DINGTALK_WEBHOOK),
+            "latest_fatigue": latest,
+        })
+    finally:
+        session.close()
 
 
 @bp.post("")

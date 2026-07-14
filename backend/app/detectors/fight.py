@@ -17,6 +17,7 @@ import numpy as np
 
 from ..config import Config
 from .base import AlarmEvent, Detector, Frame
+from .emotion import FacialEmotion
 from .person_source import Box, PersonBoxProvider, build_person_provider
 
 logger = logging.getLogger(__name__)
@@ -111,16 +112,77 @@ class VisualConflict:
 
 # ---------------- D3 音频侧：打斗声识别 ----------------
 
-class AudioConflict:
-    """音频打斗置信度 — 基础声学特征：高能量突发为一级信号。
+# YAMNet AudioSet 类目中与打斗相关者（尖叫/怒吼/哭喊/玻璃碎裂）
+_YAMNET_FIGHT_CLASSES = (
+    "Screaming", "Shout", "Yell", "Children shouting",
+    "Crying, sobbing", "Glass", "Breaking",
+)
 
-    每窗口计算 RMS(dBFS) 能量、过零率、谱质心；能量骤升且持续 -> aud_score。
-    语义增强（YAMNet/小 CNN 识别 尖叫/glass break）留作加分 TODO。
+
+def _build_audio_emotion_backend():
+    """按 Config 构造声学情绪后端；未配置 YAMNet 模型则返回 None（纯声学）。
+
+    留作可换后端：YAMNet(tflite) 首选，未来 torch 环境可换 wav2vec2 维度情绪。
+    模型路径未配置或加载失败 -> None，AudioConflict 自动退回纯声学，不崩。
+    """
+    path = Config.YAMNET_MODEL_PATH.strip()
+    if not path:
+        return None
+    try:
+        return _YamnetBackend(path)
+    except Exception:
+        logger.exception("[fight] YAMNet 声学情绪后端加载失败，退回纯声学")
+        return None
+
+
+class _YamnetBackend:
+    """YAMNet tflite 声学事件后端 — 吃 16kHz PCM，出打斗类概率之和。
+
+    注：需 tflite-runtime/tensorflow 与 YAMNet 模型；未安装则构造抛异常，
+    由 _build_audio_emotion_backend 捕获降级。
+    """
+
+    def __init__(self, model_path: str):
+        try:
+            from tflite_runtime.interpreter import Interpreter  # type: ignore
+        except ImportError:
+            from tensorflow.lite import Interpreter  # type: ignore
+        self._interp = Interpreter(model_path=model_path)
+        self._interp.allocate_tensors()
+        self._in = self._interp.get_input_details()[0]
+        self._out = self._interp.get_output_details()[0]
+        self._fight_idx = self._resolve_fight_indices()
+
+    def _resolve_fight_indices(self) -> list[int]:
+        # YAMNet 类目表随模型分发；此处留待接入真实模型时按 class_map 解析。
+        # 缺表时退回空 -> fight_prob 恒 0，等价于不启用（安全默认）。
+        return []
+
+    def fight_prob(self, pcm: np.ndarray, sample_rate: int) -> float:
+        if not self._fight_idx:
+            return 0.0
+        waveform = pcm.astype(np.float32)
+        self._interp.resize_tensor_input(self._in["index"], [len(waveform)])
+        self._interp.allocate_tensors()
+        self._interp.set_tensor(self._in["index"], waveform)
+        self._interp.invoke()
+        scores = self._interp.get_tensor(self._out["index"])
+        per_class = scores.mean(axis=0) if scores.ndim == 2 else scores
+        return float(np.clip(sum(per_class[i] for i in self._fight_idx), 0.0, 1.0))
+
+
+class AudioConflict:
+    """音频打斗置信度 — 声学能量 + 可选声学情绪(YAMNet 尖叫/怒吼) (D2-B)。
+
+    每窗口计算 RMS(dBFS) 能量、过零率、谱质心，得到"响度突发"基础分。
+    若配置了 YAMNet 声学情绪后端，则 aud = W_EMO*情绪(尖叫/怒吼) + (1-W_EMO)*响度，
+    从"有多响"升级为"是不是打斗声"；未配置时退回纯声学（行为与原版一致）。
     """
 
     def __init__(self, hist: int = 5, rms_ref_db: float = -20.0):
         self.rms_ref_db = rms_ref_db          # 达到此响度视为高能量（满分参考）
         self._energy_hist: deque = deque(maxlen=hist)  # 近几窗能量，判"突发"
+        self._emo_backend = _build_audio_emotion_backend()  # None = 纯声学
 
     @staticmethod
     def _rms_dbfs(pcm: np.ndarray) -> float:
@@ -144,7 +206,8 @@ class AudioConflict:
         total = mag.sum()
         return float((freqs * mag).sum() / total) if total > 0 else 0.0
 
-    def score(self, pcm: np.ndarray, sample_rate: int) -> float:
+    def _acoustic_score(self, pcm: np.ndarray, sample_rate: int) -> float:
+        """纯声学打斗分：响度 + 突发 + 宽频特征。"""
         db = self._rms_dbfs(pcm)
         # 能量映射：从 -60dBFS(静) 到 rms_ref_db(打斗) 线性归一
         loud = np.clip((db - (-60.0)) / (self.rms_ref_db - (-60.0)), 0.0, 1.0)
@@ -159,8 +222,20 @@ class AudioConflict:
         centroid = self._spectral_centroid(pcm, sample_rate)
         spectral = np.clip(centroid / (sample_rate / 4), 0.0, 1.0)
         feat = 0.5 * zcr + 0.5 * spectral
-        aud = 0.6 * loud + 0.25 * burst + 0.15 * feat
-        return float(np.clip(aud, 0.0, 1.0))
+        return float(np.clip(0.6 * loud + 0.25 * burst + 0.15 * feat, 0.0, 1.0))
+
+    def score(self, pcm: np.ndarray, sample_rate: int) -> float:
+        acoustic = self._acoustic_score(pcm, sample_rate)
+        if self._emo_backend is None:
+            return acoustic
+        # 声学情绪主导（尖叫/怒吼概率），响度托底防模型抖动
+        try:
+            emo = float(self._emo_backend.fight_prob(pcm, sample_rate))
+        except Exception:
+            logger.exception("[fight] 声学情绪推理失败，退回纯声学")
+            return acoustic
+        w = Config.AUDIO_EMO_WEIGHT
+        return float(np.clip(w * emo + (1.0 - w) * acoustic, 0.0, 1.0))
 
 
 # ---------------- D4 语义融合 + 时空防抖 ----------------
@@ -178,11 +253,21 @@ class FusionDebouncer:
         self.w_a = Config.FIGHT_W_AUD
         self.thresh = Config.FIGHT_FUSE_THRESH
         self.duration = Config.FIGHT_DURATION
+        self.gate_floor = Config.EMOTION_GATE_FLOOR  # 情绪闸门下限系数 (D2)
         self._candidate_since: float | None = None
         self._fired = False  # 已就同一次持续冲突告警，避免重复刷
 
-    def update(self, vis_score: float, aud_score: float, ts: float) -> dict | None:
-        fuse = self.w_v * vis_score + self.w_a * aud_score
+    def update(self, vis_score: float, aud_score: float, ts: float,
+               emo_gate: float = 1.0) -> dict | None:
+        """融合音视频分并防抖。
+
+        emo_gate (D2): 该帧负面情绪(愤怒/恐惧)峰值 ∈ [0,1]，作为视觉分闸门。
+        无负面情绪(emo_gate→0)时视觉分打 gate_floor 折，压制欢呼/嬉闹误报；
+        缺省 1.0 = 不启用情绪时全放行，行为与原版一致。
+        """
+        # 情绪调制：vis' = vis * (floor + (1-floor) * emo_gate)
+        vis_g = vis_score * (self.gate_floor + (1.0 - self.gate_floor) * emo_gate)
+        fuse = self.w_v * vis_g + self.w_a * aud_score
         # 双模 AND：视觉、音频均需非零，避免单模拉满误触发
         is_candidate = fuse > self.thresh and vis_score > 0 and aud_score > 0
 
@@ -199,6 +284,7 @@ class FusionDebouncer:
             return {
                 "vis_score": round(vis_score, 3),
                 "aud_score": round(aud_score, 3),
+                "emo_gate": round(emo_gate, 3),
                 "fuse": round(fuse, 3),
                 "duration": round(held, 2),
             }
@@ -222,6 +308,7 @@ class FightPlugin(Detector):
         self._visual = VisualConflict()
         self._audio = AudioConflict()
         self._fusion = FusionDebouncer()
+        self._emotion = FacialEmotion()  # D2 情绪闸门
         self._last_aud_score = 0.0
         self._last_aud_ts: float | None = None
 
@@ -229,7 +316,12 @@ class FightPlugin(Detector):
         # 复用 B 的人员框（不加载 YOLO）；音频模型加载留待语义增强 TODO
         if self._person is None:
             self._person = build_person_provider(Config.FIGHT_PERSON_SOURCE)
-        logger.info("[fight] 打架检测器就绪（人员框来源=%s）", type(self._person).__name__)
+        self._emotion.setup()  # D2: 预加载表情模型（未启用则跳过）
+        logger.info(
+            "[fight] 打架检测器就绪（人员框来源=%s, 情绪闸门=%s）",
+            type(self._person).__name__,
+            "on" if Config.EMOTION_ENABLE else "off",
+        )
 
     def feed_audio(self, chunk) -> None:
         """由音轨管线(D1)投递 AudioChunk，更新最近音频分（D3）。"""
@@ -246,11 +338,17 @@ class FightPlugin(Detector):
                 abs(frame.ts - self._last_aud_ts) <= Config.FIGHT_ALIGN_TOL:
             aud_score = self._last_aud_score
 
-        hit = self._fusion.update(vis_score, aud_score, frame.ts)
+        # D2 情绪闸门：负面情绪(愤怒/恐惧)峰值调制视觉分，压制欢呼/嬉闹误报
+        emo_gate = self._emotion.score(frame.image, boxes)
+
+        hit = self._fusion.update(vis_score, aud_score, frame.ts, emo_gate=emo_gate)
         if hit is None:
             return []
 
-        logger.warning("[fight] 打架告警 region=%s fuse=%.3f", self.region_id, hit["fuse"])
+        logger.warning(
+            "[fight] 打架告警 region=%s fuse=%.3f emo_gate=%.3f",
+            self.region_id, hit["fuse"], hit["emo_gate"],
+        )
         return [AlarmEvent(
             region_id=self.region_id,
             type="fight",
@@ -260,6 +358,7 @@ class FightPlugin(Detector):
                 "level": Config.FIGHT_LEVEL,
                 "vis_score": hit["vis_score"],
                 "aud_score": hit["aud_score"],
+                "emo_gate": hit["emo_gate"],
                 "fuse": hit["fuse"],
                 "duration": hit["duration"],
                 "person_boxes": boxes,
