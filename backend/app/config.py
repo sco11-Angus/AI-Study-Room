@@ -211,6 +211,13 @@ class Config:
     ANTISPOOF_WEIGHT_ONNX = float(os.getenv("ANTISPOOF_WEIGHT_ONNX", 0.5))
     ANTISPOOF_WEIGHT_PTH = float(os.getenv("ANTISPOOF_WEIGHT_PTH", 0.5))
 
+    # FSD 零样本 AIGC 检测：max_size 上限。
+    # 关键：FSD 靠频域高频伪影判别，把低清图"放大"会插值抹掉指纹 → 测不出。
+    # 实测扫描(324x576换脸视频)：max_size 256~448 全部命中(z=-5~-21，320最佳)，
+    # 512~576 漏判(z≈-1.4)。存在"悬崖"——FSD 需把图降采样到 ~320 频段才暴露 AI 指纹。
+    # 策略：max_size = min(输入帧长边, 上限=320)，既不放大低清、又避开512+失效区、并控CPU内存。
+    FSD_MAX_SIZE_CAP = int(os.getenv("FSD_MAX_SIZE_CAP", 320))
+
     # 违规抓拍回放 (任务书 G)
     CLIP_PRE_SECONDS = int(os.getenv("CLIP_PRE_SECONDS", 5))    # 违规前录制秒数
     CLIP_POST_SECONDS = int(os.getenv("CLIP_POST_SECONDS", 5))   # 违规后录制秒数
