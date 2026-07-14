@@ -45,6 +45,8 @@ class SeatStatus(Base):
     region_id = Column(Integer, ForeignKey("region.id"))
     guard_id = Column(Integer, ForeignKey("guard.id"))
     status = Column(Text)
+    mode = Column(String(16), nullable=False, default="demo")
+    member_id = Column(Integer, ForeignKey("member.member_id"), nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

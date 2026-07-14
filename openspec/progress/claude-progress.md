@@ -703,3 +703,21 @@
   - `npm.cmd run build` from `frontend/`, `npm.cmd run spec:validate`, and `.\\init.cmd` all passed.
 - Remaining action:
   - Configure `DINGTALK_WEBHOOK` (and `DINGTALK_SECRET` if the robot uses signing security), restart the backend, then capture OBS evidence for stranger active -> exit cleared -> reservation owner allowed.
+
+## Session 2026-07-14 Fatigue Companion Sessions
+
+- Goal: make fatigue a seat-scoped self-study companion reminder instead of an ambiguous global alarm state.
+- Completed:
+  - Added explicit `demo` and `verified` study-session modes, nullable enrolled `member_id`, and additive startup migration for existing SQLite/MySQL `seat_status` tables.
+  - Kept `seat_reservation` as the durable identity binding; verified sessions now require the selected enrolled member to match that reservation.
+  - Reworked fatigue face selection to require exactly one face inside the actual decoded-frame seat polygon. Outside faces and multiple in-seat faces reset temporal state rather than borrowing a full-frame face.
+  - Verified sessions now require a matching face before EAR/MAR progresses. Mismatches pause fatigue and leave unauthorized-seat handling to the intrusion plugin.
+  - Added a companion WebSocket route for matching fatigue reminders. Fatigue remains persisted and level-1 DingTalk-notified, while Dashboard keeps it in history without treating it as a red active region, flash, or beep trigger.
+  - Rebuilt the companion UI around explicit camera, seat, user ID, mode, and member choices plus live eligibility/pause-reason display.
+- Validation:
+  - `python -m py_compile` passed for changed backend modules.
+  - SQLite focused regression passed: `52 passed` for fatigue, alarm center, reservation, and identity tests.
+  - `npm.cmd --prefix frontend run build` passed.
+- Remaining risks:
+  - Docker Desktop was not running during this implementation pass, so live RTMP frames, real Dlib verified-member matching, and external DingTalk delivery remain pending environment acceptance.
+  - `/ws/companion` is session-routed for the unauthenticated demonstration; production privacy requires a later login/authorization change.

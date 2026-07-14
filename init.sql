@@ -64,12 +64,15 @@ CREATE TABLE IF NOT EXISTS seat_status (
     region_id INT NULL COMMENT '座位，外键region.id',
     guard_id INT NULL COMMENT '安全员，外键guard.id',
     status TEXT NULL COMMENT 'idle/studying/resting',
+    mode VARCHAR(16) NOT NULL DEFAULT 'demo' COMMENT 'demo/verified 自习会话模式',
+    member_id INT NULL COMMENT 'verified 模式关联已录入人脸的成员',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '状态变更时间',
     INDEX idx_seat_region (region_id),
     INDEX idx_seat_user (user_id),
     FOREIGN KEY (user_id) REFERENCES app_user(id) ON DELETE SET NULL,
     FOREIGN KEY (region_id) REFERENCES region(id) ON DELETE CASCADE,
     FOREIGN KEY (guard_id) REFERENCES guard(id) ON DELETE SET NULL
+    ,FOREIGN KEY (member_id) REFERENCES member(member_id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='座位自习状态表';
 
 -- 表4-4a seat_reservation 座位预约绑定

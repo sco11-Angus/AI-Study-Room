@@ -424,6 +424,33 @@
         "Live OBS/RTMP human validation remains external-state dependent and still needs a pushed stream at rtmp://49.233.71.82:9090/live/test.",
         "The implementation intentionally keeps Dlib for this iteration; MediaPipe or a learned fatigue classifier would require a separate model-evaluation change."
       ]
+    },
+    {
+      "id": "fatigue-companion-session",
+      "name": "Make fatigue reminders session-aware in the study companion",
+      "priority": 1,
+      "status": "in_progress",
+      "description": "Add explicit demo/verified study sessions, strict in-seat fatigue identity gating, companion-scoped reminder delivery, and a non-emergency dashboard history presentation.",
+      "required_validation": [
+        "python -m pytest tests/test_fatigue.py tests/test_alarm_center.py tests/test_intrusion_identity.py tests/test_seat_reservations.py -q",
+        "npm.cmd --prefix frontend run build",
+        "npm.cmd run spec:validate",
+        ".\\init.cmd",
+        "Live OBS demo and verified-session acceptance"
+      ],
+      "evidence": [
+        "Created OpenSpec change fatigue-companion-session and passed strict validation before implementation.",
+        "Added SeatStatus mode/member_id fields with an additive startup migration and verified-session reservation validation.",
+        "Fatigue now requires exactly one in-seat face, scales normalized polygons against decoded frames, and pauses for outside faces, multiple faces, or verified identity mismatch.",
+        "Added companion-scoped fatigue WebSocket delivery; fatigue remains persisted and level-1 DingTalk-notified while Dashboard keeps it out of active red-region, flash, and beep states.",
+        "Rebuilt SeatCompanion with explicit camera, seat, user, mode, member, stream, reservation, runtime-state, and reminder controls.",
+        "Focused SQLite regression passed on 2026-07-14: 52 passed.",
+        "Frontend production build passed on 2026-07-14."
+      ],
+      "blockers": [
+        "Docker Desktop was unavailable during implementation, so live RTMP, real enrolled-member matching, and DingTalk external delivery need acceptance after the runtime is restored.",
+        "The current demo has no authenticated user session; /ws/companion routes by user_id and region_id but is not a production privacy boundary."
+      ]
     }
   ]
 }

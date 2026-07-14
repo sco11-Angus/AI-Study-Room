@@ -33,6 +33,8 @@ export const useAlarmStore = defineStore('alarm', {
       if (alarm) Object.assign(alarm, updates)
     },
     isRegionAlarm(alarm) {
+      // Fatigue stays in the history list but is a personal companion reminder,
+      // never an emergency overlay state.
       return alarm?.type === 'intrusion' || alarm?.type === 'occupy'
     },
     activateRegionTrack(regionId, trackKey) {
