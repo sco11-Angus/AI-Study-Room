@@ -3,7 +3,6 @@
     <section class="page-header">
       <div>
         <h2>自习伴侣</h2>
-        <p>为当前座位提供疲劳提醒；疲劳记录会留存并发送钉钉，但不会触发监控大屏红闪。</p>
       </div>
       <el-tag :type="streamOnline ? 'success' : 'danger'">{{ streamOnline ? '视频流在线' : '视频流未就绪' }}</el-tag>
     </section>
@@ -62,7 +61,7 @@
           <div><dt>运行说明</dt><dd>{{ reasonLabel(runtime.reason) }}</dd></div>
           <div v-if="runtime.face_match"><dt>人脸结果</dt><dd>{{ runtime.face_match }}</dd></div>
         </dl>
-        <div v-if="!dingtalkConfigured" class="config-warning">钉钉 Webhook 未配置：疲劳提醒仍会显示在这里，但不会外发到钉钉。</div>
+        
       </section>
     </div>
 
