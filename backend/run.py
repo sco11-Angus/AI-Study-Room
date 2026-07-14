@@ -39,7 +39,7 @@ def start_services():
     engine.register(abnormal_sound_plugin)
     engine.register(FatiguePlugin())
     engine.register(FireSmokePlugin())
-    # engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
+    engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
     engine.setup_all()
     print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 

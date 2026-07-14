@@ -130,8 +130,9 @@ class Config:
 
     # 音视频融合打架检测 (任务书 D)
     FIGHT_FUSE_THRESH = float(os.getenv("FIGHT_FUSE_THRESH", 0.6))  # 融合分告警阈值
-    FIGHT_W_VIS = float(os.getenv("FIGHT_W_VIS", 0.6))    # 视觉分权重
-    FIGHT_W_AUD = float(os.getenv("FIGHT_W_AUD", 0.4))    # 音频分权重
+    # 三模态融合权重(spec)：vis+aud+emo = 0.5+0.3+0.2 = 1.0
+    FIGHT_W_VIS = float(os.getenv("FIGHT_W_VIS", 0.5))    # 视觉分权重
+    FIGHT_W_AUD = float(os.getenv("FIGHT_W_AUD", 0.3))    # 音频分权重
     FIGHT_DURATION = float(os.getenv("FIGHT_DURATION", 3))  # 候选持续确认(秒)
     FIGHT_ALIGN_TOL = float(os.getenv("FIGHT_ALIGN_TOL", 2))  # 音视频时间对齐容差(秒)
     FIGHT_LEVEL = int(os.getenv("FIGHT_LEVEL", 2))        # 告警分级(人身安全高优先)

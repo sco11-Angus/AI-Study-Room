@@ -94,7 +94,8 @@ class AudioEventDetector:
                         break
 
             # Warm-up: need at least ~1s audio for STFT to work (256 padding)
-            dummy_wav = torch.zeros(48000, dtype=torch.float32)
+            # 0.2.1 WaveformToInput 需 2D [channels, time]
+            dummy_wav = torch.zeros((1, 48000), dtype=torch.float32)
             dummy_mel = self._converter(dummy_wav, 16000)
             with torch.no_grad():
                 self._model(dummy_mel)
@@ -123,14 +124,17 @@ class AudioEventDetector:
                 pcm = self._resample(pcm, sample_rate, 16000)
 
             # Convert waveform to log-mel spectrogram
-            waveform = torch.from_numpy(pcm.astype(np.float32))
+            # torch-vggish-yamnet 0.2.1 的 WaveformToInput 期望 2D [channels, time]，
+            # 故给 1D PCM 补一个通道维。
+            waveform = torch.from_numpy(pcm.astype(np.float32)).unsqueeze(0)
             mel = self._converter(waveform, 16000)  # (1, 1, 64, T)
 
             with torch.no_grad():
                 embeddings, scores = self._model(mel)
-            # embeddings: (1, T, 1024), scores: (1, T, 521)
-            mean_scores = scores[0].mean(dim=0).numpy()  # (521,)
-            mean_embedding = embeddings[0].mean(dim=0).numpy()  # (1024,)
+            # torch-vggish-yamnet 0.2.1 输出: scores (num_chunks, 521),
+            # embeddings (num_chunks, 1024, 1, 1)。对 chunk 维取均值得整段表示。
+            mean_scores = scores.mean(dim=0).numpy()  # (521,)
+            mean_embedding = embeddings.reshape(embeddings.shape[0], -1).mean(dim=0).numpy()  # (1024,)
 
             best_event = None
             best_conf = 0.0
