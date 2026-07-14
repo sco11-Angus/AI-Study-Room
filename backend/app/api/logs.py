@@ -1,8 +1,7 @@
-"""日志查询API — 提供告警日志的查看和筛选功能。"""
+"""告警日志查询 API — 直接读数据库 alarm_event 表（含截图/回放）。"""
 import json
 import os
-import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 
@@ -11,80 +10,35 @@ from ..config import Config
 bp = Blueprint("logs", __name__, url_prefix="/api/logs")
 
 
-def _parse_log_line(line: str) -> dict | None:
-    """解析告警日志行。"""
-    pattern = (
-        r"\[(?P<timestamp>[^\]]+)\]\s+"
-        r"(?P<event_type>[A-Z_]+)\s+"
-        r"id=(?P<id>\d+)\s+"
-        r"type=(?P<type>[^\s]+)\s+"
-        r"level=(?P<level>\d+)\s+"
-        r"region=(?P<region>\d+)\s+"
-        r"camera=(?P<camera>\d+)\s+"
-        r"face_match=(?P<face_match>[^\s]+)\s+"
-        r"actor=(?P<actor>[^\s]+)\s+"
-        r"behavior=(?P<behavior>[^\s]+)\s+"
-        r"message=(?P<message>[^s]+?)\s+"
-        r"snapshot_url=(?P<snapshot_url>[^\s]+)\s+"
-        r"extra=(?P<extra>.+)"
-    )
-    match = re.match(pattern, line)
-    if not match:
-        try:
-            parts = line.split(" ", 6)
-            if len(parts) >= 3:
-                return {
-                    "timestamp": parts[0][1:-1],
-                    "event_type": parts[1],
-                    "raw": line,
-                }
-        except Exception:
-            pass
-        return None
-
-    groups = match.groupdict()
+def _serialize_log(record) -> dict:
+    """把 AlarmEvent 记录序列化为日志页需要的结构。"""
     extra = {}
-    if groups.get("extra"):
+    if record.extra:
         try:
-            extra = json.loads(groups["extra"])
-        except json.JSONDecodeError:
-            extra = {"raw": groups["extra"]}
-
+            extra = json.loads(record.extra)
+        except (json.JSONDecodeError, TypeError):
+            extra = {}
     return {
-        "timestamp": groups.get("timestamp", ""),
-        "event_type": groups.get("event_type", ""),
-        "id": int(groups.get("id", 0)),
-        "type": groups.get("type", ""),
-        "level": int(groups.get("level", 0)),
-        "region": int(groups.get("region", 0)),
-        "camera": int(groups.get("camera", 0)),
-        "face_match": groups.get("face_match", ""),
-        "actor": groups.get("actor", ""),
-        "behavior": groups.get("behavior", ""),
-        "message": groups.get("message", ""),
-        "snapshot_url": groups.get("snapshot_url", ""),
+        "id": record.id,
+        "timestamp": record.created_at.strftime("%Y-%m-%d %H:%M:%S") if record.created_at else "",
+        "type": record.type,
+        "level": record.level,
+        "region": record.region_id,
+        "camera": record.camera_id,
+        "face_match": record.face_match or "",
+        "message": record.message or "",
+        "actor": extra.get("actor", ""),
+        "behavior": extra.get("behavior", ""),
+        "snapshot_url": record.snapshot_url or "",
+        "clip_url": record.clip_url or "",
+        "status": record.status,
         "extra": extra,
     }
 
 
-def _get_log_directory() -> str:
-    """获取日志目录路径。"""
-    return os.path.join(os.path.dirname(__file__), "..", "..", "logs")
 
 
-def _get_log_files() -> list[str]:
-    """获取所有日志文件列表。"""
-    log_dir = _get_log_directory()
-    if not os.path.exists(log_dir):
-        return []
-    files = []
-    for f in os.listdir(log_dir):
-        if f.startswith("alarm_") and f.endswith(".log"):
-            files.append(f)
-    return sorted(files, reverse=True)
-
-
-@bp.get("/")
+@bp.get("")
 def list_logs():
     """获取告警日志列表。
     ---
@@ -126,48 +80,52 @@ def list_logs():
     date_str = request.args.get("date")
     alarm_type = request.args.get("type")
     level = request.args.get("level")
+    camera_id = request.args.get("camera_id")
     page = int(request.args.get("page", 1))
     limit = int(request.args.get("limit", 50))
 
-    log_dir = _get_log_directory()
-    log_files = _get_log_files()
+    from ..models.database import SessionLocal
+    from ..models.entities import AlarmEvent
 
-    if date_str:
-        log_files = [f for f in log_files if f == f"alarm_{date_str}.log"]
+    session = SessionLocal()
+    try:
+        query = session.query(AlarmEvent)
+        if alarm_type:
+            query = query.filter(AlarmEvent.type == alarm_type)
+        if level is not None and level != "":
+            query = query.filter(AlarmEvent.level == int(level))
+        if camera_id not in (None, "", "all"):
+            try:
+                query = query.filter(AlarmEvent.camera_id == int(camera_id))
+            except (TypeError, ValueError):
+                pass
+        if date_str:
+            # 当日 [date, date+1)
+            try:
+                day = datetime.strptime(date_str, "%Y-%m-%d")
+                query = query.filter(
+                    AlarmEvent.created_at >= day,
+                    AlarmEvent.created_at < day + timedelta(days=1),
+                )
+            except ValueError:
+                pass
 
-    all_entries = []
-    for filename in log_files:
-        filepath = os.path.join(log_dir, filename)
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    entry = _parse_log_line(line)
-                    if entry:
-                        entry["file"] = filename
-                        all_entries.append(entry)
-        except Exception:
-            continue
-
-    if alarm_type:
-        all_entries = [e for e in all_entries if e.get("type") == alarm_type]
-    if level is not None:
-        all_entries = [e for e in all_entries if e.get("level") == int(level)]
-
-    all_entries.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-
-    start = (page - 1) * limit
-    end = start + limit
-    total = len(all_entries)
-    paginated = all_entries[start:end]
+        total = query.count()
+        records = (
+            query.order_by(AlarmEvent.created_at.desc())
+            .offset((page - 1) * limit)
+            .limit(limit)
+            .all()
+        )
+        entries = [_serialize_log(r) for r in records]
+    finally:
+        session.close()
 
     return jsonify({
         "code": 0,
         "message": "ok",
         "data": {
-            "entries": paginated,
+            "entries": entries,
             "total": total,
             "page": page,
             "limit": limit,
@@ -188,7 +146,8 @@ def list_log_files():
       200:
         description: 文件列表
     """
-    files = _get_log_files()
+    # 日志已改为读数据库，不再有独立日志文件；保留端点兼容旧调用。
+    files = []
     return jsonify({
         "code": 0,
         "message": "ok",
@@ -217,33 +176,31 @@ def get_log_stats():
     """
     date_str = request.args.get("date")
 
-    log_dir = _get_log_directory()
-    log_files = _get_log_files()
+    from ..models.database import SessionLocal
+    from ..models.entities import AlarmEvent
 
-    if date_str:
-        log_files = [f for f in log_files if f == f"alarm_{date_str}.log"]
+    session = SessionLocal()
+    try:
+        query = session.query(AlarmEvent)
+        if date_str:
+            try:
+                day = datetime.strptime(date_str, "%Y-%m-%d")
+                query = query.filter(
+                    AlarmEvent.created_at >= day,
+                    AlarmEvent.created_at < day + timedelta(days=1),
+                )
+            except ValueError:
+                pass
+        records = query.all()
+    finally:
+        session.close()
 
-    total_count = 0
+    total_count = len(records)
     type_stats = {}
     level_stats = {}
-
-    for filename in log_files:
-        filepath = os.path.join(log_dir, filename)
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    entry = _parse_log_line(line)
-                    if entry:
-                        total_count += 1
-                        alarm_type = entry.get("type", "unknown")
-                        type_stats[alarm_type] = type_stats.get(alarm_type, 0) + 1
-                        level = entry.get("level", 0)
-                        level_stats[level] = level_stats.get(level, 0) + 1
-        except Exception:
-            continue
+    for r in records:
+        type_stats[r.type] = type_stats.get(r.type, 0) + 1
+        level_stats[r.level] = level_stats.get(r.level, 0) + 1
 
     return jsonify({
         "code": 0,
@@ -252,9 +209,60 @@ def get_log_stats():
             "total_count": total_count,
             "type_stats": type_stats,
             "level_stats": level_stats,
-            "date_range": {
-                "earliest": log_files[-1].replace("alarm_", "").replace(".log", "") if log_files else None,
-                "latest": log_files[0].replace("alarm_", "").replace(".log", "") if log_files else None,
-            },
         },
     })
+
+
+def _remove_media_file(url: str, base_dir: str) -> None:
+    """按 /api/alarms/{snapshots|clips}/<file> URL 删除对应磁盘文件。"""
+    if not url:
+        return
+    filename = os.path.basename(url.split("?")[0])
+    if not filename:
+        return
+    path = os.path.join(os.path.abspath(base_dir), filename)
+    try:
+        if os.path.isfile(path):
+            os.remove(path)
+    except OSError:
+        pass  # 文件删不掉不阻塞记录删除
+
+
+@bp.delete("/<int:alarm_id>")
+def delete_log(alarm_id: int):
+    """删除一条告警日志：同时删除数据库记录 + 截图/回放文件。
+    ---
+    tags:
+      - Log
+    summary: 删除告警日志（含数据库记录与媒体文件）
+    parameters:
+      - name: alarm_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: 删除成功
+      404:
+        description: 告警不存在
+    """
+    from ..models.database import SessionLocal
+    from ..models.entities import AlarmEvent
+
+    session = SessionLocal()
+    try:
+        record = session.query(AlarmEvent).filter(AlarmEvent.id == alarm_id).first()
+        if record is None:
+            return jsonify({"code": 404, "message": "告警不存在", "data": {"id": alarm_id}}), 404
+        snapshot_url = record.snapshot_url
+        clip_url = record.clip_url
+        session.delete(record)
+        session.commit()
+    finally:
+        session.close()
+
+    # 记录删除后再清理磁盘媒体文件
+    _remove_media_file(snapshot_url, Config.SNAPSHOT_DIR)
+    _remove_media_file(clip_url, Config.CLIP_DIR)
+
+    return jsonify({"code": 0, "message": "ok", "data": {"id": alarm_id}})

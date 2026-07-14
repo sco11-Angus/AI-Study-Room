@@ -1,5 +1,8 @@
 import { defineStore } from 'pinia'
 
+// 告警列表最多保留条数（Dashboard 截断历史+实时告警列表）
+export const MAX_ALARMS = 100
+
 // 告警全局状态 (§7.3)
 export const useAlarmStore = defineStore('alarm', {
   state: () => ({

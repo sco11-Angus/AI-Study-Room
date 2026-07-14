@@ -69,15 +69,25 @@
         <el-table-column prop="face_match" label="人脸匹配" width="120" />
         <el-table-column prop="message" label="告警信息" min-width="200" />
         <el-table-column prop="actor" label="行为者" width="100" />
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" width="240">
           <template #default="scope">
             <el-button
               v-if="scope.row.snapshot_url"
               type="primary"
               size="small"
               @click="viewSnapshot(scope.row.snapshot_url)"
-            >查看截图</el-button>
-            <span v-else>-</span>
+            >截图</el-button>
+            <el-button
+              v-if="scope.row.clip_url"
+              type="success"
+              size="small"
+              @click="viewClip(scope.row.clip_url)"
+            >回放</el-button>
+            <el-button
+              type="danger"
+              size="small"
+              @click="deleteLog(scope.row)"
+            >删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -97,11 +107,17 @@
       <img v-if="snapshotUrl" :src="getFullUrl(snapshotUrl)" class="snapshot-image" />
       <div v-else class="empty-snapshot">暂无截图</div>
     </el-dialog>
+
+    <el-dialog v-model="showClip" title="违规视频回放" width="640px">
+      <video v-if="clipUrl" :src="getFullUrl(clipUrl)" controls autoplay class="snapshot-image" />
+      <div v-else class="empty-snapshot">暂无回放</div>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, onMounted, reactive } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const filterDate = ref('')
 const filterType = ref('')
@@ -113,6 +129,8 @@ const stats = reactive({})
 const loading = ref(false)
 const showSnapshot = ref(false)
 const snapshotUrl = ref('')
+const showClip = ref(false)
+const clipUrl = ref('')
 const total = ref(0)
 
 const typeLabels = {
@@ -196,6 +214,32 @@ function fetchStats() {
 function viewSnapshot(url) {
   snapshotUrl.value = url
   showSnapshot.value = true
+}
+
+function viewClip(url) {
+  clipUrl.value = url
+  showClip.value = true
+}
+
+function deleteLog(row) {
+  ElMessageBox.confirm(
+    '删除后将同时从数据库移除该告警记录及其截图/回放文件，且不可恢复。确认删除？',
+    '删除告警日志',
+    { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+  )
+    .then(() => fetch(`/api/logs/${row.id}`, { method: 'DELETE' }).then((res) => res.json()))
+    .then((data) => {
+      if (data && data.code === 0) {
+        ElMessage.success('已删除')
+        fetchLogs()
+        fetchStats()
+      } else if (data) {
+        ElMessage.error(data.message || '删除失败')
+      }
+    })
+    .catch((e) => {
+      if (e !== 'cancel') ElMessage.error('删除失败')
+    })
 }
 
 function getFullUrl(url) {

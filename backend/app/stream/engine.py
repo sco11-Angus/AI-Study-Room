@@ -98,6 +98,11 @@ class InferenceEngine:
         for name, detector in self._detectors.items():
             if not detector.enabled:
                 continue
+            # camera_ids 过滤：None=所有摄像头都跑；否则仅在列表内的 camera_id 上执行。
+            # 用于把重型检测器（如街道 YOLO）限定到指定几路，避免全路推理打爆线程池。
+            allowed = getattr(detector, "camera_ids", None)
+            if allowed is not None and frame.camera_id not in allowed:
+                continue
             try:
                 result = detector.detect(frame)
                 if result:

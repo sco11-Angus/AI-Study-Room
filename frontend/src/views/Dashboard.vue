@@ -6,6 +6,20 @@
         <div class="section-header">
           <span class="header-icon">📹</span>
           <span class="header-title">实时监控</span>
+          <el-select
+            v-model="selectedCameraId"
+            size="small"
+            class="camera-select"
+            placeholder="选择摄像头"
+            @change="onCameraChange"
+          >
+            <el-option
+              v-for="cam in cameras"
+              :key="cam.id"
+              :label="cam.name ? `${cam.id} · ${cam.name}` : `摄像头 ${cam.id}`"
+              :value="cam.id"
+            />
+          </el-select>
         </div>
         <div class="video-container">
           <div class="video-frame" ref="videoWrapper">
@@ -19,6 +33,15 @@
         <div class="section-header">
           <span class="header-icon">🔔</span>
           <span class="header-title">告警记录</span>
+          <el-select
+            v-model="alarmScope"
+            size="small"
+            class="camera-select"
+            @change="reloadAlarms"
+          >
+            <el-option label="当前摄像头" value="current" />
+            <el-option label="全部摄像头" value="all" />
+          </el-select>
         </div>
         <div class="alarm-container">
           <AlarmPanel :alarms="alarms" @confirm="onConfirm" />
@@ -34,10 +57,13 @@ import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
 import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
 import { MAX_ALARMS, useAlarmStore } from '../store/alarm'
-import { getSelectedCameraId } from '../utils/camera'
+import { getSelectedCameraId, setSelectedCameraId, ensureSelectedCamera } from '../utils/camera'
 
 const streamUrl = ref('')
 const alarms = ref([])
+const cameras = ref([])
+const selectedCameraId = ref(getSelectedCameraId())
+const alarmScope = ref('current')  // current=仅当前摄像头 / all=全部摄像头
 const faceResult = ref(null)
 const regions = ref([])
 const videoWrapper = ref(null)
@@ -75,15 +101,36 @@ const stageMap = {
 function fetchStreamUrl() {
   getCameras()
     .then((list) => {
-      const cameraId = getSelectedCameraId()
-      streamUrl.value = `camera_id=${cameraId}`
-      fetchRegionsForCamera(cameraId)
+      cameras.value = ensureSelectedCamera(Array.isArray(list) ? list : [])
+      applyCamera(getSelectedCameraId())
     })
     .catch(() => {
-      const cameraId = getSelectedCameraId()
-      streamUrl.value = `camera_id=${cameraId}`
-      fetchRegionsForCamera(cameraId)
+      cameras.value = ensureSelectedCamera([])
+      applyCamera(getSelectedCameraId())
     })
+}
+
+// 应用某摄像头：切视频流 + 拉该摄像头防区
+function applyCamera(cameraId) {
+  selectedCameraId.value = cameraId
+  streamUrl.value = `camera_id=${cameraId}`
+  fetchRegionsForCamera(cameraId)
+}
+
+// 顶部下拉切换摄像头：持久化 + 切流 + 重拉告警
+function onCameraChange(cameraId) {
+  setSelectedCameraId(cameraId)
+  applyCamera(cameraId)
+  reloadAlarms()
+}
+
+// 按当前范围(当前摄像头/全部)重新拉取告警列表
+function reloadAlarms() {
+  const camParam = alarmScope.value === 'all' ? undefined : selectedCameraId.value
+  getAlarms(undefined, camParam).then((list) => {
+    alarms.value = Array.isArray(list) ? list.slice(0, MAX_ALARMS) : []
+    alarmStore.loadAlarms(alarms.value)
+  })
 }
 
 function fetchRegionsForCamera(cameraId) {
@@ -383,10 +430,7 @@ watch(flashOn, () => {
 
 onMounted(() => {
   fetchStreamUrl()
-  getAlarms().then((list) => {
-    alarms.value = Array.isArray(list) ? list.slice(0, MAX_ALARMS) : []
-    alarmStore.loadAlarms(alarms.value)
-  })
+  reloadAlarms()
   wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
   wsAlarms.onmessage = (e) => {
     const data = JSON.parse(e.data)
@@ -397,6 +441,12 @@ onMounted(() => {
         alarmStore.update(data.id, data)
       }
     } else {
+      // 仅当前摄像头范围时，过滤掉其他摄像头的新告警
+      if (alarmScope.value !== 'all'
+          && data.camera_id != null
+          && Number(data.camera_id) !== Number(selectedCameraId.value)) {
+        return
+      }
       alarms.value.unshift(data)
       if (alarms.value.length > MAX_ALARMS) {
         alarms.value.length = MAX_ALARMS
@@ -556,6 +606,11 @@ const onConfirm = (id) => {
   font-size: 18px;
   font-weight: 600;
   color: #5d4e37;
+}
+
+.camera-select {
+  margin-left: auto;
+  width: 180px;
 }
 
 .video-container,

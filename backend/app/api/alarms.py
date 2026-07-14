@@ -105,6 +105,7 @@ def list_alarms():
               id: {type: integer, example: 404}
     """
     status = request.args.get("status")
+    camera_id = request.args.get("camera_id")
     from ..models.database import SessionLocal
     from ..models.entities import AlarmEvent
 
@@ -113,6 +114,12 @@ def list_alarms():
         query = session.query(AlarmEvent)
         if status:
             query = query.filter(AlarmEvent.status == status)
+        # 按摄像头过滤：不传或传空则返回全部摄像头（汇总视图）
+        if camera_id not in (None, "", "all"):
+            try:
+                query = query.filter(AlarmEvent.camera_id == int(camera_id))
+            except (TypeError, ValueError):
+                pass  # 非法 camera_id 忽略过滤，退回全部
         records = query.order_by(AlarmEvent.created_at.desc()).limit(20).all()
         return jsonify(code=0, message="ok", data=[_serialize_alarm(r) for r in records])
     finally:

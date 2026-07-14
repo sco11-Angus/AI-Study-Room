@@ -11,7 +11,9 @@ const routes = [
   // 实时视频流
   { path: '/stream', component: () => import('../views/VideoStreamViewer.vue') },
   // 告警日志
-  { path: '/logs', component: () => import('../views/LogViewer.vue') }
+  { path: '/logs', component: () => import('../views/LogViewer.vue') },
+  // 街道监控大屏：沙盘 12 路网格 + AI 识别
+  { path: '/street', component: () => import('../views/StreetMonitor.vue') }
 ]
 
 export default createRouter({ history: createWebHistory(), routes })
