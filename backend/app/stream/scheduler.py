@@ -265,8 +265,19 @@ class StreamScheduler:
         from .audio import AudioWindower, FfmpegAudioSource, ffmpeg_available
 
         if not ffmpeg_available():
-            logger.warning("[scheduler] 未检测到 ffmpeg，音轨管线跳过 camera_id=%s", cs.camera_id)
+            logger.warning(
+                "[scheduler] 未检测到 ffmpeg，音轨管线跳过 camera_id=%s "
+                "（打架检测因 aud_score=0 将不会告警，属预期降级；需安装 ffmpeg 打通音频链路）",
+                cs.camera_id,
+            )
             return
+
+        logger.info(
+            "[scheduler] 音轨线程启动 camera_id=%s url=%s targets=[%s%s]",
+            cs.camera_id, cs.stream_url,
+            "fight" if has_fight else "",
+            "+abnormal_sound" if has_abnormal else ("abnormal_sound" if has_abnormal else ""),
+        )
 
         windower = AudioWindower(camera_id=cs.camera_id)
         while not cs._stop_event.is_set():

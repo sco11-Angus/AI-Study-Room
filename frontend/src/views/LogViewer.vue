@@ -54,6 +54,21 @@
 
     <div class="table-container">
       <el-table :data="logEntries" border stripe :loading="loading">
+        <el-table-column type="expand">
+          <template #default="scope">
+            <div v-if="scope.row.type === 'fight'" class="fight-detail">
+              <span class="score-chip">融合分 {{ fmtScore(scope.row.extra?.fuse) }}</span>
+              <span class="score-chip">视觉 {{ fmtScore(scope.row.extra?.vis_score) }}</span>
+              <span class="score-chip">音频 {{ fmtScore(scope.row.extra?.aud_score) }}</span>
+              <span class="score-chip">情绪闸门 {{ fmtScore(scope.row.extra?.emo_gate) }}</span>
+              <span v-if="scope.row.extra?.emo_risk" class="score-chip">情绪风险 {{ fmtScore(scope.row.extra?.emo_risk) }}</span>
+              <span v-if="scope.row.extra?.emotion" class="score-chip emo">情绪 {{ scope.row.extra.emotion }}</span>
+            </div>
+            <div v-else class="fight-detail">
+              <span class="detail-plain">{{ scope.row.message || '无附加详情' }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="timestamp" label="时间" width="180" />
         <el-table-column prop="type" label="类型" width="100">
           <template #default="scope">
@@ -148,6 +163,11 @@ const typeLabels = {
 
 function getTypeLabel(type) {
   return typeLabels[type] || type || '未知'
+}
+
+// 打架告警展开行：格式化三模态分数
+function fmtScore(v) {
+  return typeof v === 'number' ? v.toFixed(3) : (v ?? '-')
 }
 
 function getLevelLabel(level) {
@@ -378,6 +398,33 @@ onMounted(() => {
 .type-tag.fight {
   background: #fef0f0;
   color: #f56c6c;
+}
+
+.fight-detail {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 16px;
+}
+
+.score-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: #fef0f0;
+  color: #f56c6c;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.score-chip.emo {
+  background: #fdf6ec;
+  color: #e6a23c;
+}
+
+.detail-plain {
+  color: #606266;
+  font-size: 13px;
 }
 
 .type-tag.quarrel {

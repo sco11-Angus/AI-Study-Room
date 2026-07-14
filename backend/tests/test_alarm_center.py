@@ -36,9 +36,12 @@ def snapshot_dir(tmp_path, monkeypatch):
 class FakeNotifier:
     def __init__(self):
         self.alarm_ids = []
+        self.escalated_ids = []      # 启动了升级 timer 的告警
+        self.non_escalated_ids = []  # 推送但不升级的告警(level=0)
 
-    def notify(self, alarm_id):
+    def notify(self, alarm_id, escalate=True):
         self.alarm_ids.append(alarm_id)
+        (self.escalated_ids if escalate else self.non_escalated_ids).append(alarm_id)
 
 
 def test_dingtalk_reports_missing_webhook_at_startup(caplog):
@@ -101,7 +104,8 @@ def test_dedup_same_region_type_only_creates_one_record(db, snapshot_dir):
         session.close()
 
 
-def test_level_zero_alarm_is_private_only(db, snapshot_dir):
+def test_level_zero_alarm_pushes_without_escalation(db, snapshot_dir):
+    """level=0 轻量提醒：照常入库+推前端+推钉钉，但不启动升级 timer。"""
     from app.detectors.base import AlarmEvent
     from app.models.entities import AlarmEvent as AlarmRecord
     from app.services.alarm import AlarmService
@@ -118,8 +122,12 @@ def test_level_zero_alarm_is_private_only(db, snapshot_dir):
         assert payload["camera_id"] == 0
         assert session.query(AlarmRecord).count() == 1
         assert session.query(AlarmRecord).one().camera_id == 0
-        assert sent == []
-        assert notifier.alarm_ids == []
+        # 新行为：level=0 也推送到前端与钉钉
+        assert sent == [payload]
+        assert notifier.alarm_ids == [payload["id"]]
+        # 但不升级
+        assert notifier.non_escalated_ids == [payload["id"]]
+        assert notifier.escalated_ids == []
     finally:
         session.close()
 

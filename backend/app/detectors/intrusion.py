@@ -294,11 +294,9 @@ class IntrusionPlugin(Detector):
         return seats
 
     def detect(self, frame: Frame) -> list[AlarmEvent]:
-        regions = [r for r in self._regions.values() if r.camera_id == frame.camera_id]
-        seats = [s for s in self._seats.values() if s.camera_id == frame.camera_id]
-        if not regions and not seats:
-            return []
-
+        # 人员框「只算一次」：无论本摄像头是否配置防区/座位，都先跑一次 YOLO 人体
+        # 检测并写入共享上下文，供打架检测等下游检测器复用（协作红线②）。
+        # 此步骤必须在防区/座位早退之前执行，否则未配防区的摄像头将永远拿不到人员框。
         track_method = getattr(self.person_detector, "detect_people_tracked", None)
         if callable(track_method):
             tracked_people = track_method(frame.image)
@@ -308,6 +306,12 @@ class IntrusionPlugin(Detector):
         people = [item.box for item in tracked_people]
         if self.shared_ctx is not None:
             self.shared_ctx.set(frame.camera_id, frame.frame_idx, people)
+
+        regions = [r for r in self._regions.values() if r.camera_id == frame.camera_id]
+        seats = [s for s in self._seats.values() if s.camera_id == frame.camera_id]
+        if not regions and not seats:
+            # 无防区/座位：人员框已写入共享上下文，本检测器无告警可判定，直接返回。
+            return []
 
         events: list[AlarmEvent] = []
         ts = frame.ts if frame.ts is not None else time.time()

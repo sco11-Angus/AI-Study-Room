@@ -90,14 +90,19 @@ class DingTalkNotifier:
         else:
             logger.warning("[dingtalk] primary webhook is not configured; alarms will be recorded but not sent")
 
-    def notify(self, alarm_id: int, title: str | None = None, text: str | None = None):
-        """Notify the primary guard and start the escalation timer."""
+    def notify(self, alarm_id: int, title: str | None = None, text: str | None = None,
+               escalate: bool = True):
+        """Notify the primary guard and (optionally) start the escalation timer.
+
+        escalate=False 用于 level=0 轻量提醒：照常推钉钉+标记 notified，
+        但不启动升级 timer，避免频繁的轻量告警打扰 leader。
+        """
         payload_title, payload_text = self._build_card_v2(alarm_id, title, text, "primary")
         guard_id = self._send_card(alarm_id, payload_title, payload_text, "primary")
         self._mark_notified(alarm_id, "notified")
         self._write_log(alarm_id, guard_id, "primary")
 
-        if self.timeout > 0:
+        if escalate and self.timeout > 0:
             timer = threading.Timer(self.timeout, self._escalate, args=(alarm_id,))
             timer.daemon = True
             timer.start()

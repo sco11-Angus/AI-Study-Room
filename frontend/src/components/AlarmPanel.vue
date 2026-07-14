@@ -79,9 +79,17 @@
     <el-dialog v-model="snapshotVisible" title="告警截图" width="560px" class="media-dialog">
       <img v-if="selectedAlarm" :src="selectedAlarm.snapshot_url" class="snapshot-image" alt="告警截图" />
       <div v-if="selectedAlarm" class="media-info">
-        <div><strong>类型:</strong> {{ selectedAlarm.type }}</div>
+        <div><strong>类型:</strong> {{ getTypeLabel(selectedAlarm.type) }}</div>
         <div><strong>时间:</strong> {{ formatTime(selectedAlarm.created_at) }}</div>
         <div v-if="selectedAlarm.message"><strong>描述:</strong> {{ selectedAlarm.message }}</div>
+        <!-- 打架告警：三模态分数（视觉+音频+情绪） -->
+        <div v-if="selectedAlarm.type === 'fight'" class="fight-scores">
+          <span class="score-chip">融合分 {{ fmtScore(fightExtra.fuse) }}</span>
+          <span class="score-chip">视觉 {{ fmtScore(fightExtra.vis_score) }}</span>
+          <span class="score-chip">音频 {{ fmtScore(fightExtra.aud_score) }}</span>
+          <span class="score-chip">情绪闸门 {{ fmtScore(fightExtra.emo_gate) }}</span>
+          <span v-if="fightExtra.emotion" class="score-chip emo">情绪 {{ fightExtra.emotion }}</span>
+        </div>
       </div>
     </el-dialog>
 
@@ -98,7 +106,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
 const props = defineProps({ alarms: { type: Array, default: () => [] } })
 const emit = defineEmits(['confirm'])
@@ -106,6 +114,10 @@ const emit = defineEmits(['confirm'])
 const snapshotVisible = ref(false)
 const clipVisible = ref(false)
 const selectedAlarm = ref(null)
+
+// 打架告警三模态分数（后端 extra 已带 fuse/vis_score/aud_score/emo_gate/emotion）
+const fightExtra = computed(() => (selectedAlarm.value && selectedAlarm.value.extra) || {})
+const fmtScore = (v) => (typeof v === 'number' ? v.toFixed(3) : (v ?? '-'))
 
 // 与告警日志页 (LogViewer) 一致的类型中文标签
 const typeLabels = {
@@ -219,6 +231,28 @@ const playClip = (row) => {
 
 .media-info div {
   margin-bottom: 6px;
+}
+
+.fight-scores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.score-chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: #fef0f0;
+  color: #f56c6c;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.score-chip.emo {
+  background: #fdf6ec;
+  color: #e6a23c;
 }
 
 .confirm-btn {

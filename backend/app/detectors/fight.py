@@ -323,6 +323,8 @@ class FightPlugin(Detector):
         self._last_aud_score = 0.0
         self._last_aud_ts: float | None = None
         self._last_emo_risk = 0.0
+        self._aud_feed_count = 0          # 音轨心跳计数（累计收到的音频窗口数）
+        self._AUD_HEARTBEAT_N = 10        # 每 N 个窗口记一次心跳日志（约 N 秒）
 
     def setup(self) -> None:
         if self._person is None:
@@ -363,6 +365,15 @@ class FightPlugin(Detector):
         if self._emotion.loaded:
             self._emotion.feed(chunk.pcm, chunk.sample_rate)
             self._last_emo_risk = self._emotion.get_emotion_risk_score()
+
+        # 音轨心跳：每 _AUD_HEARTBEAT_N 个窗口记一次，验证「音轨正常」持续喂入。
+        self._aud_feed_count += 1
+        if self._aud_feed_count % self._AUD_HEARTBEAT_N == 0:
+            logger.info(
+                "[fight] 音轨心跳 chunks=%d aud_score=%.3f emo_risk=%.3f emotion=%s",
+                self._aud_feed_count, self._last_aud_score, self._last_emo_risk,
+                self._emotion.emotion if self._emotion.loaded else "off",
+            )
 
     def detect(self, frame: Frame) -> list[AlarmEvent]:
         boxes = self._person.get_boxes(frame) if self._person else []

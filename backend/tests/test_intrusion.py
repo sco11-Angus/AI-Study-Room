@@ -2,8 +2,8 @@
 import numpy as np
 
 from app.detectors.base import AlarmEvent, Detector, Frame
-from app.detectors.intrusion import IntrusionDetector
-from app.stream.engine import InferenceEngine
+from app.detectors.intrusion import IntrusionDetector, IntrusionPlugin
+from app.stream.engine import InferenceEngine, SharedPersonContext
 
 SQUARE = [[0, 0], [100, 0], [100, 100], [0, 100]]
 
@@ -43,6 +43,40 @@ class ClearOnlyDetector(Detector):
                 extra={"lifecycle": "cleared", "track_key": "seat-10-track-1"},
             )
         ]
+
+
+class _FakePersonDetector:
+    """Stub YOLO wrapper — returns fixed boxes without loading a model."""
+
+    def __init__(self, boxes):
+        self._boxes = list(boxes)
+
+    def setup(self):
+        pass
+
+    def detect_people(self, image):
+        return list(self._boxes)
+
+
+def test_person_boxes_written_to_shared_ctx_without_regions():
+    """方案B：即使摄像头未配置防区/座位，YOLO 人员框也应写入共享上下文，
+    供打架检测复用（人员框只算一次）。"""
+    ctx = SharedPersonContext()
+    boxes = [(10.0, 20.0, 30.0, 80.0), (100.0, 40.0, 140.0, 120.0)]
+    plugin = IntrusionPlugin(
+        person_detector=_FakePersonDetector(boxes),
+        face_matcher=object(),
+        shared_ctx=ctx,
+    )
+    # 不调用 setup()（避免加载 DB/权重）；无防区、无座位。
+    plugin._regions = {}
+    plugin._seats = {}
+
+    frame = Frame(np.zeros((4, 4, 3)), ts=1.0, camera_id=6, frame_idx=42)
+    events = plugin.detect(frame)
+
+    assert events == []  # 无防区可判定，无告警
+    assert ctx.get_person_boxes(6, 42) == boxes  # 但人员框已写入共享上下文
 
 
 def test_clear_lifecycle_is_broadcast_without_persisting(monkeypatch):

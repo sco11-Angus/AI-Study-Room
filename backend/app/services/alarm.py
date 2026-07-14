@@ -117,7 +117,11 @@ class AlarmService:
             self._record_clip(record.id, event)
             self._notify(record.id)
         else:
-            logger.info("[alarm] private level=0 alarm_id=%s", record.id)
+            # level=0 轻量提醒：同样推前端+钉钉（"日志里出现的告警都推钉钉"），
+            # 但不录制片段、不启动升级 timer，避免频繁轻量告警打扰 leader。
+            logger.info("[alarm] level=0 alarm_id=%s 推送(不升级)", record.id)
+            self._broadcast(payload)
+            self._notify(record.id, escalate=False)
 
         self._log_alarm_event(record, event)
 
@@ -466,13 +470,17 @@ class AlarmService:
         companion_sent = broadcast_companion_alarm(payload)
         return broadcast_alarm(payload) + companion_sent
 
-    def _notify(self, alarm_id: int) -> None:
+    def _notify(self, alarm_id: int, escalate: bool = True) -> None:
         notifier = self._notifier
         if notifier is None:
             from .dingtalk import get_notifier
 
             notifier = get_notifier()
-        notifier.notify(alarm_id)
+        try:
+            notifier.notify(alarm_id, escalate=escalate)
+        except TypeError:
+            # 兼容不支持 escalate 参数的自定义/旧 notifier
+            notifier.notify(alarm_id)
 
 
 _default_alarm_service: AlarmService | None = None
