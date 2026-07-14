@@ -689,3 +689,17 @@
   - `npm.cmd run spec:validate` passed: 8 items, 0 failures.
 - Remaining action:
   - Restart backend and frontend, then perform real OBS acceptance: enter a bound seat or danger zone until one alarm appears, leave until the red overlay and beep stop, then re-enter to confirm a new alarm is created.
+
+## Session 2026-07-14 Fast Seat Authorization and DingTalk Diagnostics
+
+- Goal: reduce reserved-seat response latency, make an identified reservation owner visibly authorized, and expose DingTalk delivery configuration gaps.
+- Actions:
+  - Added `INTRUSION_MIN_OBSERVATIONS` (default 2) and `INTRUSION_EXIT_MISSES` (default 1), measured in inference passes rather than raw video frames.
+  - Reserved-member recognition now emits a non-persistent `region_state: allowed` message on its first matching observation. The dashboard clears only that trajectory and displays a five-second welcome message with the member and seat names.
+  - Added DingTalk startup diagnostics. With no webhook, the backend logs that alarms are stored locally but not sent externally.
+- Validation:
+  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_alarm_center.py -q` passed: 35 passed.
+  - `python -m py_compile backend/app/config.py backend/app/detectors/intrusion.py backend/app/stream/engine.py backend/app/services/dingtalk.py` passed.
+  - `npm.cmd run build` from `frontend/`, `npm.cmd run spec:validate`, and `.\\init.cmd` all passed.
+- Remaining action:
+  - Configure `DINGTALK_WEBHOOK` (and `DINGTALK_SECRET` if the robot uses signing security), restart the backend, then capture OBS evidence for stranger active -> exit cleared -> reservation owner allowed.

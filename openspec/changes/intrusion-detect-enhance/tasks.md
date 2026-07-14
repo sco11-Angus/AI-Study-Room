@@ -41,3 +41,10 @@
 - [x] 6.2 Emit one persisted alarm when an unauthorized trajectory reaches dwell time; emit a non-persistent WebSocket clear event when that same trajectory exits or expires.
 - [x] 6.3 Keep a region red while any active alerting track remains, and restore green only after the last track clears; historical unconfirmed records must not reactivate a region.
 - [ ] 6.4 Add backend and frontend regression coverage for enter-once, exit-clear, multi-person clear ordering, and re-entry producing a new alarm.
+
+## 7. Fast Seat Authorization and Notification Diagnostics
+
+- [x] 7.1 Emit a non-persistent allowed event from the first recognized reserved-member seat observation.
+- [x] 7.2 Make occupancy observation count and inference-miss expiry tolerance configurable with responsive defaults.
+- [x] 7.3 Show a short reservation welcome state and clear only the matching active track.
+- [x] 7.4 Log DingTalk webhook configuration on notifier startup and add regression tests.

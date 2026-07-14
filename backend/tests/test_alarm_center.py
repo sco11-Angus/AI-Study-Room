@@ -41,6 +41,15 @@ class FakeNotifier:
         self.alarm_ids.append(alarm_id)
 
 
+def test_dingtalk_reports_missing_webhook_at_startup(caplog):
+    from app.services.dingtalk import DingTalkNotifier
+
+    caplog.set_level("WARNING")
+    DingTalkNotifier(webhook="", timeout=0)
+
+    assert "primary webhook is not configured" in caplog.text
+
+
 def test_raise_alarm_persists_snapshot_and_notifies(db, snapshot_dir):
     from app.detectors.base import AlarmEvent
     from app.models.entities import AlarmEvent as AlarmRecord

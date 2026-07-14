@@ -156,6 +156,7 @@ class SeatTrack:
     missed_inferences: int = 0
     evaluated: bool = False
     alerted: bool = False
+    allowed: bool = False
 
 
 class IntrusionPlugin(Detector):
@@ -304,7 +305,7 @@ class IntrusionPlugin(Detector):
             track = tracks[track_id]
             if (
                 not track.evaluated
-                and track.seen_count >= 2
+                and track.seen_count >= Config.INTRUSION_MIN_OBSERVATIONS
                 and ts - track.entered_at >= region.detector.y_stay_time
             ):
                 track.evaluated = True
@@ -342,9 +343,9 @@ class IntrusionPlugin(Detector):
         face_rects = detect_faces(frame.image) if callable(detect_faces) else None
         active_boxes = self._active_seat_boxes(seat, people, face_rects)
         if not active_boxes:
-            # A person box outside the seat is an explicit exit.  When YOLO
-            # misses everybody, keep the track for a few inference passes so a
-            # single detector miss cannot reset a real occupant's dwell timer.
+            # A person box outside the seat is an explicit exit. When YOLO
+            # misses everybody, use the configured inference-miss threshold
+            # before clearing the trajectory.
             if people:
                 removed = list(tracks.items())
                 tracks.clear()
@@ -353,6 +354,7 @@ class IntrusionPlugin(Detector):
             return self._clear_events(seat, "occupy", "unauthorized_seat", frame, ts, removed)
         matched_track_ids: set[int] = set()
         eligible: list[tuple[int, SeatTrack, Box]] = []
+        allowed_events: list[AlarmEvent] = []
 
         for box in active_boxes:
             track_id = self._match_track(tracks, box, frame.frame_idx, matched_track_ids)
@@ -373,9 +375,19 @@ class IntrusionPlugin(Detector):
 
             matched_track_ids.add(track_id)
             track = tracks[track_id]
+            if not track.allowed:
+                face_match, _face_crop = self._match_person_fullframe(frame.image, box, face_rects)
+                if face_match == f"member:{seat.member_id}":
+                    track.allowed = True
+                    track.evaluated = True
+                    allowed_events.extend(self._allowed_event(seat, track_id, frame, ts))
+                    # The owner can take over a previously alerting track when
+                    # recognition becomes available on a later frame.
+                    if track.alerted:
+                        track.alerted = False
             if (
                 not track.evaluated
-                and track.seen_count >= 2
+                and track.seen_count >= Config.INTRUSION_MIN_OBSERVATIONS
                 and ts - track.entered_at >= seat.detector.y_stay_time
             ):
                 eligible.append((track_id, track, box))
@@ -383,6 +395,7 @@ class IntrusionPlugin(Detector):
         removed = self._expire_unmatched_tracks(tracks, people, matched_track_ids, seat)
 
         events = self._clear_events(seat, "occupy", "unauthorized_seat", frame, ts, removed)
+        events.extend(allowed_events)
         if not eligible:
             return events
         expected = f"member:{seat.member_id}"
@@ -390,6 +403,7 @@ class IntrusionPlugin(Detector):
             face_match, face_crop = self._match_person_fullframe(frame.image, box, face_rects)
             track.evaluated = True
             if face_match == expected:
+                track.allowed = True
                 continue
 
             track.alerted = True
@@ -430,7 +444,7 @@ class IntrusionPlugin(Detector):
         matched_track_ids: set[int],
         runtime: RegionRuntime | SeatRuntime | None = None,
     ) -> list[tuple[int, SeatTrack]]:
-        """Expire after three *inference* misses, never raw video-frame gaps.
+        """Expire after configured inference misses, never raw video-frame gaps.
 
         The scheduler calls intrusion only every ``SKIP_N`` decoded frames.
         Comparing its raw frame indexes made every healthy next inference look
@@ -450,10 +464,30 @@ class IntrusionPlugin(Detector):
                 del tracks[track_id]
                 continue
             track.missed_inferences += 1
-            if track.missed_inferences > 3:
+            if track.missed_inferences >= Config.INTRUSION_EXIT_MISSES:
                 removed.append((track_id, track))
                 del tracks[track_id]
         return removed
+
+    @staticmethod
+    def _allowed_event(seat: SeatRuntime, track_id: int, frame: Frame, ts: float) -> list[AlarmEvent]:
+        return [
+            AlarmEvent(
+                type="occupy",
+                region_id=seat.id,
+                camera_id=frame.camera_id,
+                ts=ts,
+                level=0,
+                extra={
+                    "kind": "authorized_seat",
+                    "lifecycle": "allowed",
+                    "track_key": f"seat-{seat.id}-track-{track_id}",
+                    "seat_name": seat.name,
+                    "member_id": seat.member_id,
+                    "member_name": seat.member_name,
+                },
+            )
+        ]
 
     def _clear_events(
         self,

@@ -98,6 +98,11 @@ class Config:
     STREAM_URL = os.getenv("STREAM_URL", "").strip()
     _stream_local_camera = os.getenv("STREAM_LOCAL_CAMERA", "").strip()
     STREAM_LOCAL_CAMERA = int(_stream_local_camera) if _stream_local_camera else None
+    # Intrusion responsiveness is measured in inference passes, not decoded
+    # frames. Keep a brief second-observation debounce while clearing tracks
+    # promptly after a confirmed detector miss.
+    INTRUSION_MIN_OBSERVATIONS = max(1, int(os.getenv("INTRUSION_MIN_OBSERVATIONS", 2)))
+    INTRUSION_EXIT_MISSES = max(1, int(os.getenv("INTRUSION_EXIT_MISSES", 1)))
 
     FATIGUE_PRESET = os.getenv("FATIGUE_PRESET", "normal")
     _FATIGUE_DEFAULTS = _fatigue_preset(FATIGUE_PRESET)

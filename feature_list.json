@@ -106,10 +106,13 @@
         "Fixed reserved-seat track expiry to count missed inference passes instead of raw decoded-frame indexes; with the real scheduler cadence 0 -> 5, a stranger now reaches the two-observation, 2-second dwell gate and emits occupy. Focused intrusion regression passed on 2026-07-13: 12 passed.",
         "Implemented the enter/dwell/alerted/exited lifecycle on 2026-07-14 for both danger zones and reserved seats. One track produces one persisted intrusion or occupy alarm; its exit produces a non-persistent region_state WebSocket clear message, and re-entry creates a fresh track and may alarm again.",
         "Dashboard region coloring now follows active track keys rather than historical unconfirmed alarms. A reconnect receives a live intrusion-track snapshot, and a region stays red until its final active track clears.",
-        "Regression passed on 2026-07-14: python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_alarm_center.py -q -> 32 passed; npm.cmd run build in frontend passed; npm.cmd run spec:validate passed."
+        "Regression passed on 2026-07-14: python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_alarm_center.py -q -> 32 passed; npm.cmd run build in frontend passed; npm.cmd run spec:validate passed.",
+        "Authorization responsiveness update on 2026-07-14: a reserved member emits an immediate non-persistent allowed state, clears only that seat track, and Dashboard shows a five-second welcome message. Stranger alarms still honor the saved Y_stay_time, while observation and exit-miss thresholds are configurable through INTRUSION_MIN_OBSERVATIONS and INTRUSION_EXIT_MISSES.",
+        "Regression passed on 2026-07-14: python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_seat_reservations.py tests/test_face.py tests/test_fatigue.py tests/test_alarm_center.py -q -> 63 passed; frontend npm.cmd run build, npm.cmd run spec:validate, Python syntax compilation, and .\\init.cmd passed."
       ],
       "blockers": [
-        "Live local-camera acceptance with a real enrolled reservation member and a second/stranger person has not yet been captured, so the OpenSpec change remains active and this feature is not marked completed."
+        "Live OBS acceptance with a real enrolled reservation member and a second/stranger person has not yet been captured, so the OpenSpec change remains active and this feature is not marked completed.",
+        "DINGTALK_WEBHOOK is not configured in the current process or repository .env. Alarms are persisted and broadcast locally but cannot reach a DingTalk group until a real robot webhook is configured and the backend is restarted."
       ]
     },
     {

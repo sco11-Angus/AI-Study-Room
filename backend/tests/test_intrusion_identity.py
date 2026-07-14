@@ -119,7 +119,35 @@ def test_reserved_member_entering_seat_does_not_alarm(monkeypatch):
     plugin = IntrusionPlugin(FakePersonDetector(), FakeFaceMatcher("member:1001"))
     plugin.setup()
 
-    assert detect_twice(plugin, np.zeros((120, 120, 3), dtype=np.uint8)) == []
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    allowed = plugin.detect(Frame(image=image, ts=1, camera_id=0, frame_idx=1))
+
+    assert len(allowed) == 1
+    assert allowed[0].extra["lifecycle"] == "allowed"
+    assert allowed[0].extra["member_id"] == 1001
+    assert allowed[0].extra["member_name"] == "Reserved Student"
+    assert plugin.detect(Frame(image=image, ts=2, camera_id=0, frame_idx=2)) == []
+
+
+def test_reserved_member_recognition_clears_an_existing_seat_alarm(monkeypatch):
+    Session = make_session(monkeypatch)
+    seed_reserved_seat(Session)
+    plugin = IntrusionPlugin(
+        FakePersonDetector(),
+        FakeFaceMatcher(["stranger", "stranger", "stranger", "member:1001"]),
+    )
+    plugin.setup()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+
+    assert plugin.detect(Frame(image=image, ts=0, camera_id=0, frame_idx=0)) == []
+    active = plugin.detect(Frame(image=image, ts=1, camera_id=0, frame_idx=5))
+    assert len(active) == 1
+    assert active[0].extra["lifecycle"] == "active"
+
+    allowed = plugin.detect(Frame(image=image, ts=2, camera_id=0, frame_idx=10))
+    assert len(allowed) == 1
+    assert allowed[0].extra["lifecycle"] == "allowed"
+    assert plugin.get_active_alarm_states() == []
 
 
 def test_known_non_reserved_member_raises_occupy(monkeypatch):

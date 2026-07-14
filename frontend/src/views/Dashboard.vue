@@ -1,5 +1,12 @@
 <template>
   <div class="page">
+    <div v-if="seatWelcome" class="seat-welcome">
+      <span class="banner-icon">✅</span>
+      <div class="banner-text">
+        <div class="banner-title">欢迎 {{ seatWelcome.member_name }} 到 {{ seatWelcome.seat_name }} 自习</div>
+        <div class="banner-meta">身份已核验，预约座位已为你放行</div>
+      </div>
+    </div>
     <!-- 人脸识别横幅 — 支持活体检测多状态 -->
     <div v-if="faceResult" class="face-banner" :class="[faceResult.type, { 'with-liveness': faceResult.liveness_passed !== undefined }]">
       <!-- member 成功识别 -->
@@ -82,12 +89,14 @@ import { getSelectedCameraId } from '../utils/camera'
 const streamUrl = ref('')
 const alarms = ref([])
 const faceResult = ref(null)
+const seatWelcome = ref(null)
 const regions = ref([])
 const videoWrapper = ref(null)
 const overlayCanvas = ref(null)
 const playerRef = ref(null)
 const flashOn = ref(true)
 let wsAlarms, wsFace, reconnectTimer, beepTimer, audioContext
+let seatWelcomeTimer = null
 // ---- 人脸框实时跟踪 ----
 let wsFaceBoxes = null       // 人脸框 WebSocket
 let faceBoxesReconnect = null
@@ -345,6 +354,18 @@ function connectFaceWs() {
   }
 }
 
+function showSeatWelcome(data) {
+  seatWelcome.value = {
+    member_name: data.member_name || `成员 ${data.member_id || ''}`,
+    seat_name: data.seat_name || '预约座位'
+  }
+  if (seatWelcomeTimer) clearTimeout(seatWelcomeTimer)
+  seatWelcomeTimer = setTimeout(() => {
+    seatWelcome.value = null
+    seatWelcomeTimer = null
+  }, 5000)
+}
+
 // ---- 人脸框：订阅后端推送的归一化坐标 ----
 function connectFaceBoxesWs() {
   wsFaceBoxes = new WebSocket(`ws://${location.host}/ws/face_boxes`)
@@ -437,6 +458,9 @@ onMounted(() => {
       alarmStore.replaceActiveRegionTracks(data.states)
     } else if (data.event === 'region_state' && data.state === 'cleared') {
       alarmStore.clearRegionTrack(data.region_id, data.track_key)
+    } else if (data.event === 'region_state' && data.state === 'allowed') {
+      alarmStore.clearRegionTrack(data.region_id, data.track_key)
+      showSeatWelcome(data)
     } else if (data.type === 'update') {
       const idx = alarms.value.findIndex(a => a.id === data.id)
       if (idx !== -1) {
@@ -462,6 +486,7 @@ onUnmounted(() => {
   wsFace && wsFace.close()
   wsFaceBoxes && wsFaceBoxes.close()
   reconnectTimer && clearTimeout(reconnectTimer)
+  seatWelcomeTimer && clearTimeout(seatWelcomeTimer)
   faceBoxesReconnect && clearTimeout(faceBoxesReconnect)
   rafId && cancelAnimationFrame(rafId)
   stopBeepLoop()
@@ -487,6 +512,19 @@ const onConfirm = (id) => {
   padding: 16px 20px;
   border-radius: 12px;
   margin-bottom: 20px;
+  animation: slideDown 0.5s ease;
+}
+
+.seat-welcome {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  background: #67c23a;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(103, 194, 58, 0.3);
   animation: slideDown 0.5s ease;
 }
 

@@ -81,6 +81,23 @@ The system SHALL 在人员停留于已绑定预约成员的座位防区内且停
 - **WHEN** 人员侵入并停留达到 `Y_stay_time`
 - **THEN** 触发 `intrusion` 告警，行为与变更前完全一致
 
+### Requirement: Fast Reserved-Member Authorization
+
+The system SHALL publish a non-persistent allowed state as soon as the reserved
+member is recognized in their bound seat. The frontend SHALL clear only that
+track and show the member and seat information. Dwell observations and track
+expiry tolerance SHALL be configurable for responsive deployment behavior.
+
+#### Scenario: Reserved member is recognized in their seat
+- **GIVEN** seat A is bound to member M
+- **WHEN** M is recognized in A on the first in-seat observation
+- **THEN** no `occupy` alarm is persisted and the frontend receives an `allowed` state with M and A names
+
+#### Scenario: Alerted track becomes authorized
+- **GIVEN** an active seat track is red
+- **WHEN** that track is subsequently recognized as the reserved member
+- **THEN** only that track is cleared; the region stays red if another unauthorized track remains
+
 ## ADDED Requirements
 
 ### Requirement: 座位预约绑定管理

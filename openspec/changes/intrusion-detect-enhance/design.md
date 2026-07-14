@@ -161,6 +161,19 @@ def _match_person_fullframe(self, image, box, face_rects):
 
 **理由：** 前端和大屏需要明确展示"谁预约了座位"和"实际是谁在坐"，当前 `expected_user_id` 字段名误导且指向 `app_user.id`。
 
+## D7: Fast seat authorization and notification observability
+
+Reserved-seat matching runs from the first in-seat face association. When the
+expected member is recognized, the detector emits a non-persistent
+`region_state: allowed` message with member and seat names. The dashboard clears
+only that track and briefly welcomes the reserved member. Unknown or mismatched
+occupants still require a short configurable observation debounce before an
+`occupy` record is persisted.
+
+Inference-miss expiry is configurable so a deployment can restore green state
+quickly. DingTalk notifier startup logs whether the webhook is configured;
+without a webhook address, no code path can deliver a group message.
+
 ## Risks / Trade-offs
 
 | 风险 | 缓解 |
