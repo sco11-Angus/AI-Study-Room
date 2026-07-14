@@ -1,5 +1,55 @@
 <template>
   <div class="page">
+    <div v-if="seatWelcome" class="seat-welcome">
+      <span class="banner-icon">✅</span>
+      <div class="banner-text">
+        <div class="banner-title">欢迎 {{ seatWelcome.member_name }} 到 {{ seatWelcome.seat_name }} 自习</div>
+        <div class="banner-meta">身份已核验，预约座位已为你放行</div>
+      </div>
+    </div>
+    <!-- 人脸识别横幅 — 支持活体检测多状态 -->
+    <div v-if="faceResult" class="face-banner" :class="[faceResult.type, { 'with-liveness': faceResult.liveness_passed !== undefined }]">
+      <!-- member 成功识别 -->
+      <div v-if="faceResult.type === 'member'" class="banner-content">
+        <span class="banner-icon">✅</span>
+        <div class="banner-text">
+          <div class="banner-title">欢迎你, {{ faceResult.name }}</div>
+          <div v-if="faceResult.liveness_passed" class="banner-meta">活体已验证 • 伪影评分: {{ (faceResult.artifact_score || 0).toFixed(2) }}</div>
+        </div>
+      </div>
+      <!-- 陌生人 -->
+      <div v-else-if="faceResult.type === 'stranger'" class="banner-content">
+        <span class="banner-icon">⚠️</span>
+        <div class="banner-text">
+          <div class="banner-title">陌生人</div>
+          <div class="banner-meta">无法识别的用户</div>
+        </div>
+      </div>
+      <!-- 伪造/反光/屏幕回放 -->
+      <div v-else-if="faceResult.type === 'face_spoof'" class="banner-content">
+        <span class="banner-icon">❌</span>
+        <div class="banner-text">
+          <div class="banner-title">检测到可疑媒体</div>
+          <div class="banner-meta">{{ reasonMap[faceResult.reason] || faceResult.reason || '请勿使用虚假媒体' }}</div>
+        </div>
+      </div>
+      <!-- 检测中 -->
+      <div v-else-if="faceResult.type === 'detecting'" class="banner-content">
+        <span class="banner-icon spinning">🔍</span>
+        <div class="banner-text">
+          <div class="banner-title">{{ faceResult.message || '检测中' }}</div>
+          <div v-if="faceResult.stage" class="banner-meta">阶段: {{ stageMap[faceResult.stage] || faceResult.stage }}</div>
+        </div>
+      </div>
+      <!-- 重试 -->
+      <div v-else-if="faceResult.type === 'retry'" class="banner-content">
+        <span class="banner-icon spinning">🔄</span>
+        <div class="banner-text">
+          <div class="banner-title">重新检测中</div>
+          <div class="banner-meta">请保持摄像头可见</div>
+        </div>
+      </div>
+    </div>
 
     <div class="dashboard">
       <div class="video-section">
@@ -23,7 +73,7 @@
         </div>
         <div class="video-container">
           <div class="video-frame" ref="videoWrapper">
-            <VideoPlayer ref="playerRef" :stream-url="streamUrl" :face-result="faceResult" @dimensions="onVideoDimensions" />
+            <VideoPlayer ref="playerRef" :stream-url="streamUrl" @dimensions="onVideoDimensions" />
             <canvas ref="overlayCanvas" class="overlay-canvas" />
           </div>
         </div>
@@ -65,12 +115,14 @@ const cameras = ref([])
 const selectedCameraId = ref(getSelectedCameraId())
 const alarmScope = ref('current')  // current=仅当前摄像头 / all=全部摄像头
 const faceResult = ref(null)
+const seatWelcome = ref(null)
 const regions = ref([])
 const videoWrapper = ref(null)
 const overlayCanvas = ref(null)
 const playerRef = ref(null)
 const flashOn = ref(true)
 let wsAlarms, wsFace, reconnectTimer, beepTimer, audioContext
+let seatWelcomeTimer = null
 // ---- 人脸框实时跟踪 ----
 let wsFaceBoxes = null       // 人脸框 WebSocket
 let faceBoxesReconnect = null
@@ -349,6 +401,18 @@ function connectFaceWs() {
   }
 }
 
+function showSeatWelcome(data) {
+  seatWelcome.value = {
+    member_name: data.member_name || `成员 ${data.member_id || ''}`,
+    seat_name: data.seat_name || '预约座位'
+  }
+  if (seatWelcomeTimer) clearTimeout(seatWelcomeTimer)
+  seatWelcomeTimer = setTimeout(() => {
+    seatWelcome.value = null
+    seatWelcomeTimer = null
+  }, 5000)
+}
+
 // ---- 人脸框：订阅后端推送的归一化坐标 ----
 function connectFaceBoxesWs() {
   wsFaceBoxes = new WebSocket(`ws://${location.host}/ws/face_boxes`)
@@ -434,7 +498,14 @@ onMounted(() => {
   wsAlarms = new WebSocket(`ws://${location.host}/ws/alarms`)
   wsAlarms.onmessage = (e) => {
     const data = JSON.parse(e.data)
-    if (data.type === 'update') {
+    if (data.event === 'region_state_snapshot') {
+      alarmStore.replaceActiveRegionTracks(data.states)
+    } else if (data.event === 'region_state' && data.state === 'cleared') {
+      alarmStore.clearRegionTrack(data.region_id, data.track_key)
+    } else if (data.event === 'region_state' && data.state === 'allowed') {
+      alarmStore.clearRegionTrack(data.region_id, data.track_key)
+      showSeatWelcome(data)
+    } else if (data.type === 'update') {
       const idx = alarms.value.findIndex(a => a.id === data.id)
       if (idx !== -1) {
         alarms.value[idx] = { ...alarms.value[idx], ...data }
@@ -465,6 +536,7 @@ onUnmounted(() => {
   wsFace && wsFace.close()
   wsFaceBoxes && wsFaceBoxes.close()
   reconnectTimer && clearTimeout(reconnectTimer)
+  seatWelcomeTimer && clearTimeout(seatWelcomeTimer)
   faceBoxesReconnect && clearTimeout(faceBoxesReconnect)
   rafId && cancelAnimationFrame(rafId)
   stopBeepLoop()
@@ -490,6 +562,19 @@ const onConfirm = (id) => {
   padding: 16px 20px;
   border-radius: 12px;
   margin-bottom: 20px;
+  animation: slideDown 0.5s ease;
+}
+
+.seat-welcome {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  background: #67c23a;
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(103, 194, 58, 0.3);
   animation: slideDown 0.5s ease;
 }
 

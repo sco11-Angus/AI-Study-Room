@@ -88,6 +88,26 @@ def seed_reserved_seat(Session, member_id=1001, stay_time=0):
         session.close()
 
 
+def seed_danger_zone(Session, stay_time=0):
+    session = Session()
+    try:
+        session.add(Camera(id=0, name="cam", stream_url="rtmp://example/live/test"))
+        session.add(
+            Region(
+                id=20,
+                camera_id=0,
+                name="danger-20",
+                type="danger_zone",
+                polygon="[[0,0],[100,0],[100,100],[0,100]]",
+                x_distance=0,
+                y_stay_time=stay_time,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+
 def detect_twice(plugin, image, ts=1.0):
     plugin.detect(Frame(image=image, ts=ts, camera_id=0, frame_idx=1))
     return plugin.detect(Frame(image=image, ts=ts + 1, camera_id=0, frame_idx=2))
@@ -99,7 +119,35 @@ def test_reserved_member_entering_seat_does_not_alarm(monkeypatch):
     plugin = IntrusionPlugin(FakePersonDetector(), FakeFaceMatcher("member:1001"))
     plugin.setup()
 
-    assert detect_twice(plugin, np.zeros((120, 120, 3), dtype=np.uint8)) == []
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+    allowed = plugin.detect(Frame(image=image, ts=1, camera_id=0, frame_idx=1))
+
+    assert len(allowed) == 1
+    assert allowed[0].extra["lifecycle"] == "allowed"
+    assert allowed[0].extra["member_id"] == 1001
+    assert allowed[0].extra["member_name"] == "Reserved Student"
+    assert plugin.detect(Frame(image=image, ts=2, camera_id=0, frame_idx=2)) == []
+
+
+def test_reserved_member_recognition_clears_an_existing_seat_alarm(monkeypatch):
+    Session = make_session(monkeypatch)
+    seed_reserved_seat(Session)
+    plugin = IntrusionPlugin(
+        FakePersonDetector(),
+        FakeFaceMatcher(["stranger", "stranger", "stranger", "member:1001"]),
+    )
+    plugin.setup()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+
+    assert plugin.detect(Frame(image=image, ts=0, camera_id=0, frame_idx=0)) == []
+    active = plugin.detect(Frame(image=image, ts=1, camera_id=0, frame_idx=5))
+    assert len(active) == 1
+    assert active[0].extra["lifecycle"] == "active"
+
+    allowed = plugin.detect(Frame(image=image, ts=2, camera_id=0, frame_idx=10))
+    assert len(allowed) == 1
+    assert allowed[0].extra["lifecycle"] == "allowed"
+    assert plugin.get_active_alarm_states() == []
 
 
 def test_known_non_reserved_member_raises_occupy(monkeypatch):
@@ -226,6 +274,89 @@ def test_exit_resets_timer_before_reentry(monkeypatch):
     assert plugin.detect(Frame(image=image, ts=5, camera_id=0, frame_idx=4)) == []
     events = plugin.detect(Frame(image=image, ts=6, camera_id=0, frame_idx=5))
     assert len(events) == 1
+
+
+def test_reserved_seat_alerts_once_clears_on_exit_and_alerts_after_reentry(monkeypatch):
+    Session = make_session(monkeypatch)
+    seed_reserved_seat(Session)
+    detector = FakePersonDetector([(20, 10, 80, 80)])
+    plugin = IntrusionPlugin(detector, FakeFaceMatcher("stranger"))
+    plugin.setup()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+
+    assert plugin.detect(Frame(image=image, ts=0, camera_id=0, frame_idx=0)) == []
+    active = plugin.detect(Frame(image=image, ts=1, camera_id=0, frame_idx=5))
+    assert len(active) == 1
+    assert active[0].extra["lifecycle"] == "active"
+    first_track = active[0].extra["track_key"]
+
+    detector.boxes = [(150, 10, 210, 80)]
+    cleared = plugin.detect(Frame(image=image, ts=2, camera_id=0, frame_idx=10))
+    assert [event.extra["lifecycle"] for event in cleared] == ["cleared"]
+    assert cleared[0].extra["track_key"] == first_track
+    assert plugin.detect(Frame(image=image, ts=3, camera_id=0, frame_idx=15)) == []
+
+    detector.boxes = [(20, 10, 80, 80)]
+    assert plugin.detect(Frame(image=image, ts=4, camera_id=0, frame_idx=20)) == []
+    reentered = plugin.detect(Frame(image=image, ts=5, camera_id=0, frame_idx=25))
+    assert len(reentered) == 1
+    assert reentered[0].extra["lifecycle"] == "active"
+    assert reentered[0].extra["track_key"] != first_track
+
+
+def test_danger_zone_uses_per_track_enter_dwell_exit_lifecycle(monkeypatch):
+    Session = make_session(monkeypatch)
+    seed_danger_zone(Session)
+    detector = FakePersonDetector([(20, 10, 80, 80)])
+    plugin = IntrusionPlugin(detector, FakeFaceMatcher("stranger"))
+    plugin.setup()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+
+    assert plugin.detect(Frame(image=image, ts=0, camera_id=0, frame_idx=0)) == []
+    active = plugin.detect(Frame(image=image, ts=1, camera_id=0, frame_idx=5))
+    assert len(active) == 1
+    assert active[0].type == "intrusion"
+    assert active[0].extra["track_key"] == "region-20-track-1"
+
+    detector.boxes = [(150, 10, 210, 80)]
+    cleared = plugin.detect(Frame(image=image, ts=2, camera_id=0, frame_idx=10))
+    assert len(cleared) == 1
+    assert cleared[0].extra["lifecycle"] == "cleared"
+
+    detector.boxes = [(20, 10, 80, 80)]
+    assert plugin.detect(Frame(image=image, ts=3, camera_id=0, frame_idx=15)) == []
+    reentered = plugin.detect(Frame(image=image, ts=4, camera_id=0, frame_idx=20))
+    assert len(reentered) == 1
+    assert reentered[0].extra["track_key"] == "region-20-track-2"
+
+
+def test_one_of_two_alerted_tracks_can_clear_without_clearing_the_other(monkeypatch):
+    Session = make_session(monkeypatch)
+    seed_danger_zone(Session)
+    detector = FakePersonDetector([(5, 10, 40, 80), (55, 10, 95, 80)])
+    plugin = IntrusionPlugin(detector, FakeFaceMatcher("stranger"))
+    plugin.setup()
+    image = np.zeros((120, 120, 3), dtype=np.uint8)
+
+    assert plugin.detect(Frame(image=image, ts=0, camera_id=0, frame_idx=0)) == []
+    active = plugin.detect(Frame(image=image, ts=1, camera_id=0, frame_idx=5))
+    assert {event.extra["track_key"] for event in active} == {
+        "region-20-track-1", "region-20-track-2"
+    }
+
+    # The second person crosses the boundary in consecutive frames while the
+    # first stays. This keeps the IoU trajectory association unambiguous.
+    detector.boxes = [(5, 10, 40, 80), (70, 10, 110, 80)]
+    assert plugin.detect(Frame(image=image, ts=2, camera_id=0, frame_idx=10)) == []
+    detector.boxes = [(5, 10, 40, 80), (85, 10, 125, 80)]
+    cleared = plugin.detect(Frame(image=image, ts=3, camera_id=0, frame_idx=15))
+    assert [event.extra["track_key"] for event in cleared] == ["region-20-track-2"]
+    assert plugin.get_active_alarm_states() == [{
+        "region_id": 20,
+        "camera_id": 0,
+        "alarm_type": "intrusion",
+        "track_key": "region-20-track-1",
+    }]
 
 
 def test_binding_hot_reload_and_unbind_stop_identity_checks(monkeypatch):

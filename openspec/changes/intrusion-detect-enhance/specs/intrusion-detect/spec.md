@@ -1,5 +1,31 @@
 ## MODIFIED Requirements
 
+### Requirement: 防区实时生命周期
+
+The system SHALL maintain a per-trajectory lifecycle of enter, dwell, alerted,
+and exited for danger zones and reserved seats. It SHALL persist exactly one
+alarm when an unauthorized trajectory reaches the configured dwell time, and
+SHALL publish a non-persistent `region_state` clear event when that alerted
+trajectory leaves or expires after the configured inference-miss tolerance.
+
+#### Scenario: 非预约人员离开座位后解除实时状态
+- **GIVEN** 陌生人 S 已在预约座位 A 中停留到阈值并触发 `occupy` 告警
+- **WHEN** S 离开座位多边形，或连续超过三次推理未再被检测到
+- **THEN** 系统发布 `region_state=cleared` 和 S 的 `track_key`
+- **AND THEN** 不创建第二条历史告警记录
+
+#### Scenario: 多人防区在最后一人离开前保持告警
+- **GIVEN** 同一防区有两个已告警的非授权轨迹 S1 和 S2
+- **WHEN** S1 离开
+- **THEN** 系统仅解除 S1 的实时状态，防区仍为 active
+- **WHEN** S2 随后离开
+- **THEN** 防区实时状态解除
+
+#### Scenario: 离开后再次进入创建新告警
+- **GIVEN** 非授权轨迹 S 已触发告警并完成实时解除
+- **WHEN** S 再次进入同一防区并停留到阈值
+- **THEN** 系统创建一条新的同类型告警
+
 ### Requirement: 座位占用检测告警
 The system SHALL 在人员停留于已绑定预约成员的座位防区内且停留时间达到 `Y_stay_time` 时，对人脸识别结果非预约成员的人员触发 `occupy` 告警。预约成员进入绑定座位不触发告警。
 
@@ -54,6 +80,23 @@ The system SHALL 在人员停留于已绑定预约成员的座位防区内且停
 - **GIVEN** 一个 `type=danger_zone` 的防区
 - **WHEN** 人员侵入并停留达到 `Y_stay_time`
 - **THEN** 触发 `intrusion` 告警，行为与变更前完全一致
+
+### Requirement: Fast Reserved-Member Authorization
+
+The system SHALL publish a non-persistent allowed state as soon as the reserved
+member is recognized in their bound seat. The frontend SHALL clear only that
+track and show the member and seat information. Dwell observations and track
+expiry tolerance SHALL be configurable for responsive deployment behavior.
+
+#### Scenario: Reserved member is recognized in their seat
+- **GIVEN** seat A is bound to member M
+- **WHEN** M is recognized in A on the first in-seat observation
+- **THEN** no `occupy` alarm is persisted and the frontend receives an `allowed` state with M and A names
+
+#### Scenario: Alerted track becomes authorized
+- **GIVEN** an active seat track is red
+- **WHEN** that track is subsequently recognized as the reserved member
+- **THEN** only that track is cleared; the region stays red if another unauthorized track remains
 
 ## ADDED Requirements
 

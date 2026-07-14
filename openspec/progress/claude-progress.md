@@ -674,4 +674,50 @@
   - `python -m py_compile app/detectors/intrusion.py tests/test_intrusion_identity.py` passed.
   - `npm.cmd run spec:validate` passed: 8 OpenSpec items, 0 failures.
 - Remaining action:
-  - Restart the currently running backend process before live verification, then keep a stranger in the bound seat for more than two seconds and verify a new `occupy` alarm appears in the dashboard.
+- Restart the currently running backend process before live verification, then keep a stranger in the bound seat for more than two seconds and verify a new `occupy` alarm appears in the dashboard.
+
+## Session 2026-07-14 Intrusion Track Lifecycle
+
+- Goal: make intrusion display state follow each person trajectory instead of leaving a region permanently red after a historic alarm.
+- Actions:
+  - Added independent enter, dwell, alerted, and exited track state for ordinary danger zones and reserved seats.
+  - Active tracks produce one persisted `intrusion` or `occupy` alarm. Alerted tracks emit a non-persistent `region_state: cleared` WebSocket message on exit or after tolerated inference misses expire.
+  - Added a live active-track snapshot when the dashboard reconnects. The frontend now maintains red/green overlays from active track keys only, so alarm confirmation and old history do not clear or reactivate a live region incorrectly.
+- Validation:
+  - `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_alarm_center.py -q` passed: 32 passed.
+  - `npm.cmd run build` in `frontend/` passed.
+  - `npm.cmd run spec:validate` passed: 8 items, 0 failures.
+- Remaining action:
+  - Restart backend and frontend, then perform real OBS acceptance: enter a bound seat or danger zone until one alarm appears, leave until the red overlay and beep stop, then re-enter to confirm a new alarm is created.
+
+## Session 2026-07-14 Fast Seat Authorization and DingTalk Diagnostics
+
+- Goal: reduce reserved-seat response latency, make an identified reservation owner visibly authorized, and expose DingTalk delivery configuration gaps.
+- Actions:
+  - Added `INTRUSION_MIN_OBSERVATIONS` (default 2) and `INTRUSION_EXIT_MISSES` (default 1), measured in inference passes rather than raw video frames.
+  - Reserved-member recognition now emits a non-persistent `region_state: allowed` message on its first matching observation. The dashboard clears only that trajectory and displays a five-second welcome message with the member and seat names.
+  - Added DingTalk startup diagnostics. With no webhook, the backend logs that alarms are stored locally but not sent externally.
+- Validation:
+  - From `backend/`: `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_alarm_center.py -q` passed: 35 passed.
+  - `python -m py_compile backend/app/config.py backend/app/detectors/intrusion.py backend/app/stream/engine.py backend/app/services/dingtalk.py` passed.
+  - `npm.cmd run build` from `frontend/`, `npm.cmd run spec:validate`, and `.\\init.cmd` all passed.
+- Remaining action:
+  - Configure `DINGTALK_WEBHOOK` (and `DINGTALK_SECRET` if the robot uses signing security), restart the backend, then capture OBS evidence for stranger active -> exit cleared -> reservation owner allowed.
+
+## Session 2026-07-14 Fatigue Companion Sessions
+
+- Goal: make fatigue a seat-scoped self-study companion reminder instead of an ambiguous global alarm state.
+- Completed:
+  - Added explicit `demo` and `verified` study-session modes, nullable enrolled `member_id`, and additive startup migration for existing SQLite/MySQL `seat_status` tables.
+  - Kept `seat_reservation` as the durable identity binding; verified sessions now require the selected enrolled member to match that reservation.
+  - Reworked fatigue face selection to require exactly one face inside the actual decoded-frame seat polygon. Outside faces and multiple in-seat faces reset temporal state rather than borrowing a full-frame face.
+  - Verified sessions now require a matching face before EAR/MAR progresses. Mismatches pause fatigue and leave unauthorized-seat handling to the intrusion plugin.
+  - Added a companion WebSocket route for matching fatigue reminders. Fatigue remains persisted and level-1 DingTalk-notified, while Dashboard keeps it in history without treating it as a red active region, flash, or beep trigger.
+  - Rebuilt the companion UI around explicit camera, seat, user ID, mode, and member choices plus live eligibility/pause-reason display.
+- Validation:
+  - `python -m py_compile` passed for changed backend modules.
+  - SQLite focused regression passed: `52 passed` for fatigue, alarm center, reservation, and identity tests.
+  - `npm.cmd --prefix frontend run build` passed.
+- Remaining risks:
+  - Docker Desktop was not running during this implementation pass, so live RTMP frames, real Dlib verified-member matching, and external DingTalk delivery remain pending environment acceptance.
+  - `/ws/companion` is session-routed for the unauthenticated demonstration; production privacy requires a later login/authorization change.
