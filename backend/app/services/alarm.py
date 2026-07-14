@@ -329,6 +329,7 @@ class AlarmService:
             "fight": "打架告警",
             "face_recognition": "人脸识别",
             "face_spoof": "欺骗攻击告警",
+            "abnormal_sound": "异常声音告警",
         }.get(event.type, f"{event.type}告警")
 
         if actor and behavior:
@@ -398,6 +399,23 @@ class AlarmService:
         
         elif event.type == "face_recognition":
             return f"人脸识别：{face_match}" if face_match else "人脸识别告警"
+        
+        elif event.type == "abnormal_sound":
+            audio_event = extra.get("audio_event", "异常声音")
+            audio_confidence = extra.get("audio_confidence", 0)
+            detected = extra.get("detected_events", [])
+            event_cn = {
+                "Scream": "尖叫声", "Shout": "喊叫声", "Yell": "呼喊声",
+                "Crying": "哭泣/呼救声", "Glass": "玻璃破碎声", "Shatter": "粉碎声",
+                "Gunshot": "枪声", "Explosion": "爆炸声", "Thump": "撞击声",
+                "Crash": "碰撞声", "Bang": "猛击声", "Groan": "呻吟声",
+                "LoudSound": "异常响声",
+            }.get(audio_event, audio_event)
+            desc = f"检测到{event_cn}（置信度{audio_confidence}）"
+            if len(detected) > 1:
+                types_cn = [event_cn.get(e, e) for e in detected]
+                desc += f"，同时检测到{'、'.join(types_cn)}"
+            return desc
         
         return type_label
 

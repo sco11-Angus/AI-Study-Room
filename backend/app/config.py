@@ -135,8 +135,9 @@ class Config:
 
     # 音视频融合打架检测 (任务书 D)
     FIGHT_FUSE_THRESH = float(os.getenv("FIGHT_FUSE_THRESH", 0.6))  # 融合分告警阈值
-    FIGHT_W_VIS = float(os.getenv("FIGHT_W_VIS", 0.6))    # 视觉分权重
-    FIGHT_W_AUD = float(os.getenv("FIGHT_W_AUD", 0.4))    # 音频分权重
+    # 三模态融合权重(spec)：vis+aud+emo = 0.5+0.3+0.2 = 1.0
+    FIGHT_W_VIS = float(os.getenv("FIGHT_W_VIS", 0.5))    # 视觉分权重
+    FIGHT_W_AUD = float(os.getenv("FIGHT_W_AUD", 0.3))    # 音频分权重
     FIGHT_DURATION = float(os.getenv("FIGHT_DURATION", 3))  # 候选持续确认(秒)
     FIGHT_ALIGN_TOL = float(os.getenv("FIGHT_ALIGN_TOL", 2))  # 音视频时间对齐容差(秒)
     FIGHT_LEVEL = int(os.getenv("FIGHT_LEVEL", 2))        # 告警分级(人身安全高优先)
@@ -144,9 +145,37 @@ class Config:
     #            shared=复用 B 的引擎共享上下文(需 B 写入才生效, 合规首选)
     FIGHT_PERSON_SOURCE = os.getenv("FIGHT_PERSON_SOURCE", "face")
 
+    # 异常声学事件检测 (torch-vggish-yamnet，首次运行自动下载 ~14MB 权重)
+    YAMNET_ENABLED = os.getenv("YAMNET_ENABLED", "true").lower() == "true"
+    YAMNET_CONF_THRESH = float(os.getenv("YAMNET_CONF_THRESH", 0.3))
+    ABNORMAL_SOUND_CONF = float(os.getenv("ABNORMAL_SOUND_CONF", 0.4))
+    ABNORMAL_SOUND_DURATION = float(os.getenv("ABNORMAL_SOUND_DURATION", 2.0))
+
     # 音频管线 (任务书 D1)
     AUDIO_WINDOW = float(os.getenv("AUDIO_WINDOW", 1.0))  # 分析窗口(秒)
     AUDIO_SR = int(os.getenv("AUDIO_SR", 16000))          # 重采样率(单声道)
+
+    # 情感分析增强打架检测 (任务书 D2) — 人脸表情闸门
+    #  情绪作"闸门"而非加分项：无愤怒/恐惧时压制视觉冲突分，滤掉欢呼/嬉闹误报。
+    EMOTION_ENABLE = os.getenv("EMOTION_ENABLE", "false").lower() == "true"  # 灰度开关
+    EMOTION_DEVICE = os.getenv("EMOTION_DEVICE", "cpu")   # cpu / gpu(cuda)
+    # HSEmotion 模型名: enet_b0_8_best_vgaf(默认,8类,首次自动下载权重到 ~/.hsemotion)
+    EMOTION_MODEL_NAME = os.getenv("EMOTION_MODEL_NAME", "enet_b0_8_best_vgaf")
+    # 闸门系数: vis' = vis * (EMOTION_GATE_FLOOR + (1-FLOOR) * emo_gate)
+    #  emo_gate=0(无负面情绪) 时视觉分打 FLOOR 折; emo_gate=1 时保留全分。
+    EMOTION_GATE_FLOOR = float(os.getenv("EMOTION_GATE_FLOOR", 0.4))
+    # 音频侧: aud = W_EMO*声学情绪(尖叫/怒吼) + (1-W_EMO)*响度托底
+    AUDIO_EMO_WEIGHT = float(os.getenv("AUDIO_EMO_WEIGHT", 0.7))
+    YAMNET_MODEL_PATH = os.getenv("YAMNET_MODEL_PATH", "")  # 留空=音频情绪暂用纯声学
+
+    # 声学情感识别 (taskA: SenseVoiceSmall) — 音视频联动
+    EMOTION_ENABLED = os.getenv("EMOTION_ENABLED", "true").lower() == "true"
+    EMOTION_MODEL_PATH = os.getenv("EMOTION_MODEL_PATH", "")
+    EMOTION_RISK_COOLDOWN = int(os.getenv("EMOTION_RISK_COOLDOWN", 10))  # 区域联动冷却(秒)
+
+    # 三模态融合权重
+    FIGHT_W_EMO = float(os.getenv("FIGHT_W_EMO", 0.2))  # 情绪权重
+    # 注：FIGHT_W_VIS(0.5) + FIGHT_W_AUD(0.3) + FIGHT_W_EMO(0.2) = 1.0
 
     # 告警升级 (§7.4)
     ESCALATE_TIMEOUT = int(os.getenv("ESCALATE_TIMEOUT", 180))  # 秒
@@ -184,16 +213,31 @@ class Config:
 
     # 活体检测（主动/被动信号分离融合）
     LIVENESS_ENABLED = os.getenv("LIVENESS_ENABLED", "true").lower() == "true"
-    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.45))
+    LIVENESS_THRESHOLD = float(os.getenv("LIVENESS_THRESHOLD", 0.40))
     LIVENESS_HISTORY_SIZE = int(os.getenv("LIVENESS_HISTORY_SIZE", 30))
     LIVENESS_EAR_BLINK_THRESH = float(os.getenv("LIVENESS_EAR_BLINK_THRESH", 0.25))
 
     # EMA 平滑系数（0~1，越大响应越快，越小越平滑）
     LIVENESS_EMA_ALPHA = float(os.getenv("LIVENESS_EMA_ALPHA", 0.3))
 
+    # 全帧静态检测（防静态照片）——默认关闭。
+    # 该方法用帧间 nmse 判"画面是否静止"，但在高稳定度/低噪声摄像头上，
+    # 真人 nmse 与照片重叠（实测真人 ~0.0002，与冻结帧同量级），会 100% 误判真人。
+    # 防照片改由 FSD（零样本AIGC）+ 眨眼(EAR) 等活体层负责。如需启用置 true。
+    FACE_STATIC_DETECT_ENABLED = os.getenv("FACE_STATIC_DETECT_ENABLED", "false").lower() == "true"
+    FACE_STATIC_NMSE_THRESHOLD = float(os.getenv("FACE_STATIC_NMSE_THRESHOLD", 0.0005))
+    FACE_STATIC_STREAK = int(os.getenv("FACE_STATIC_STREAK", 3))
+
     # 反欺骗模型 Ensemble 权重
     ANTISPOOF_WEIGHT_ONNX = float(os.getenv("ANTISPOOF_WEIGHT_ONNX", 0.5))
     ANTISPOOF_WEIGHT_PTH = float(os.getenv("ANTISPOOF_WEIGHT_PTH", 0.5))
+
+    # FSD 零样本 AIGC 检测：max_size 上限。
+    # 关键：FSD 靠频域高频伪影判别，把低清图"放大"会插值抹掉指纹 → 测不出。
+    # 实测扫描(324x576换脸视频)：max_size 256~448 全部命中(z=-5~-21，320最佳)，
+    # 512~576 漏判(z≈-1.4)。存在"悬崖"——FSD 需把图降采样到 ~320 频段才暴露 AI 指纹。
+    # 策略：max_size = min(输入帧长边, 上限=320)，既不放大低清、又避开512+失效区、并控CPU内存。
+    FSD_MAX_SIZE_CAP = int(os.getenv("FSD_MAX_SIZE_CAP", 320))
 
     # 违规抓拍回放 (任务书 G)
     CLIP_PRE_SECONDS = int(os.getenv("CLIP_PRE_SECONDS", 5))    # 违规前录制秒数

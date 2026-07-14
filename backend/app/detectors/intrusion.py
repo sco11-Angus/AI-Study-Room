@@ -13,6 +13,7 @@ from ..models.database import SessionLocal
 from ..models.entities import Member, Region, SeatReservation
 from .face import FaceMatcher
 from .base import AlarmEvent, Detector, Frame
+from .zone_emotion import ZoneEmotionRisk
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,7 @@ class IntrusionPlugin(Detector):
         self.person_detector = person_detector or PersonDetector()
         self.face_matcher = face_matcher or FaceMatcher()
         self.shared_ctx = shared_ctx
+        self._zone_emotion = ZoneEmotionRisk()
         self._regions: dict[int, RegionRuntime] = {}
         self._seats: dict[int, SeatRuntime] = {}
         self._region_tracks: dict[int, dict[int, SeatTrack]] = {}
@@ -181,6 +183,10 @@ class IntrusionPlugin(Detector):
     def setup(self) -> None:
         self.person_detector.setup()
         self._reload_regions()
+
+    @property
+    def zone_emotion(self) -> ZoneEmotionRisk:
+        return self._zone_emotion
 
     def _reload_regions(self) -> None:
         session = SessionLocal()
@@ -310,6 +316,17 @@ class IntrusionPlugin(Detector):
             ):
                 track.evaluated = True
                 track.alerted = True
+                zone_modifier = self._zone_emotion.get_zone_threshold_modifier(region.id)
+                extra_data = {
+                    "kind": "danger_zone",
+                    "lifecycle": "active",
+                    "region_name": region.name,
+                    "person_box": [round(float(v), 2) for v in box],
+                    "track_key": f"region-{region.id}-track-{track_id}",
+                }
+                if zone_modifier < 1.0:
+                    extra_data["zone_emotion_risk"] = True
+                    extra_data["zone_threshold_modifier"] = round(zone_modifier, 2)
                 events.append(
                     AlarmEvent(
                         type="intrusion",
@@ -317,13 +334,7 @@ class IntrusionPlugin(Detector):
                         camera_id=frame.camera_id,
                         ts=ts,
                         level=1,
-                        extra={
-                            "kind": "danger_zone",
-                            "lifecycle": "active",
-                            "region_name": region.name,
-                            "person_box": [round(float(v), 2) for v in box],
-                            "track_key": f"region-{region.id}-track-{track_id}",
-                        },
+                        extra=extra_data,
                     )
                 )
 

@@ -33,6 +33,10 @@ test_photos/
 backend/stream_test.jpg
 test_junk.jpg
 AI.mp4
+AI换脸测试视频.mp4
+火灾视频.mp4
+打架视频.mp4
+打架测试视频.mp4
 
 # 训练仓库和临时文件
 training_repo/

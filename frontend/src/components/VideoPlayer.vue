@@ -12,7 +12,10 @@
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 
-const props = defineProps({ streamUrl: String })
+const props = defineProps({ 
+  streamUrl: String,
+  faceResult: Object 
+})
 const emit = defineEmits(['dimensions'])
 const canvasEl = ref(null)
 const streamStatus = ref('连接视频流...')
@@ -21,6 +24,7 @@ let reconnectTimer = null
 let lastFrameTime = 0
 const RECONNECT_DELAY = 3000
 const FRAME_INTERVAL = 1000 / 15
+let currentFrame = null
 
 const destroyWs = () => {
   if (reconnectTimer) {
@@ -40,6 +44,49 @@ const scheduleReconnect = () => {
   reconnectTimer = setTimeout(() => {
     connectWs()
   }, RECONNECT_DELAY)
+}
+
+const drawFaceBox = (ctx, faceData) => {
+  if (!faceData || !faceData.box) return
+  
+  const { box, name, match } = faceData
+  const [x, y, width, height] = box
+  
+  // 绘制人脸框
+  ctx.strokeStyle = match ? '#67c23a' : '#f56c6c'
+  ctx.lineWidth = 3
+  ctx.strokeRect(x, y, width, height)
+  
+  // 绘制标签背景
+  if (name || match) {
+    const label = match ? `✓ ${name}` : '陌生人'
+    ctx.font = 'bold 16px Arial'
+    const textWidth = ctx.measureText(label).width
+    const labelHeight = 24
+    const labelY = y > labelHeight + 5 ? y - labelHeight - 5 : y + height + 5
+    
+    ctx.fillStyle = match ? 'rgba(103, 194, 58, 0.9)' : 'rgba(245, 108, 108, 0.9)'
+    ctx.fillRect(x, labelY, textWidth + 16, labelHeight)
+    
+    // 绘制标签文字
+    ctx.fillStyle = '#fff'
+    ctx.fillText(label, x + 8, labelY + 17)
+  }
+}
+
+const renderFrame = () => {
+  if (!currentFrame || !canvasEl.value) return
+  
+  const canvas = canvasEl.value
+  const ctx = canvas.getContext('2d')
+  
+  // 绘制视频帧
+  ctx.drawImage(currentFrame, 0, 0)
+  
+  // 绘制人脸框
+  if (props.faceResult) {
+    drawFaceBox(ctx, props.faceResult)
+  }
 }
 
 const connectWs = () => {
@@ -72,29 +119,28 @@ const connectWs = () => {
       const canvas = canvasEl.value
       if (!canvas) return
 
-      // createImageBitmap 比 new Image()+createObjectURL 解码更快、无异步乱序
       let bitmap
       try {
         bitmap = await createImageBitmap(event.data)
       } catch (e) {
         return
       }
-      // 组件可能已在等待期间卸载
+      
       if (!canvasEl.value) {
         bitmap.close()
         return
       }
-      // 让 canvas 绘图缓冲区匹配视频帧真实尺寸，否则默认 300x150 会导致裁剪+变形
+      
       if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
         canvas.width = bitmap.width
         canvas.height = bitmap.height
-        // 向父组件上报视频真实尺寸，用于设置框的宽高比
         if (bitmap.width && bitmap.height) {
           emit('dimensions', { width: bitmap.width, height: bitmap.height })
         }
       }
-      const ctx = canvas.getContext('2d')
-      ctx.drawImage(bitmap, 0, 0)
+      
+      currentFrame = bitmap
+      renderFrame()
       bitmap.close()
     } else {
       try {
@@ -128,6 +174,14 @@ watch(
   () => {
     connectWs()
   }
+)
+
+watch(
+  () => props.faceResult,
+  () => {
+    renderFrame()
+  },
+  { deep: true }
 )
 
 onMounted(() => {

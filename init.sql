@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS alarm_event (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '告警ID',
     region_id INT NULL COMMENT '触发防区/座位，外键region.id',
     camera_id INT NULL COMMENT '触发摄像头(便于查询)，外键camera.id',
-    type ENUM('intrusion', 'fire_smoke', 'occupy', 'fatigue', 'fight', 'face_recognition', 'face_spoof') NOT NULL COMMENT '告警类型',
+    type ENUM('intrusion', 'fire_smoke', 'occupy', 'fatigue', 'fight', 'face_recognition', 'face_spoof', 'abnormal_sound') NOT NULL COMMENT '告警类型',
     snapshot_url VARCHAR(256) NULL COMMENT '抓拍图路径',
     clip_url VARCHAR(256) NULL COMMENT '视频片段路径(任务书G)',
     face_match VARCHAR(64) NULL COMMENT '会员匹配结果：member:<id>/stranger',

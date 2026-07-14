@@ -153,13 +153,14 @@ def create_app(config: type[Config] = Config) -> Flask:
     init_db()
 
     # 注册各 API 蓝图 (§9.1)
-    from .api import alarms, cameras, members, regions, seat_reservations, seat_status, video_feed, ws
+    from .api import alarms, cameras, logs, members, regions, seat_reservations, seat_status, video_feed, ws
     app.register_blueprint(cameras.bp)
     app.register_blueprint(regions.bp)
     app.register_blueprint(members.bp)
     app.register_blueprint(seat_reservations.bp)
     app.register_blueprint(seat_status.bp)
     app.register_blueprint(alarms.bp)
+    app.register_blueprint(logs.bp)
     app.register_blueprint(ws.bp)
 
     # WebSocket 路由通过 sock.route 注册（非 blueprint）

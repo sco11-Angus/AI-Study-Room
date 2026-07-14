@@ -724,10 +724,8 @@ class AntiSpoofDetector:
         try:
             from fsd import FSDDetector
             self._fsd_detector = FSDDetector.load(device="cpu")
-            # FSD 需要足够大的输入提取伪影特征；人脸裁剪 128×128 放大到 224×224
-            # max_size=512 给 FRE 足够的特征空间
-            self._fsd_detector.config["fsd"]["max_size"] = 512
-            logger.info("[antispoof] FSD 零样本检测器已加载 (CVPR 2025, max_size=512)")
+            # max_size 不在此固定，改由 _detect_fsd 按每帧尺寸动态设定（禁止放大）。
+            logger.info("[antispoof] FSD 零样本检测器已加载 (CVPR 2025, 动态max_size)")
         except Exception as e:
             self._fsd_detector = None
             logger.warning("[antispoof] FSD 检测器加载失败: %s", e)
@@ -735,8 +733,9 @@ class AntiSpoofDetector:
     def _detect_fsd(self, image: np.ndarray) -> float:
         """FSD 零样本推理：BGR numpy → PIL → FSD z_score → 归一化 [0,1]。
 
-        全帧模式：保持原始分辨率（max_size=512），取中心 512×512 分析全局伪影。
-        人脸裁剪模式：<200px 时放大到 224×224 确保 FRE 有足够特征空间。
+        关键：保留原图分辨率，不裁剪、不放大。max_size 动态设为
+        min(输入帧长边, FSD_MAX_SIZE_CAP)，避免把低清图放大而抹掉 AI 频域指纹。
+        （实测：324宽换脸视频 max_size=324→z≈-21 命中；放大到512→z≈-1 漏判。）
 
         Args:
             image: BGR 图像 (H, W, 3)
@@ -749,19 +748,12 @@ class AntiSpoofDetector:
 
         try:
             from PIL import Image
+            from ..config import Config
 
             h, w = image.shape[:2]
-            # 全帧：保持分辨率，取中心正方形（换脸伪影最密集区域）
-            if max(h, w) >= 300:
-                size = min(h, w)
-                cy, cx = h // 2, w // 2
-                half = size // 2
-                y1, y2 = max(0, cy - half), min(h, cy + half)
-                x1, x2 = max(0, cx - half), min(w, cx + half)
-                image = image[y1:y2, x1:x2]
-            elif min(h, w) < 200:
-                # 人脸裁剪：放大到 224×224
-                image = cv2.resize(image, (224, 224), interpolation=cv2.INTER_CUBIC)
+            long_side = max(h, w)
+            # 永不放大：max_size 取原图长边与上限的较小值
+            self._fsd_detector.config["fsd"]["max_size"] = min(long_side, Config.FSD_MAX_SIZE_CAP)
 
             rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(rgb)
@@ -779,9 +771,9 @@ class AntiSpoofDetector:
 
             self._fsd_call_count = getattr(self, '_fsd_call_count', 0) + 1
             if self._fsd_call_count % 30 == 1:
-                logger.info("[antispoof] FSD z=%.3f (smooth=%.3f) is_fake=%s mode=%s (第%d帧)",
+                logger.info("[antispoof] FSD z=%.3f (smooth=%.3f) is_fake=%s max_size=%d (第%d帧)",
                             z, z_smooth, result.is_fake,
-                            "full_frame" if max(h, w) >= 300 else "face_crop",
+                            self._fsd_detector.config["fsd"]["max_size"],
                             self._fsd_call_count)
 
             # 归一化: z_smooth ≤ -25 → 0.0 (AI生成), z_smooth ≥ -1 → 1.0 (真实)

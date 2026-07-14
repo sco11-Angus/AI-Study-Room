@@ -16,7 +16,9 @@ from collections import deque
 import numpy as np
 
 from ..config import Config
+from .audio_event import AudioEventDetector
 from .base import AlarmEvent, Detector, Frame
+from .emotion import FacialEmotion, EmotionRecognizer
 from .person_source import Box, PersonBoxProvider, build_person_provider
 
 logger = logging.getLogger(__name__)
@@ -112,15 +114,52 @@ class VisualConflict:
 # ---------------- D3 音频侧：打斗声识别 ----------------
 
 class AudioConflict:
-    """音频打斗置信度 — 基础声学特征：高能量突发为一级信号。
+    """音频打架置信度 — YAMNet语义检测 + DSP fallback 双轨。
 
-    每窗口计算 RMS(dBFS) 能量、过零率、谱质心；能量骤升且持续 -> aud_score。
-    语义增强（YAMNet/小 CNN 识别 尖叫/glass break）留作加分 TODO。
+    优先使用YAMNet语义检测（尖叫/喊叫/哭泣/玻璃破碎等），
+    YAMNet不可用时降级到原有DSP特征（能量/过零率/谱质心）。
     """
 
     def __init__(self, hist: int = 5, rms_ref_db: float = -20.0):
-        self.rms_ref_db = rms_ref_db          # 达到此响度视为高能量（满分参考）
-        self._energy_hist: deque = deque(maxlen=hist)  # 近几窗能量，判"突发"
+        self.rms_ref_db = rms_ref_db
+        self._energy_hist: deque = deque(maxlen=hist)
+        self._yamnet: AudioEventDetector | None = None
+
+    def set_yamnet(self, yamnet: AudioEventDetector) -> None:
+        """注入YAMNet检测器（由FightPlugin在setup时调用）。"""
+        self._yamnet = yamnet
+
+    def _yamnet_score(self, pcm: np.ndarray, sample_rate: int) -> float:
+        """使用YAMNet语义检测的音频冲突分 [0,1]。
+        
+        将YAMNet检测到的异常音频事件置信度映射为冲突分。
+        尖叫声权重最高，其次是哭泣/玻璃破碎，最后是其他异常。
+        """
+        if self._yamnet is None:
+            return 0.0
+        result = self._yamnet.predict(pcm, sample_rate)
+        event = result["event"]
+        conf = result["confidence"]
+        if event is None or conf < Config.YAMNET_CONF_THRESH:
+            return 0.0
+        
+        # 不同事件类型的风险权重
+        event_weights = {
+            "Scream": 1.0,    # 尖叫 → 最高风险
+            "Shout": 0.8,     # 喊叫
+            "Yell": 0.8,      # 呼喊
+            "Crying": 0.9,    # 哭泣/呼救
+            "Glass": 0.7,     # 玻璃破碎
+            "Shatter": 0.8,   # 粉碎声
+            "Gunshot": 1.0,   # 枪声 → 最高风险
+            "Explosion": 1.0, # 爆炸 → 最高风险
+            "Thump": 0.5,     # 撞击声（可能是打架）
+            "Crash": 0.6,     # 碰撞
+            "Bang": 0.6,      # 猛击
+            "Groan": 0.6,     # 呻吟
+        }
+        weight = event_weights.get(event, 0.5)
+        return float(np.clip(conf * weight, 0.0, 1.0))
 
     @staticmethod
     def _rms_dbfs(pcm: np.ndarray) -> float:
@@ -144,47 +183,88 @@ class AudioConflict:
         total = mag.sum()
         return float((freqs * mag).sum() / total) if total > 0 else 0.0
 
-    def score(self, pcm: np.ndarray, sample_rate: int) -> float:
+    def _dsp_score(self, pcm: np.ndarray, sample_rate: int) -> float:
+        """原有DSP分析路径（fallback）。"""
         db = self._rms_dbfs(pcm)
-        # 能量映射：从 -60dBFS(静) 到 rms_ref_db(打斗) 线性归一
         loud = np.clip((db - (-60.0)) / (self.rms_ref_db - (-60.0)), 0.0, 1.0)
-        # 突发：本窗能量显著高于近窗均值
         burst = 0.0
         if self._energy_hist:
             base = float(np.mean(self._energy_hist))
             burst = np.clip((loud - base) / 0.3, 0.0, 1.0)
         self._energy_hist.append(loud)
-        # 声学特征加权：打斗声通常宽频、过零率偏高
         zcr = self._zcr(pcm)
         centroid = self._spectral_centroid(pcm, sample_rate)
         spectral = np.clip(centroid / (sample_rate / 4), 0.0, 1.0)
         feat = 0.5 * zcr + 0.5 * spectral
-        aud = 0.6 * loud + 0.25 * burst + 0.15 * feat
-        return float(np.clip(aud, 0.0, 1.0))
+        return float(np.clip(0.6 * loud + 0.25 * burst + 0.15 * feat, 0.0, 1.0))
+
+    def score(self, pcm: np.ndarray, sample_rate: int) -> float:
+        """计算音频冲突分：优先YAMNet语义，不可用时降级到DSP。"""
+        if self._yamnet is not None:
+            yamnet_score = self._yamnet_score(pcm, sample_rate)
+            # 同时维护DSP能量直方图（用于fallback的一致性）
+            db = self._rms_dbfs(pcm)
+            loud = np.clip((db - (-60.0)) / (self.rms_ref_db - (-60.0)), 0.0, 1.0)
+            self._energy_hist.append(loud)
+            if yamnet_score > 0:
+                return yamnet_score
+        # Fallback to DSP
+        return self._dsp_score(pcm, sample_rate)
 
 
 # ---------------- D4 语义融合 + 时空防抖 ----------------
 
 class FusionDebouncer:
-    """融合音视频分并做持续性防抖。
+    """融合音视频分+情绪风险并做持续性防抖。
 
-    - 双模都非零 + 加权分 > 阈值 -> 冲突候选。
-    - 候选无间断持续 >= FIGHT_DURATION -> 确认打架。
-    - 任一帧回落 -> 计时清零（滤掉击掌/嬉闹瞬时动作）。
+    三模态加权：w_vis*vis + w_aud*aud + w_emo*emo_risk
+    - 当EmotionRecognizer不可用时，emo_risk=0，权重自动归一化
+    - 双模AND：视觉、音频均需非零（情绪可为零）
+    - 候选无间断持续 >= FIGHT_DURATION -> 确认打架
     """
 
     def __init__(self):
         self.w_v = Config.FIGHT_W_VIS
         self.w_a = Config.FIGHT_W_AUD
+        self.w_e = Config.FIGHT_W_EMO
         self.thresh = Config.FIGHT_FUSE_THRESH
         self.duration = Config.FIGHT_DURATION
+        self.gate_floor = Config.EMOTION_GATE_FLOOR  # 情绪闸门下限系数 (D2)
         self._candidate_since: float | None = None
-        self._fired = False  # 已就同一次持续冲突告警，避免重复刷
+        self._fired = False
 
-    def update(self, vis_score: float, aud_score: float, ts: float) -> dict | None:
-        fuse = self.w_v * vis_score + self.w_a * aud_score
-        # 双模 AND：视觉、音频均需非零，避免单模拉满误触发
-        is_candidate = fuse > self.thresh and vis_score > 0 and aud_score > 0
+    def update(self, vis_score: float, aud_score: float, emo_risk: float = 0.0,
+               ts: float = 0, emo_gate: float = 1.0) -> dict | None:
+        """三模态融合(taskA) + 人脸情绪闸门(D2) + 持续性防抖。
+
+        融合主干沿用 taskA 三模态：w_vis*vis + w_aud*aud + w_emo*emo_risk。
+        - aud_score  : AudioEventDetector(YAMNet)语义 + 声学 DSP 兜底 (taskA)
+        - emo_risk   : EmotionRecognizer 声学情绪风险，>0 时启用三模态，否则归一到双模 (taskA)
+        - emo_gate   : FacialEmotion 人脸负面情绪(愤怒/恐惧)峰值 ∈ [0,1]，作为视觉分闸门 (D2)
+
+        D2 闸门嵌入方式：把人脸情绪作为视觉分的调制项，先门控 vis 再进融合——
+        无负面情绪(emo_gate→0)时视觉分打 gate_floor 折，压制欢呼/嬉闹误报；
+        缺省 1.0 = 不启用人脸情绪时全放行，行为与 taskA 三模态一致。
+        """
+        # D2 情绪调制：vis' = vis * (floor + (1-floor) * emo_gate)
+        vis_g = vis_score * (self.gate_floor + (1.0 - self.gate_floor) * emo_gate)
+
+        # 动态归一化权重：emo_risk可用时三模态，否则回退到双模 (taskA)
+        if emo_risk > 0:
+            total_w = self.w_v + self.w_a + self.w_e
+            w_v = self.w_v / total_w
+            w_a = self.w_a / total_w
+            w_e = self.w_e / total_w
+        else:
+            total_w = self.w_v + self.w_a
+            w_v = self.w_v / total_w
+            w_a = self.w_a / total_w
+            w_e = 0.0
+
+        fuse = w_v * vis_g + w_a * aud_score + w_e * emo_risk
+
+        # 双模AND：门控后视觉、音频均需非零，避免单模拉满误触发
+        is_candidate = fuse > self.thresh and vis_g > 0 and aud_score > 0
 
         if not is_candidate:
             self._candidate_since = None
@@ -199,6 +279,8 @@ class FusionDebouncer:
             return {
                 "vis_score": round(vis_score, 3),
                 "aud_score": round(aud_score, 3),
+                "emo_gate": round(emo_gate, 3),
+                "emo_risk": round(emo_risk, 3) if emo_risk > 0 else 0,
                 "fuse": round(fuse, 3),
                 "duration": round(held, 2),
             }
@@ -208,10 +290,10 @@ class FusionDebouncer:
 # ---------------- D5 打架检测插件 ----------------
 
 class FightPlugin(Detector):
-    """音视频融合打架检测器 — 注册进 A 的引擎，禁止自建线程。
+    """音视频融合打架检测器 — 三模态：视觉+音频语义+情绪风险。
 
-    detect(frame): 取 B 的人员框算视觉分 -> 融合最近音频分 -> 防抖 -> 产出告警。
-    音频窗口由音轨管线(D1)驱动，经 feed_audio() 送入，与视频帧解耦。
+    注册进A的引擎，禁止自建线程。
+    detect(frame): 取B的人员框算视觉分 -> 融合YAMNet音频分+情绪分 -> 防抖 -> 告警。
     """
 
     name = "fight"
@@ -221,48 +303,102 @@ class FightPlugin(Detector):
         self._person = person_provider
         self._visual = VisualConflict()
         self._audio = AudioConflict()
+        self._emotion = EmotionRecognizer()  # taskA: 声学情绪 -> emo_risk
+        self._facial = FacialEmotion()       # D2: 人脸表情 -> 视觉分闸门
         self._fusion = FusionDebouncer()
         self._last_aud_score = 0.0
         self._last_aud_ts: float | None = None
+        self._last_emo_risk = 0.0
 
     def setup(self) -> None:
-        # 复用 B 的人员框（不加载 YOLO）；音频模型加载留待语义增强 TODO
         if self._person is None:
             self._person = build_person_provider(Config.FIGHT_PERSON_SOURCE)
-        logger.info("[fight] 打架检测器就绪（人员框来源=%s）", type(self._person).__name__)
+        # taskA: 装配 YAMNet 声学事件语义检测
+        try:
+            yamnet = AudioEventDetector()
+            yamnet.setup()
+            self._audio.set_yamnet(yamnet)
+        except Exception:
+            logger.warning("[fight] YAMNet setup failed, using DSP-only audio", exc_info=True)
+
+        # taskA: 声学情绪识别器
+        try:
+            self._emotion.setup()
+        except Exception:
+            logger.warning("[fight] Emotion recognizer setup failed", exc_info=True)
+
+        # D2: 预加载人脸表情模型（未启用则跳过），供情绪闸门使用
+        try:
+            self._facial.setup()
+        except Exception:
+            logger.warning("[fight] Facial emotion setup failed", exc_info=True)
+
+        logger.info(
+            "[fight] 打架检测器就绪（人员框来源=%s, YAMNet=%s, 声学情绪=%s, 人脸情绪闸门=%s）",
+            type(self._person).__name__,
+            self._audio._yamnet is not None,
+            self._emotion.loaded,
+            "on" if Config.EMOTION_ENABLE else "off",
+        )
 
     def feed_audio(self, chunk) -> None:
-        """由音轨管线(D1)投递 AudioChunk，更新最近音频分（D3）。"""
+        """由音轨管线(D1)投递AudioChunk，更新最近音频分+情绪。"""
         self._last_aud_score = self._audio.score(chunk.pcm, chunk.sample_rate)
         self._last_aud_ts = chunk.ts
+        # Feed to emotion recognizer
+        if self._emotion.loaded:
+            self._emotion.feed(chunk.pcm, chunk.sample_rate)
+            self._last_emo_risk = self._emotion.get_emotion_risk_score()
 
     def detect(self, frame: Frame) -> list[AlarmEvent]:
         boxes = self._person.get_boxes(frame) if self._person else []
         vis_score = self._visual.score(boxes, frame.ts)
 
-        # 时间对齐：音频窗口 ts 与本帧在容差内才配对，过期音频视为 0
+        # 时间对齐：音频窗口ts与本帧在容差内才配对，过期音频视为0
         aud_score = 0.0
+        emo_risk = 0.0
         if self._last_aud_ts is not None and \
                 abs(frame.ts - self._last_aud_ts) <= Config.FIGHT_ALIGN_TOL:
             aud_score = self._last_aud_score
+            emo_risk = self._last_emo_risk
 
-        hit = self._fusion.update(vis_score, aud_score, frame.ts)
+        # D2 情绪闸门：人脸负面情绪(愤怒/恐惧)峰值调制视觉分，压制欢呼/嬉闹误报
+        emo_gate = self._facial.score(frame.image, boxes)
+
+        # 三模态融合(taskA vis+aud+声学情绪) + D2 人脸情绪闸门
+        hit = self._fusion.update(vis_score, aud_score, emo_risk, frame.ts, emo_gate=emo_gate)
         if hit is None:
             return []
 
-        logger.warning("[fight] 打架告警 region=%s fuse=%.3f", self.region_id, hit["fuse"])
+        logger.warning(
+            "[fight] 打架告警 region=%s fuse=%.3f vis=%.3f aud=%.3f emo_gate=%.3f emo_risk=%s",
+            self.region_id, hit["fuse"], hit["vis_score"],
+            hit["aud_score"], hit["emo_gate"], hit.get("emo_risk", 0),
+        )
+
+        extra = {
+            "level": Config.FIGHT_LEVEL,
+            "vis_score": hit["vis_score"],
+            "aud_score": hit["aud_score"],
+            "emo_gate": hit["emo_gate"],          # D2 人脸情绪闸门系数
+            "fuse": hit["fuse"],
+            "duration": hit["duration"],
+            "person_boxes": boxes,
+            "camera_id": frame.camera_id,
+        }
+        # taskA：声学情绪风险可用时附带情绪标签
+        if hit.get("emo_risk", 0) > 0:
+            extra["emo_risk"] = hit["emo_risk"]
+            extra["emotion"] = self._emotion.emotion if self._emotion.loaded else "unknown"
+
         return [AlarmEvent(
             region_id=self.region_id,
             type="fight",
             confidence=hit["fuse"],
             snapshot=frame.image,
-            extra={
-                "level": Config.FIGHT_LEVEL,
-                "vis_score": hit["vis_score"],
-                "aud_score": hit["aud_score"],
-                "fuse": hit["fuse"],
-                "duration": hit["duration"],
-                "person_boxes": boxes,
-                "camera_id": frame.camera_id,
-            },
+            extra=extra,
         )]
+
+    def get_emotion_recognizer(self) -> EmotionRecognizer:
+        """暴露情绪识别器，供ZoneEmotionRisk联动使用。"""
+        return self._emotion
