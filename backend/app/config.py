@@ -139,11 +139,17 @@ class Config:
     #            shared=复用 B 的引擎共享上下文(需 B 写入才生效, 合规首选)
     FIGHT_PERSON_SOURCE = os.getenv("FIGHT_PERSON_SOURCE", "face")
 
+    # 异常声学事件检测 (torch-vggish-yamnet，首次运行自动下载 ~14MB 权重)
+    YAMNET_ENABLED = os.getenv("YAMNET_ENABLED", "true").lower() == "true"
+    YAMNET_CONF_THRESH = float(os.getenv("YAMNET_CONF_THRESH", 0.3))
+    ABNORMAL_SOUND_CONF = float(os.getenv("ABNORMAL_SOUND_CONF", 0.4))
+    ABNORMAL_SOUND_DURATION = float(os.getenv("ABNORMAL_SOUND_DURATION", 2.0))
+
     # 音频管线 (任务书 D1)
     AUDIO_WINDOW = float(os.getenv("AUDIO_WINDOW", 1.0))  # 分析窗口(秒)
     AUDIO_SR = int(os.getenv("AUDIO_SR", 16000))          # 重采样率(单声道)
 
-    # 情感分析增强打架检测 (任务书 D2)
+    # 情感分析增强打架检测 (任务书 D2) — 人脸表情闸门
     #  情绪作"闸门"而非加分项：无愤怒/恐惧时压制视觉冲突分，滤掉欢呼/嬉闹误报。
     EMOTION_ENABLE = os.getenv("EMOTION_ENABLE", "false").lower() == "true"  # 灰度开关
     EMOTION_DEVICE = os.getenv("EMOTION_DEVICE", "cpu")   # cpu / gpu(cuda)
@@ -155,6 +161,15 @@ class Config:
     # 音频侧: aud = W_EMO*声学情绪(尖叫/怒吼) + (1-W_EMO)*响度托底
     AUDIO_EMO_WEIGHT = float(os.getenv("AUDIO_EMO_WEIGHT", 0.7))
     YAMNET_MODEL_PATH = os.getenv("YAMNET_MODEL_PATH", "")  # 留空=音频情绪暂用纯声学
+
+    # 声学情感识别 (taskA: SenseVoiceSmall) — 音视频联动
+    EMOTION_ENABLED = os.getenv("EMOTION_ENABLED", "true").lower() == "true"
+    EMOTION_MODEL_PATH = os.getenv("EMOTION_MODEL_PATH", "")
+    EMOTION_RISK_COOLDOWN = int(os.getenv("EMOTION_RISK_COOLDOWN", 10))  # 区域联动冷却(秒)
+
+    # 三模态融合权重
+    FIGHT_W_EMO = float(os.getenv("FIGHT_W_EMO", 0.2))  # 情绪权重
+    # 注：FIGHT_W_VIS(0.5) + FIGHT_W_AUD(0.3) + FIGHT_W_EMO(0.2) = 1.0
 
     # 告警升级 (§7.4)
     ESCALATE_TIMEOUT = int(os.getenv("ESCALATE_TIMEOUT", 180))  # 秒
