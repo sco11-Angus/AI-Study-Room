@@ -102,7 +102,8 @@
         "Reworked reserved-seat detection to use per-seat IoU tracks, independent dwell timers, full-frame face association, and stranger-as-unauthorized behavior.",
         "Updated RegionConfig with face-enrolled member selection and bind/unbind actions for saved seat regions; danger zones remain unchanged.",
         "Focused SQLite regression passed on 2026-07-13: 54 passed. Frontend production build, strict OpenSpec validation, in-memory application route smoke, and init.cmd all passed.",
-        "Fixed normalized seat polygons to scale against each decoded frame instead of fixed 640x480 dimensions. Focused intrusion/reservation regression passed on 2026-07-13: 14 passed."
+        "Fixed normalized seat polygons to scale against each decoded frame instead of fixed 640x480 dimensions. Focused intrusion/reservation regression passed on 2026-07-13: 14 passed.",
+        "Fixed reserved-seat track expiry to count missed inference passes instead of raw decoded-frame indexes; with the real scheduler cadence 0 -> 5, a stranger now reaches the two-observation, 2-second dwell gate and emits occupy. Focused intrusion regression passed on 2026-07-13: 12 passed."
       ],
       "blockers": [
         "Live local-camera acceptance with a real enrolled reservation member and a second/stranger person has not yet been captured, so the OpenSpec change remains active and this feature is not marked completed."

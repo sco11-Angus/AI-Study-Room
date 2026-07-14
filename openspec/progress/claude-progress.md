@@ -660,3 +660,18 @@
 - Remaining risks:
   - Chrome Performance comparison and the documented 10-minute continuous-alarm acceptance test require a live interactive browser session.
   - No commit was created because `Dashboard.vue` already contained overlapping user changes before this session; committing the file would also commit those unrelated changes.
+
+## Session 2026-07-13 Reserved Seat Runtime Fix
+
+- Goal: determine why a stranger visibly inside a bound seat did not produce an `occupy` alarm.
+- Root cause: the scheduler dispatches inference every `SKIP_N` decoded frames (normally frame indexes `0`, `5`, `10`), while seat tracking expired and rejected tracks after a raw-frame gap greater than three. Every normal next inference therefore looked stale, preventing the required second observation from ever accumulating.
+- Actions:
+  - Changed seat-track expiry and matching to count explicit missed inference passes rather than decoded-frame indexes.
+  - Kept immediate reset for an observed person leaving the seat and retained a three-inference-pass tolerance for transient detector misses.
+  - Added a regression test using the production-like `frame_idx=0 -> 5` cadence with a two-second seat dwell threshold.
+- Validation:
+  - `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py -q` passed: `12 passed`.
+  - `python -m py_compile app/detectors/intrusion.py tests/test_intrusion_identity.py` passed.
+  - `npm.cmd run spec:validate` passed: 8 OpenSpec items, 0 failures.
+- Remaining action:
+  - Restart the currently running backend process before live verification, then keep a stranger in the bound seat for more than two seconds and verify a new `occupy` alarm appears in the dashboard.
