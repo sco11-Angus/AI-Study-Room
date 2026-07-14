@@ -128,7 +128,18 @@ class FaceMatcher:
             self._dlib_loaded = True
             logger.info("[face] FaceMatcher 已初始化（Dlib 模型加载完成）")
         except Exception as e:
-            logger.warning(f"[face] Dlib 模型加载失败，encode() 不可用: {e}")
+            logger.warning(f"[face] Dlib 模型加载失败，使用OpenCV Haar级联作为备用: {e}")
+            # 使用OpenCV Haar级联分类器作为备用
+            try:
+                self._cv_cascade = cv2.CascadeClassifier(
+                    cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+                )
+                if not self._cv_cascade.empty():
+                    logger.info("[face] OpenCV Haar级联分类器加载成功（仅支持人脸检测，不支持特征提取）")
+                else:
+                    logger.error("[face] OpenCV Haar级联分类器加载失败")
+            except Exception as e2:
+                logger.error(f"[face] OpenCV备用方案也失败: {e2}")
 
     @property
     def dlib_loaded(self) -> bool:
@@ -145,8 +156,6 @@ class FaceMatcher:
         Returns:
             dlib rectangle 列表，无人脸时为空列表
         """
-        if not self._dlib_loaded:
-            return []
         # 防护：RTMP 重连后可能出现损坏帧（非 8bit / 通道数异常 / 内存布局异常）
         try:
             if image is None or not isinstance(image, np.ndarray):
@@ -160,10 +169,25 @@ class FaceMatcher:
                     image.dtype, image.ndim, image.shape if hasattr(image, 'shape') else '?',
                 )
                 return []
-            # 强制 RGB + 连续内存复制，避免 dlib 内存布局兼容问题
-            rgb = image[..., ::-1].copy()
-            with self._dlib_lock:
-                return self._detector(rgb, 2)
+            
+            # Dlib可用时使用Dlib检测
+            if self._dlib_loaded:
+                # 强制 RGB + 连续内存复制，避免 dlib 内存布局兼容问题
+                rgb = image[..., ::-1].copy()
+                with self._dlib_lock:
+                    return self._detector(rgb, 2)
+            
+            # Dlib不可用时使用OpenCV Haar级联分类器
+            if hasattr(self, '_cv_cascade') and not self._cv_cascade.empty():
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                faces = self._cv_cascade.detectMultiScale(
+                    gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
+                )
+                # 将OpenCV的(x,y,w,h)转换为dlib格式的rectangle
+                import dlib
+                return [dlib.rectangle(int(x), int(y), int(x+w), int(y+h)) for x, y, w, h in faces]
+            
+            return []
         except Exception:
             return []
 
@@ -394,7 +418,14 @@ class FaceDetector(Detector):
         流程：全帧静态检测 → 人脸检测 → 活体检测 → 特征提取 → 会员匹配
         跳帧策略：静态检测每帧都跑（O(1)开销）；其余每 self._skip_frames 帧一次。
         """
-        if self._matcher is None or not self._matcher.dlib_loaded:
+        if self._matcher is None:
+            return []
+        
+        # 检查是否有可用的检测器（dlib或OpenCV Haar）
+        has_detector = self._matcher.dlib_loaded or (
+            hasattr(self._matcher, '_cv_cascade') and not self._matcher._cv_cascade.empty()
+        )
+        if not has_detector:
             return []
 
         self._frame_count += 1
