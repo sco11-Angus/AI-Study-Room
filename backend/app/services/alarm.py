@@ -256,8 +256,10 @@ class AlarmService:
             return event.face_match
         if event.extra.get("face_match"):
             return str(event.extra["face_match"])
+        # 仅入侵/占座这类"身份核验"告警才做人脸匹配；
+        # 烟火/欺骗攻击/打架/疲劳等非身份类告警 face_match 留空，不填 stranger。
         if event.type not in {"intrusion", "occupy"}:
-            return "stranger"
+            return ""
 
         face_img = event.face_crop if event.face_crop is not None else frame
         if face_img is None:

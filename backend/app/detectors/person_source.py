@@ -95,14 +95,90 @@ class FaceBoxProvider(PersonBoxProvider):
         return boxes
 
 
+class YoloPersonProvider(PersonBoxProvider):
+    """YOLOv8n 人体检测作为人员框来源 (COCO person 类)。
+
+    复用项目已有的 ultralytics + yolov8n.pt（street 检测器同一份权重），
+    直接给出人体框，适配打斗场景（侧脸/低头/遮挡时人脸检不到，人体仍在）。
+    权重解析与 StreetDetector._resolve_weights_path 保持一致的搜索顺序。
+    """
+
+    _PERSON_CLS = 0  # COCO class id: person
+
+    def __init__(self, weights_path: str | None = None, conf: float = 0.3):
+        self._weights_path = weights_path
+        self._conf = float(conf)
+        self._model = None
+
+    def _resolve_weights(self):
+        from pathlib import Path
+
+        from ..config import Config
+
+        configured = Path(self._weights_path or "yolov8n.pt")
+        if configured.is_absolute():
+            return configured
+        backend_root = Path(__file__).resolve().parents[2]
+        repo_root = backend_root.parent
+        candidates = [
+            backend_root / "model_weights" / configured,
+            Path(Config.MODEL_DIR) / configured,
+            backend_root / Config.MODEL_DIR / configured,
+            repo_root / Config.MODEL_DIR / configured,
+            backend_root / configured,
+            repo_root / configured,
+        ]
+        for c in candidates:
+            if c.exists():
+                return c
+        return candidates[0]
+
+    def _ensure_model(self):
+        if self._model is None:
+            from ultralytics import YOLO
+
+            self._model = YOLO(str(self._resolve_weights()))
+        return self._model
+
+    def get_boxes(self, frame: Frame) -> list[Box]:
+        try:
+            model = self._ensure_model()
+            results = model(frame.image, verbose=False)
+        except Exception:
+            return []
+        boxes: list[Box] = []
+        for result in results if isinstance(results, (list, tuple)) else [results]:
+            det = getattr(result, "boxes", None)
+            if det is None:
+                continue
+            xyxy = det.xyxy
+            cls = det.cls
+            conf = det.conf
+            for attr in ("cpu",):
+                xyxy = getattr(xyxy, attr, lambda: xyxy)() if hasattr(xyxy, attr) else xyxy
+                cls = getattr(cls, attr, lambda: cls)() if hasattr(cls, attr) else cls
+                conf = getattr(conf, attr, lambda: conf)() if hasattr(conf, attr) else conf
+            xyxy = xyxy.numpy() if hasattr(xyxy, "numpy") else xyxy
+            cls = cls.numpy() if hasattr(cls, "numpy") else cls
+            conf = conf.numpy() if hasattr(conf, "numpy") else conf
+            for (x1, y1, x2, y2), c, p in zip(xyxy, cls, conf):
+                if int(c) != self._PERSON_CLS or float(p) < self._conf:
+                    continue
+                boxes.append((float(x1), float(y1), float(x2), float(y2)))
+        return boxes
+
+
 def build_person_provider(source: str, ctx: SharedContext | None = None) -> PersonBoxProvider:
     """按 Config.FIGHT_PERSON_SOURCE 构造人员框来源。
 
     - "shared"：复用 B 的引擎共享上下文（合规首选，需 B 写入才生效）。
-    - "face"：复用 B 的 dlib 人脸检测作为人员框代理（当前默认，零新依赖即可跑通）。
+    - "face"：复用 B 的 dlib 人脸检测作为人员框代理（零新依赖即可跑通）。
+    - "yolo"：YOLOv8n 人体检测（适配打斗场景，复用 street 的 yolov8n.pt）。
     """
     if source == "shared":
         return SharedContextProvider(ctx)
     if source == "face":
         return FaceBoxProvider()
-    raise ValueError(f"不支持的人员框来源: {source!r}（支持 'shared' / 'face'）")
+    if source == "yolo":
+        return YoloPersonProvider()
+    raise ValueError(f"不支持的人员框来源: {source!r}（支持 'shared' / 'face' / 'yolo'）")

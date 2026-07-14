@@ -114,6 +114,7 @@ const typeLabels = {
   occupy: '占座告警',
   fatigue: '疲劳提醒',
   fight: '打架告警',
+  quarrel: '争吵打闹',
   face_spoof: '欺骗攻击',
   face_recognition: '人脸识别',
   abnormal_sound: '异常声音',
@@ -172,6 +173,7 @@ const playClip = (row) => {
 .type-tag.occupy { background: #f0f5ff; color: #409eff; }
 .type-tag.fatigue { background: #f0f9eb; color: #67c23a; }
 .type-tag.fight { background: #fef0f0; color: #f56c6c; }
+.type-tag.quarrel { background: #fff7e6; color: #e6a23c; }
 .type-tag.face_spoof { background: #f4f4f5; color: #909399; }
 .type-tag.abnormal_sound { background: #fdf6ec; color: #e6a23c; }
 

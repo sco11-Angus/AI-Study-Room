@@ -20,6 +20,7 @@
           <el-option label="占座告警" value="occupy" />
           <el-option label="疲劳提醒" value="fatigue" />
           <el-option label="打架告警" value="fight" />
+          <el-option label="争吵打闹" value="quarrel" />
           <el-option label="欺骗攻击" value="face_spoof" />
         </el-select>
         <el-select v-model="filterLevel" placeholder="告警级别" @change="onFilterChange">
@@ -139,8 +140,10 @@ const typeLabels = {
   occupy: '占座告警',
   fatigue: '疲劳提醒',
   fight: '打架告警',
+  quarrel: '争吵打闹',
   face_spoof: '欺骗攻击',
   face_recognition: '人脸识别',
+  abnormal_sound: '异常声音',
 }
 
 function getTypeLabel(type) {
@@ -375,6 +378,11 @@ onMounted(() => {
 .type-tag.fight {
   background: #fef0f0;
   color: #f56c6c;
+}
+
+.type-tag.quarrel {
+  background: #fff7e6;
+  color: #e6a23c;
 }
 
 .type-tag.face_spoof {

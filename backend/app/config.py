@@ -139,6 +139,10 @@ class Config:
     FIGHT_W_VIS = float(os.getenv("FIGHT_W_VIS", 0.5))    # 视觉分权重
     FIGHT_W_AUD = float(os.getenv("FIGHT_W_AUD", 0.3))    # 音频分权重
     FIGHT_DURATION = float(os.getenv("FIGHT_DURATION", 3))  # 候选持续确认(秒)
+    # 候选断连容忍(秒)：打斗中两人重叠致人体框漏检会让视觉分瞬时掉0，
+    # 若严格要求"无间断"会把连续打斗切碎、永远攒不满 DURATION。
+    # 候选期间的非候选帧只要间隔 <= 此值，不清零累计(hangover)，>此值才真正重置。
+    FIGHT_CANDIDATE_GRACE = float(os.getenv("FIGHT_CANDIDATE_GRACE", 1.5))
     FIGHT_ALIGN_TOL = float(os.getenv("FIGHT_ALIGN_TOL", 2))  # 音视频时间对齐容差(秒)
     FIGHT_LEVEL = int(os.getenv("FIGHT_LEVEL", 2))        # 告警分级(人身安全高优先)
     # 人员框来源: face=复用 B 的 dlib 人脸检测(默认, 零新依赖即可跑通);

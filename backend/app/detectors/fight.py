@@ -229,8 +229,10 @@ class FusionDebouncer:
         self.w_e = Config.FIGHT_W_EMO
         self.thresh = Config.FIGHT_FUSE_THRESH
         self.duration = Config.FIGHT_DURATION
+        self.grace = Config.FIGHT_CANDIDATE_GRACE  # 候选断连容忍(秒)
         self.gate_floor = Config.EMOTION_GATE_FLOOR  # 情绪闸门下限系数 (D2)
         self._candidate_since: float | None = None
+        self._last_candidate_ts: float | None = None  # 最近一次命中候选的时间
         self._fired = False
 
     def update(self, vis_score: float, aud_score: float, emo_risk: float = 0.0,
@@ -267,12 +269,24 @@ class FusionDebouncer:
         is_candidate = fuse > self.thresh and vis_g > 0 and aud_score > 0
 
         if not is_candidate:
+            # 断连容忍(hangover)：打斗中两人重叠致人体框漏检，视觉分会瞬时掉0，
+            # 但音频(打斗声/尖叫)通常仍在。此时若严格清零会把连续打斗切碎、永远
+            # 攒不满 DURATION。故仅当"音频仍在(aud>0)且距上次命中<=grace秒"时保留
+            # 候选累计；否则(完全静默或断连过久)按原逻辑重置计时。
+            grace_ok = (self._candidate_since is not None
+                        and self._last_candidate_ts is not None
+                        and aud_score > 0
+                        and ts - self._last_candidate_ts <= self.grace)
+            if grace_ok:
+                return None
             self._candidate_since = None
+            self._last_candidate_ts = None
             self._fired = False
             return None
 
         if self._candidate_since is None:
             self._candidate_since = ts
+        self._last_candidate_ts = ts
         held = ts - self._candidate_since
         if held >= self.duration and not self._fired:
             self._fired = True
@@ -391,9 +405,14 @@ class FightPlugin(Detector):
             extra["emo_risk"] = hit["emo_risk"]
             extra["emotion"] = self._emotion.emotion if self._emotion.loaded else "unknown"
 
+        # region_id 优先用配置的 self.region_id(>0 时)，否则回退到当前帧摄像头对应的防区
+        # (系统约定 region_id=camera_id)，避免 region_id=0 外键失败导致打架告警无法入库。
+        region_id = self.region_id if self.region_id else frame.camera_id
         return [AlarmEvent(
-            region_id=self.region_id,
+            region_id=region_id,
+            camera_id=frame.camera_id,
             type="fight",
+            level=Config.FIGHT_LEVEL,
             confidence=hit["fuse"],
             snapshot=frame.image,
             extra=extra,

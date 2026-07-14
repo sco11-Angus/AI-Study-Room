@@ -55,7 +55,7 @@ class AlarmEvent(Base):
     id = Column(Integer, primary_key=True)
     region_id = Column(Integer, ForeignKey("region.id"))
     camera_id = Column(Integer, ForeignKey("camera.id"))
-    type = Column(Enum("intrusion", "fire_smoke", "occupy", "fatigue", "fight", "face_recognition", "face_spoof", "abnormal_sound", name="alarm_type"))
+    type = Column(Enum("intrusion", "fire_smoke", "occupy", "fatigue", "fight", "quarrel", "face_recognition", "face_spoof", "abnormal_sound", name="alarm_type"))
     snapshot_url = Column(String(256))     # 抓拍图路径
     clip_url = Column(String(256))         # 视频片段路径(任务书G)
     face_match = Column(String(64))        # 会员ID / stranger
