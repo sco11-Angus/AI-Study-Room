@@ -25,6 +25,7 @@ def start_services():
     from app.detectors.fight import FightPlugin
     from app.detectors.fatigue import FatiguePlugin
     from app.detectors.intrusion import IntrusionPlugin
+    from app.detectors.street import StreetDetector
     from app.detectors.person_source import SharedContextProvider
     from app.config import Config
     from app.stream.engine import InferenceEngine
@@ -40,6 +41,7 @@ def start_services():
     engine.register(FatiguePlugin())
     engine.register(FireSmokePlugin())
     engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
+    engine.register(StreetDetector())   # 街道识别：仅在 camera_ids=[3,2,11,9] 上跑
     engine.setup_all()
     print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 

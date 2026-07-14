@@ -136,6 +136,25 @@ def broadcast_face_boxes(faces: list) -> None:
         pass
 
 
+# ---- 街道监控：当前画面计数 + 检测框（旁路通道，不进告警中心）----
+
+# maxsize=8：4 路识别流并发推送，避免互相挤掉；满则丢最旧只保留最新
+street_stats_queue = queue.Queue(maxsize=8)
+
+
+def broadcast_street_stats(payload: dict) -> None:
+    """推送某识别路的当前画面计数与检测框到广播队列（供前端街道大屏订阅）。
+
+    payload 形如 {"type":"street","camera_id":3,"ts":..,"counts":{..},"boxes":[..]}。
+    """
+    try:
+        if street_stats_queue.full():
+            street_stats_queue.get_nowait()   # 丢最旧，只推最新
+        street_stats_queue.put_nowait(payload)
+    except Exception:
+        pass
+
+
 # ---- REST API（直接写在 ws 模块里，零跨文件导入） ----
 
 @bp.get("/api/face_result")
@@ -264,6 +283,24 @@ def register_ws_routes(sock: Sock) -> None:
             logger.exception("[face_boxes_ws] WebSocket 异常")
         finally:
             logger.info("[face_boxes_ws] 客户端断开 face_boxes")
+
+    @sock.route("/ws/street")
+    def ws_street(ws):
+        """街道大屏订阅：各识别路的当前画面计数 + 检测框（按 camera_id 分发）。"""
+        logger.info("[street_ws] 客户端已连接 street")
+        try:
+            while True:
+                try:
+                    msg = street_stats_queue.get(timeout=0.5)
+                    _safe_send(ws, json.dumps(msg, ensure_ascii=False))
+                except queue.Empty:
+                    continue
+        except ConnectionClosed:
+            pass
+        except Exception:
+            logger.exception("[street_ws] WebSocket 异常")
+        finally:
+            logger.info("[street_ws] 客户端断开 street")
 
 
 def _safe_send(ws, data):

@@ -32,7 +32,7 @@ export const deleteSeatReservation = (regionId) => http.delete(`/seat-reservatio
 export const switchSeatStatus = (data) => http.post('/seat-status', data)
 export const getSeatCompanionStatus = (userId, regionId) => http.get('/seat-status/companion', { params: { user_id: userId, region_id: regionId } })
 export const getCameraStreamStatus = (cameraId) => http.get(`/cameras/${cameraId}/stream-status`)
-export const getAlarms = (status) => http.get('/alarms', { params: { status } })
+export const getAlarms = (status, cameraId) => http.get('/alarms', { params: { status, camera_id: cameraId } })
 export const confirmAlarm = (id) => http.post(`/alarms/${id}/confirm`)
 
 export default http
