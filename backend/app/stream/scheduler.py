@@ -123,16 +123,28 @@ class StreamScheduler:
             local_camera: 本地摄像头索引（0=第一个USB摄像头），为None时使用RTMP流
         """
         resolved_url = stream_url.strip() if isinstance(stream_url, str) else stream_url
+        
+        # 如果resolved_url是纯数字字符串，转换为整数（本地摄像头索引）
+        if isinstance(resolved_url, str) and resolved_url.isdigit():
+            resolved_url = int(resolved_url)
+            local_camera = resolved_url
+        
         if local_camera is not None:
             resolved_url = local_camera
             stream_name = f"local_{local_camera}"
         else:
-            if not resolved_url and stream_name is None:
-                resolved_url = self._load_stream_url_from_db(camera_id)
+            if resolved_url is None or (isinstance(resolved_url, str) and not resolved_url):
+                if stream_name is None:
+                    resolved_url = self._load_stream_url_from_db(camera_id)
+                    # 再次检查是否为数字字符串
+                    if isinstance(resolved_url, str) and resolved_url.isdigit():
+                        resolved_url = int(resolved_url)
+                        local_camera = resolved_url
+                        stream_name = f"local_{local_camera}"
             if not stream_name and resolved_url:
                 stream_name = self._stream_name_from_url(str(resolved_url))
             stream_name = stream_name or "test"
-            if not resolved_url:
+            if resolved_url is None or (isinstance(resolved_url, str) and not resolved_url):
                 resolved_url = f"rtmp://{Config.RTMP_SERVER}:{Config.RTMP_PORT}/live/{stream_name}"
         cs = CameraStream(
             camera_id=camera_id,

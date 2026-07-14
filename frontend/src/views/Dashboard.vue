@@ -1,48 +1,5 @@
 <template>
   <div class="page">
-    <!-- 人脸识别横幅 — 支持活体检测多状态 -->
-    <div v-if="faceResult" class="face-banner" :class="[faceResult.type, { 'with-liveness': faceResult.liveness_passed !== undefined }]">
-      <!-- member 成功识别 -->
-      <div v-if="faceResult.type === 'member'" class="banner-content">
-        <span class="banner-icon">✅</span>
-        <div class="banner-text">
-          <div class="banner-title">欢迎你, {{ faceResult.name }}</div>
-          <div v-if="faceResult.liveness_passed" class="banner-meta">活体已验证 • 伪影评分: {{ (faceResult.artifact_score || 0).toFixed(2) }}</div>
-        </div>
-      </div>
-      <!-- 陌生人 -->
-      <div v-else-if="faceResult.type === 'stranger'" class="banner-content">
-        <span class="banner-icon">⚠️</span>
-        <div class="banner-text">
-          <div class="banner-title">陌生人</div>
-          <div class="banner-meta">无法识别的用户</div>
-        </div>
-      </div>
-      <!-- 伪造/反光/屏幕回放 -->
-      <div v-else-if="faceResult.type === 'face_spoof'" class="banner-content">
-        <span class="banner-icon">❌</span>
-        <div class="banner-text">
-          <div class="banner-title">检测到可疑媒体</div>
-          <div class="banner-meta">{{ reasonMap[faceResult.reason] || faceResult.reason || '请勿使用虚假媒体' }}</div>
-        </div>
-      </div>
-      <!-- 检测中 -->
-      <div v-else-if="faceResult.type === 'detecting'" class="banner-content">
-        <span class="banner-icon spinning">🔍</span>
-        <div class="banner-text">
-          <div class="banner-title">{{ faceResult.message || '检测中' }}</div>
-          <div v-if="faceResult.stage" class="banner-meta">阶段: {{ stageMap[faceResult.stage] || faceResult.stage }}</div>
-        </div>
-      </div>
-      <!-- 重试 -->
-      <div v-else-if="faceResult.type === 'retry'" class="banner-content">
-        <span class="banner-icon spinning">🔄</span>
-        <div class="banner-text">
-          <div class="banner-title">重新检测中</div>
-          <div class="banner-meta">请保持摄像头可见</div>
-        </div>
-      </div>
-    </div>
 
     <div class="dashboard">
       <div class="video-section">
@@ -52,7 +9,7 @@
         </div>
         <div class="video-container">
           <div class="video-frame" ref="videoWrapper">
-            <VideoPlayer ref="playerRef" :stream-url="streamUrl" @dimensions="onVideoDimensions" />
+            <VideoPlayer ref="playerRef" :stream-url="streamUrl" :face-result="faceResult" @dimensions="onVideoDimensions" />
             <canvas ref="overlayCanvas" class="overlay-canvas" />
           </div>
         </div>
