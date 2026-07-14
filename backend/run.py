@@ -14,6 +14,7 @@ app = create_app()
 def start_services():
     """启动推理引擎和拉流调度器。"""
     from app.detectors.face import FaceDetector
+    from app.detectors.audio_event import AbnormalSoundPlugin
     # from app.detectors.fire_smoke import FireSmokePlugin
     # from app.detectors.fight import FightPlugin
     # from app.detectors.fatigue import FatiguePlugin
@@ -22,12 +23,15 @@ def start_services():
     from app.config import Config
     from app.stream.engine import InferenceEngine
     from app.stream.scheduler import StreamScheduler, set_scheduler
+    # from app.detectors.intrusion import IntrusionPlugin
     # from app.services.storage_manager import get_storage_manager
 
     print("[run] ===== 启动推理引擎 =====", flush=True)
     engine = InferenceEngine(max_workers=2)
     # engine.register(IntrusionPlugin(shared_ctx=engine.shared_ctx))
     engine.register(FaceDetector(skip_frames=3, cooldown=1.0))
+    abnormal_sound_plugin = AbnormalSoundPlugin()
+    engine.register(abnormal_sound_plugin)
     # engine.register(FatiguePlugin())
     # engine.register(FireSmokePlugin())
     # engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
@@ -35,6 +39,7 @@ def start_services():
     print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
 
     scheduler = StreamScheduler(engine)
+    scheduler.set_abnormal_sound_plugin(abnormal_sound_plugin)
 
     # ---- 多摄像头支持 ----
     # 优先级: STREAM_URLS > 数据库所有摄像头 > 单摄像头配置

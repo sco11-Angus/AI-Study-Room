@@ -100,11 +100,17 @@ class StreamScheduler:
         self._engine = engine          # 统一推理引擎 A2
         self._cameras: dict[int, CameraStream] = {}
         self._lock = threading.Lock()
+        self._abnormal_sound_plugin = None
 
     @property
     def engine(self) -> "InferenceEngine":
         """暴露推理引擎，供 API 层触发 on_config_changed 热更新防区。"""
         return self._engine
+
+    def set_abnormal_sound_plugin(self, plugin) -> None:
+        """Set the AbnormalSoundPlugin reference for audio pipeline feeding."""
+        self._abnormal_sound_plugin = plugin
+        logger.info("[scheduler] abnormal_sound plugin registered")
 
     # ---- 摄像头管理 ----
 
@@ -227,17 +233,22 @@ class StreamScheduler:
         cs._audio_thread.start()
 
     def _audio_loop(self, cs: CameraStream) -> None:
-        """单路音轨主循环：解音频 -> 累积 1s 窗口 -> 投递打架检测器。
+        """单路音轨主循环：解音频 -> 累积 1s 窗口 -> 投递打架检测器 和 异常声音检测器。
 
         仅对网络流(str URL)启用；本地摄像头索引(int)无音轨则跳过。
-        ffmpeg 缺失或无 fight 检测器时优雅退出，不影响视频链路。
+        ffmpeg 缺失或无检测器时优雅退出，不影响视频链路。
         """
         if isinstance(cs.stream_url, int):
             return  # 本地摄像头无音轨
 
         fight = self._engine._detectors.get("fight") if self._engine else None
-        if fight is None or not hasattr(fight, "feed_audio"):
-            return  # 未注册打架检测器，无需拉音频
+        abnormal = self._abnormal_sound_plugin
+
+        has_fight = fight is not None and hasattr(fight, "feed_audio")
+        has_abnormal = abnormal is not None and hasattr(abnormal, "feed_audio")
+
+        if not has_fight and not has_abnormal:
+            return  # 未注册任何音频检测器，无需拉音频
 
         from .audio import AudioWindower, FfmpegAudioSource, ffmpeg_available
 
@@ -253,10 +264,16 @@ class StreamScheduler:
                     if cs._stop_event.is_set():
                         break
                     for chunk in windower.feed(pcm, ts=time.time()):
-                        try:
-                            fight.feed_audio(chunk)
-                        except Exception:
-                            logger.exception("[scheduler] feed_audio 失败 camera_id=%s", cs.camera_id)
+                        if has_fight:
+                            try:
+                                fight.feed_audio(chunk)
+                            except Exception:
+                                logger.exception("[scheduler] feed_audio(fight) 失败 camera_id=%s", cs.camera_id)
+                        if has_abnormal:
+                            try:
+                                abnormal.feed_audio(chunk)
+                            except Exception:
+                                logger.exception("[scheduler] feed_audio(abnormal_sound) 失败 camera_id=%s", cs.camera_id)
             except Exception:
                 logger.exception("[scheduler] 音轨读取异常 camera_id=%s", cs.camera_id)
             finally:
