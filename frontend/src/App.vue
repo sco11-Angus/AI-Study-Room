@@ -30,6 +30,10 @@
             <span class="menu-icon">📹</span>
             <span>实时视频流</span>
           </el-menu-item>
+          <el-menu-item index="/logs">
+            <span class="menu-icon">📋</span>
+            <span>告警日志</span>
+          </el-menu-item>
         </el-menu>
       </el-aside>
       <el-main class="main-content">
