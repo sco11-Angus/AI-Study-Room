@@ -28,14 +28,14 @@ def start_services():
     from app.config import Config
     from app.stream.engine import InferenceEngine
     from app.stream.scheduler import StreamScheduler, set_scheduler
-    # from app.services.storage_manager import get_storage_manager
+    from app.services.storage_manager import get_storage_manager
 
     print("[run] ===== 启动推理引擎 =====", flush=True)
     engine = InferenceEngine(max_workers=2)
     engine.register(IntrusionPlugin(shared_ctx=engine.shared_ctx))
     engine.register(FaceDetector(skip_frames=3, cooldown=1.0))
-    engine.register(FatiguePlugin())
-    engine.register(FireSmokePlugin())
+    # engine.register(FatiguePlugin())
+    # engine.register(FireSmokePlugin())
     # engine.register(FightPlugin(person_provider=SharedContextProvider(engine.shared_ctx)))
     engine.setup_all()
     print(f"[run] 已注册检测器: {engine.detectors}", flush=True)
