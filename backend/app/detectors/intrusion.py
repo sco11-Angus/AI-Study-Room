@@ -4,6 +4,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
+from typing import NamedTuple
 
 import cv2
 import numpy as np
@@ -18,6 +19,13 @@ from .zone_emotion import ZoneEmotionRisk
 logger = logging.getLogger(__name__)
 
 Box = tuple[float, float, float, float]
+
+
+class TrackedBox(NamedTuple):
+    """Person box plus the local ByteTrack identity for this stream."""
+
+    box: Box
+    track_id: int | None = None
 
 
 def denormalize_polygon(polygon: list, width: int, height: int) -> list:
@@ -129,6 +137,36 @@ class PersonDetector:
                 boxes.append(tuple(float(v) for v in xyxy))
         return boxes
 
+    def detect_people_tracked(self, image: np.ndarray) -> list[TrackedBox]:
+        """Use Ultralytics ByteTrack, falling back to plain YOLO boxes."""
+        if self._model is None:
+            self.setup()
+        try:
+            results = self._model.track(
+                image, persist=True, tracker="bytetrack.yaml", verbose=False
+            )
+            tracked: list[TrackedBox] = []
+            for result in results:
+                boxes = getattr(result, "boxes", None)
+                if boxes is None:
+                    continue
+                ids = getattr(boxes, "id", None)
+                for index, box in enumerate(boxes):
+                    cls = int(box.cls[0].item() if hasattr(box.cls[0], "item") else box.cls[0])
+                    conf = float(box.conf[0].item() if hasattr(box.conf[0], "item") else box.conf[0])
+                    if cls != 0 or conf <= self.conf_threshold:
+                        continue
+                    xyxy = tuple(float(v) for v in box.xyxy[0].tolist())
+                    track_id = None
+                    if ids is not None and index < len(ids):
+                        value = ids[index]
+                        track_id = int(value.item() if hasattr(value, "item") else value)
+                    tracked.append(TrackedBox(xyxy, track_id))
+            return tracked
+        except Exception:
+            logger.exception("[intrusion] ByteTrack failed; falling back to YOLO boxes")
+            return [TrackedBox(box) for box in self.detect_people(image)]
+
 
 @dataclass
 class RegionRuntime:
@@ -158,6 +196,7 @@ class SeatTrack:
     evaluated: bool = False
     alerted: bool = False
     allowed: bool = False
+    external_id: int | None = None
 
 
 class IntrusionPlugin(Detector):
@@ -260,7 +299,13 @@ class IntrusionPlugin(Detector):
         if not regions and not seats:
             return []
 
-        people = self.person_detector.detect_people(frame.image)
+        track_method = getattr(self.person_detector, "detect_people_tracked", None)
+        if callable(track_method):
+            tracked_people = track_method(frame.image)
+        else:
+            # Keep legacy test doubles and integrations source-compatible.
+            tracked_people = [TrackedBox(box) for box in self.person_detector.detect_people(frame.image)]
+        people = [item.box for item in tracked_people]
         if self.shared_ctx is not None:
             self.shared_ctx.set(frame.camera_id, frame.frame_idx, people)
 
@@ -268,38 +313,40 @@ class IntrusionPlugin(Detector):
         ts = frame.ts if frame.ts is not None else time.time()
         for region in regions:
             region.detector.prepare_frame(frame.image)
-            events.extend(self._detect_danger_zone(region, people, frame, ts))
+            events.extend(self._detect_danger_zone(region, tracked_people, frame, ts))
         for seat in seats:
             seat.detector.prepare_frame(frame.image)
-            events.extend(self._detect_reserved_seat(seat, people, frame, ts))
+            events.extend(self._detect_reserved_seat(seat, tracked_people, frame, ts))
         return events
 
     def _detect_danger_zone(
         self,
         region: RegionRuntime,
-        people: list[Box],
+        people: list[TrackedBox],
         frame: Frame,
         ts: float,
     ) -> list[AlarmEvent]:
         """Advance each danger-zone occupant through enter, dwell, and exit."""
         tracks = self._region_tracks.setdefault(region.id, {})
-        active_boxes = [box for box in people if region.detector.is_in_danger(box)]
+        raw_people = [item.box for item in people]
+        active_boxes = [item for item in people if region.detector.is_in_danger(item.box)]
         if not active_boxes:
-            removed = list(tracks.items()) if people else self._expire_unmatched_tracks(
-                tracks, people, set(), region
+            removed = list(tracks.items()) if raw_people else self._expire_unmatched_tracks(
+                tracks, raw_people, set(), region
             )
-            if people:
+            if raw_people:
                 tracks.clear()
             return self._clear_events(region, "intrusion", "danger_zone", frame, ts, removed)
 
         matched_track_ids: set[int] = set()
         events: list[AlarmEvent] = []
-        for box in active_boxes:
-            track_id = self._match_track(tracks, box, frame.frame_idx, matched_track_ids)
+        for item in active_boxes:
+            box = item.box
+            track_id = self._match_track(tracks, item, frame.frame_idx, matched_track_ids)
             if track_id is None:
                 track_id = self._next_track_id
                 self._next_track_id += 1
-                tracks[track_id] = SeatTrack(box=box, entered_at=ts, last_seen_frame=frame.frame_idx)
+                tracks[track_id] = SeatTrack(box=box, entered_at=ts, last_seen_frame=frame.frame_idx, external_id=item.track_id)
             else:
                 track = tracks[track_id]
                 track.box = box
@@ -338,18 +385,19 @@ class IntrusionPlugin(Detector):
                     )
                 )
 
-        removed = self._expire_unmatched_tracks(tracks, people, matched_track_ids, region)
+        removed = self._expire_unmatched_tracks(tracks, raw_people, matched_track_ids, region)
         events.extend(self._clear_events(region, "intrusion", "danger_zone", frame, ts, removed))
         return events
 
     def _detect_reserved_seat(
         self,
         seat: SeatRuntime,
-        people: list[Box],
+        people: list[TrackedBox],
         frame: Frame,
         ts: float,
     ) -> list[AlarmEvent]:
         tracks = self._seat_tracks.setdefault(seat.id, {})
+        raw_people = [item.box for item in people]
         detect_faces = getattr(self.face_matcher, "detect_faces", None)
         face_rects = detect_faces(frame.image) if callable(detect_faces) else None
         active_boxes = self._active_seat_boxes(seat, people, face_rects)
@@ -357,7 +405,7 @@ class IntrusionPlugin(Detector):
             # A person box outside the seat is an explicit exit. When YOLO
             # misses everybody, use the configured inference-miss threshold
             # before clearing the trajectory.
-            if people:
+            if raw_people:
                 removed = list(tracks.items())
                 tracks.clear()
             else:
@@ -367,8 +415,9 @@ class IntrusionPlugin(Detector):
         eligible: list[tuple[int, SeatTrack, Box]] = []
         allowed_events: list[AlarmEvent] = []
 
-        for box in active_boxes:
-            track_id = self._match_track(tracks, box, frame.frame_idx, matched_track_ids)
+        for item in active_boxes:
+            box = item.box
+            track_id = self._match_track(tracks, item, frame.frame_idx, matched_track_ids)
             if track_id is None:
                 track_id = self._next_track_id
                 self._next_track_id += 1
@@ -376,6 +425,7 @@ class IntrusionPlugin(Detector):
                     box=box,
                     entered_at=ts,
                     last_seen_frame=frame.frame_idx,
+                    external_id=item.track_id,
                 )
             else:
                 track = tracks[track_id]
@@ -403,7 +453,7 @@ class IntrusionPlugin(Detector):
             ):
                 eligible.append((track_id, track, box))
 
-        removed = self._expire_unmatched_tracks(tracks, people, matched_track_ids, seat)
+        removed = self._expire_unmatched_tracks(tracks, raw_people, matched_track_ids, seat)
 
         events = self._clear_events(seat, "occupy", "unauthorized_seat", frame, ts, removed)
         events.extend(allowed_events)
@@ -556,7 +606,7 @@ class IntrusionPlugin(Detector):
     def _box_contains_point(box: Box, x: float, y: float) -> bool:
         return box[0] <= x <= box[2] and box[1] <= y <= box[3]
 
-    def _active_seat_boxes(self, seat: SeatRuntime, people: list[Box], face_rects) -> list[Box]:
+    def _active_seat_boxes(self, seat: SeatRuntime, people: list[TrackedBox], face_rects) -> list[TrackedBox]:
         """Treat a seated face in the polygon as occupancy too.
 
         A seated person's YOLO box often extends below the drawn desk/seat
@@ -566,7 +616,8 @@ class IntrusionPlugin(Detector):
         """
         faces = list(face_rects or [])
         active: list[Box] = []
-        for box in people:
+        for item in people:
+            box = item.box
             has_face_in_seat = any(
                 seat.detector.is_point_in_danger(
                     (rect.left() + rect.right()) / 2,
@@ -580,7 +631,7 @@ class IntrusionPlugin(Detector):
                 for rect in faces
             )
             if seat.detector.is_in_danger(box) or has_face_in_seat:
-                active.append(box)
+                active.append(item)
 
         # If YOLO misses a seated upper body, an in-seat face still produces a
         # stable pseudo-person track instead of silently disabling the alarm.
@@ -589,9 +640,9 @@ class IntrusionPlugin(Detector):
             center_y = (rect.top() + rect.bottom()) / 2
             if not seat.detector.is_point_in_danger(center_x, center_y):
                 continue
-            if any(self._box_contains_point(box, center_x, center_y) for box in people):
+            if any(self._box_contains_point(item.box, center_x, center_y) for item in people):
                 continue
-            active.append((float(rect.left()), float(rect.top()), float(rect.right()), float(rect.bottom())))
+            active.append(TrackedBox((float(rect.left()), float(rect.top()), float(rect.right()), float(rect.bottom()))))
         return active
 
     @staticmethod
@@ -609,12 +660,17 @@ class IntrusionPlugin(Detector):
     def _match_track(
         self,
         tracks: dict[int, SeatTrack],
-        box: Box,
+        item: TrackedBox,
         frame_idx: int,
         matched_track_ids: set[int],
     ) -> int | None:
+        if item.track_id is not None:
+            for track_id, track in tracks.items():
+                if track_id not in matched_track_ids and track.external_id == item.track_id:
+                    return track_id
+
         candidates = [
-            (self._iou(track.box, box), track_id)
+            (self._iou(track.box, item.box), track_id)
             for track_id, track in tracks.items()
             # ``frame_idx`` advances for every decoded frame while this
             # method is called only for inference frames.  Use the explicit

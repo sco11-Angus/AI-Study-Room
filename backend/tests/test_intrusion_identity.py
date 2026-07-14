@@ -3,7 +3,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.detectors.base import Frame
-from app.detectors.intrusion import IntrusionPlugin
+from app.detectors.intrusion import IntrusionPlugin, SeatTrack, TrackedBox
 from app.models.entities import Base, Camera, Member, Region, SeatReservation
 
 
@@ -56,6 +56,24 @@ class FaceAwareFakeMatcher(FakeFaceMatcher):
 
     def encode_from_rect(self, image, rect):
         return [1.0]
+
+
+def test_local_tracker_id_wins_over_iou_for_existing_track():
+    plugin = IntrusionPlugin(FakePersonDetector(), FakeFaceMatcher("stranger"))
+    tracks = {
+        7: SeatTrack(
+            box=(10, 10, 30, 30),
+            entered_at=0,
+            last_seen_frame=1,
+            external_id=42,
+        )
+    }
+
+    # The boxes barely overlap, but ByteTrack's stable ID proves it is the
+    # same person and must preserve the existing dwell/alarm state.
+    assert plugin._match_track(
+        tracks, TrackedBox((100, 100, 120, 120), 42), 2, set()
+    ) == 7
 
 
 def make_session(monkeypatch):

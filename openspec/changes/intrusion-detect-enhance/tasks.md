@@ -48,3 +48,10 @@
 - [x] 7.2 Make occupancy observation count and inference-miss expiry tolerance configurable with responsive defaults.
 - [x] 7.3 Show a short reservation welcome state and clear only the matching active track.
 - [x] 7.4 Log DingTalk webhook configuration on notifier startup and add regression tests.
+
+## 8. Local ByteTrack Trajectory
+
+- [x] 8.1 Use Ultralytics ByteTrack to assign stable local person track IDs per camera.
+- [x] 8.2 Feed tracker IDs into danger-zone and reserved-seat lifecycle state without changing dwell/alarm semantics.
+- [x] 8.3 Keep IoU matching as a deterministic fallback for mocked detectors and tracker failures.
+- [x] 8.4 Preserve per-track clear and re-entry behavior with the existing lifecycle regression suite.

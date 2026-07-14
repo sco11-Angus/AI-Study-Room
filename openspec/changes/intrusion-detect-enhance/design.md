@@ -24,7 +24,7 @@
 - `seat_status` 与预约逻辑完全解耦
 
 **Non-Goals:**
-- 不引入完整 MOT（DeepSORT/ByteTrack），用轻量 IoU 做帧间 box 关联
+- 使用 Ultralytics 内置 ByteTrack 做单摄像头本地多目标轨迹，跨摄像头全局身份不在本变更范围内
 - 不做跨摄像头追踪
 - 不自动迁移历史 `seat_status` 数据为预约关系（避免把不一致的 `app_user.id` 错误绑定到 `member_id`）
 - 不改变危险防区（`danger_zone`）的入侵检测逻辑
@@ -101,7 +101,7 @@ class SeatRuntime:
 
 **理由：** 当前单计时器无法区分同座位多人，`break` 导致漏判。多人独立计时保证每个人各自计时、各自告警。
 
-**替代方案：** 引入 ByteTrack → 增加 ~20ms/帧延迟 + 额外依赖，收益不匹配。轻量 IoU 在单座位场景足够。
+**实现方案：** 复用 Ultralytics 随 YOLO 提供的 ByteTrack，输出稳定的本地 `track_id` 供防区状态机使用；mock 或 tracker 不可用时保留 IoU 回退，确保单元测试不依赖外部权重。
 
 ### D3: 整帧人脸检测 + 人脸中心点关联到 person box
 
