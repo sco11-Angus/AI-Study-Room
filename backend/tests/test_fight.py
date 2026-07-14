@@ -100,6 +100,37 @@ def test_fusion_resets_on_dropout():
     assert fb.update(0.9, 0.9, ts=dur) is None  # 重新计时，未达阈值
 
 
+# ---------------- D2 情绪闸门 ----------------
+
+def test_gate_suppresses_when_no_negative_emotion():
+    """欢乐场景(emo_gate≈0)：视觉分被压到 floor 折，融合分难过阈值 -> 不告警。"""
+    fb = FusionDebouncer()
+    dur = Config.FIGHT_DURATION
+    # 视觉满分但情绪全无负面：vis' = 1.0 * floor(0.4) = 0.4
+    fb.update(1.0, 0.3, ts=0.0, emo_gate=0.0)
+    hit = fb.update(1.0, 0.3, ts=dur + 1, emo_gate=0.0)
+    assert hit is None
+
+
+def test_gate_passes_when_negative_emotion_high():
+    """打架场景(emo_gate≈1)：视觉分保留，双模持续 -> 告警，extra 带 emo_gate。"""
+    fb = FusionDebouncer()
+    dur = Config.FIGHT_DURATION
+    assert fb.update(0.9, 0.9, ts=0.0, emo_gate=1.0) is None
+    hit = fb.update(0.9, 0.9, ts=dur, emo_gate=1.0)
+    assert hit is not None
+    assert hit["emo_gate"] == 1.0
+    assert "emo_gate" in hit
+
+
+def test_gate_default_is_passthrough():
+    """不传 emo_gate（情绪未启用）时行为与原版一致。"""
+    fb = FusionDebouncer()
+    dur = Config.FIGHT_DURATION
+    assert fb.update(0.9, 0.9, ts=0.0) is None
+    assert fb.update(0.9, 0.9, ts=dur) is not None
+
+
 # ---------------- D5 插件端到端 ----------------
 
 def test_plugin_emits_fight_alarm_with_extra():

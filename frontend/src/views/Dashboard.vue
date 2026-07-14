@@ -34,6 +34,7 @@ import VideoPlayer from '../components/VideoPlayer.vue'
 import AlarmPanel from '../components/AlarmPanel.vue'
 import { confirmAlarm, getAlarms, getCameras, getRegions } from '../api'
 import { MAX_ALARMS, useAlarmStore } from '../store/alarm'
+import { getSelectedCameraId } from '../utils/camera'
 
 const streamUrl = ref('')
 const alarms = ref([])
@@ -74,21 +75,14 @@ const stageMap = {
 function fetchStreamUrl() {
   getCameras()
     .then((list) => {
-      if (Array.isArray(list) && list.length) {
-        const cloudCamera = list.find(c => c.stream_url.includes('49.233.71.82'))
-        if (cloudCamera) {
-          streamUrl.value = `camera_id=${cloudCamera.id}`
-          fetchRegionsForCamera(cloudCamera.id)
-        } else {
-          streamUrl.value = `camera_id=${list[0].id}`
-          fetchRegionsForCamera(list[0].id)
-        }
-      } else {
-        streamUrl.value = ''
-      }
+      const cameraId = getSelectedCameraId()
+      streamUrl.value = `camera_id=${cameraId}`
+      fetchRegionsForCamera(cameraId)
     })
     .catch(() => {
-      streamUrl.value = ''
+      const cameraId = getSelectedCameraId()
+      streamUrl.value = `camera_id=${cameraId}`
+      fetchRegionsForCamera(cameraId)
     })
 }
 

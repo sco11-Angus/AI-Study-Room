@@ -16,6 +16,18 @@
 
 6. 在开始新功能前，先跑必需的 smoke test 或端到端验证。
 
+## OpenSpec 变更门禁
+
+新增模块或跨模块功能时，必须先执行以下流程：
+
+1. 执行 `npm run spec:new -- <verb-noun-change-id>` 创建 `openspec/changes/<change-id>/`。
+2. 完成 `proposal.md`、`design.md`、`tasks.md` 和受影响 capability 的 delta spec。
+3. 执行 `npm run spec:validate`；严格校验通过前不得编写实现代码。
+4. 实现期间只勾选已实际完成且已验证的 `tasks.md` 项。
+5. 验收完成、`feature_list.json` 和进度记录更新后，才可执行 `npm run spec:archive -- <change-id> --yes`。
+
+`openspec/proposals/` 仅保留历史材料；所有新提案必须放在 `openspec/changes/`。Windows PowerShell 使用 `npm run` 调用本地 OpenSpec，避免全局 `openspec.ps1` 被执行策略拦截。
+
 如果基础验证一开始就失败，先修基础状态，不要在坏的起点上继续叠新功能。
 
 ## 工作规则

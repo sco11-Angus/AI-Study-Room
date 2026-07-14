@@ -392,3 +392,27 @@
   - fire_smoke 权重文件为本地模型工件，按 `.gitignore` 不入库。
 
 - 下一步最佳动作：测试人员验证欺骗攻击和陌生人告警推送功能是否正常。
+
+### Session 011
+
+- Date: 2026-07-13
+- Goal: stabilize fatigue detection and add tuning observability.
+- Completed:
+  - Created OpenSpec change `fatigue-detect-stabilize` with proposal, design, tasks, and fatigue-detect delta spec.
+  - Added fatigue presets and tunables: `FATIGUE_PRESET`, `FATIGUE_YAWN_WINDOW`, `FATIGUE_YAWN_HITS`, and `FATIGUE_ALERT_COOLDOWN`.
+  - Updated `FatigueDetector` with yawn sliding-window voting, blink-safe sleepy behavior, and EAR/MAR/closed-duration metrics.
+  - Updated `FatiguePlugin` with per-seat/kind cooldown and richer `AlarmEvent.extra`.
+  - Added `GET /api/seat-status/companion`.
+  - Added `backend/scripts/analyze_fatigue_video.py` for local video-to-CSV tuning.
+  - Updated the frontend self-study companion view to show latest fatigue kind, metrics, and DingTalk webhook status.
+- Validation:
+  - `.\init.cmd` passed.
+  - `npm.cmd run spec:validate` passed: 8 items.
+  - `python -m py_compile backend/app/config.py backend/app/detectors/fatigue.py backend/app/api/seat_status.py backend/scripts/analyze_fatigue_video.py backend/tests/test_fatigue.py` passed.
+  - With SQLite override: `python -m pytest tests/test_fatigue.py tests/test_alarm_center.py` passed: 29 passed.
+  - `npm.cmd --prefix frontend run build` passed.
+  - `npm.cmd run spec:archive -- fatigue-detect-stabilize --yes` archived the change into baseline `spec/fatigue-detect`.
+  - Post-archive `npm.cmd run spec:validate` and `.\init.cmd` passed.
+- Remaining risks:
+  - Live human validation still requires OBS pushing a readable RTMP stream to `rtmp://49.233.71.82:9090/live/test`.
+  - Dlib remains the active model; MediaPipe or learned fatigue classifier evaluation is deferred.

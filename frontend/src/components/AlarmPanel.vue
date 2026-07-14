@@ -87,7 +87,7 @@ const selectedAlarm = ref(null)
 const TYPE_LABELS = {
   intrusion: '入侵',
   fire_smoke: '烟火',
-  occupy: '占座',
+  occupy: '非预约占座',
   fatigue: '疲劳',
   fight: '打架',
   face_recognition: '人脸识别'
@@ -123,7 +123,7 @@ const getDefaultMessage = (row) => {
     fight: '检测到肢体冲突行为',
     intrusion: '检测到人员闯入危险区域',
     fire_smoke: '检测到疑似烟火',
-    occupy: '检测到座位占用时间过长',
+    occupy: '检测到非预约人员占用座位',
     fatigue: '检测到疲劳学习状态',
     face_recognition: '人脸识别结果'
   }

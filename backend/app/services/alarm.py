@@ -374,6 +374,12 @@ class AlarmService:
             return "检测到疑似烟火"
         
         elif event.type == "occupy":
+            if extra.get("kind") == "unauthorized_seat":
+                seat_name = extra.get("seat_name") or "该座位"
+                reserved = extra.get("reserved_member_name") or extra.get("reserved_member_id") or "未知"
+                actual = extra.get("actual_face_match") or face_match or "stranger"
+                actual_label = "陌生人员" if actual == "stranger" else actual
+                return f"非预约人员占用座位 {seat_name}（预约人：{reserved}，实际：{actual_label}）"
             if face_match.startswith("member:"):
                 member_name = face_match.split(":")[1] if ":" in face_match else face_match
                 return f"会员{member_name}占用座位时间过长"

@@ -61,6 +61,55 @@
       "blockers": []
     },
     {
+      "id": "openspec-standardization",
+      "name": "Standardize OpenSpec module workflow",
+      "priority": 1,
+      "status": "completed",
+      "description": "Make OpenSpec the required, repository-local workflow for every new module and cross-module change.",
+      "required_validation": [
+        "npm install",
+        "npm run spec:validate",
+        "npm run spec:list",
+        "npm run spec:status -- --change intrusion-detect-enhance",
+        ".\\init.cmd"
+      ],
+      "evidence": [
+        "Pinned @fission-ai/openspec 1.4.1 in the root tooling package and added repository-local npm commands for list, validate, status, new change, and archive.",
+        "Restored OpenSpec project context and capability index, documented legacy proposals as read-only references, and retained intrusion-detect-enhance as the active change for the complete seat-reservation intrusion work.",
+        "Expanded all six baseline capability purposes so npm run spec:validate passed with 7 items and 0 failures in strict mode.",
+        "Updated AGENTS.md, README.md, init.cmd, init.ps1, and init.sh so strict OpenSpec validation is a required startup gate and PowerShell uses the local npm-installed CLI instead of the policy-blocked global openspec.ps1.",
+        "On 2026-07-13, npm run spec:list showed intrusion-detect-enhance in progress and npm run spec:status reported all 4 required artifacts complete."
+      ],
+      "blockers": [
+        "This Windows host exposes the WSL bash shim but has no usable Git Bash path, so init.sh was updated by parity with init.ps1 but not executed locally; init.cmd passed."
+      ]
+    },
+    {
+      "id": "task-b-seat-reservation-intrusion-enhancement",
+      "name": "Complete reserved-seat identity intrusion detection",
+      "priority": 1,
+      "status": "in_progress",
+      "description": "Bind each seat region to a face-enrolled member and raise an occupy alarm when a different member or stranger enters the reserved seat.",
+      "required_validation": [
+        "python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_seat_reservations.py tests/test_face.py tests/test_fatigue.py tests/test_alarm_center.py -q",
+        "npm.cmd --prefix frontend run build",
+        "npm run spec:validate",
+        ".\\init.cmd",
+        "Local-camera end-to-end reserved-seat acceptance"
+      ],
+      "evidence": [
+        "Added SeatReservation, MySQL init.sql DDL, face-enrolled member list API, reservation CRUD API, and live IntrusionPlugin hot reload.",
+        "Reworked reserved-seat detection to use per-seat IoU tracks, independent dwell timers, full-frame face association, and stranger-as-unauthorized behavior.",
+        "Updated RegionConfig with face-enrolled member selection and bind/unbind actions for saved seat regions; danger zones remain unchanged.",
+        "Focused SQLite regression passed on 2026-07-13: 54 passed. Frontend production build, strict OpenSpec validation, in-memory application route smoke, and init.cmd all passed.",
+        "Fixed normalized seat polygons to scale against each decoded frame instead of fixed 640x480 dimensions. Focused intrusion/reservation regression passed on 2026-07-13: 14 passed.",
+        "Fixed reserved-seat track expiry to count missed inference passes instead of raw decoded-frame indexes; with the real scheduler cadence 0 -> 5, a stranger now reaches the two-observation, 2-second dwell gate and emits occupy. Focused intrusion regression passed on 2026-07-13: 12 passed."
+      ],
+      "blockers": [
+        "Live local-camera acceptance with a real enrolled reservation member and a second/stranger person has not yet been captured, so the OpenSpec change remains active and this feature is not marked completed."
+      ]
+    },
+    {
       "id": "jenkins-ci-stabilization",
       "name": "Stabilize Jenkins pipeline configuration",
       "priority": 2,
@@ -336,6 +385,38 @@
       "blockers": [
         "Real reserved-user no-alarm testing still requires enrolled member.feature records for the same user_id as seat_status. Current Docker database has seat_status region_id=5 user_id=1001 status=studying, but the member table is empty.",
         "Cloud RTMP live stream remains external-state dependent; direct container OpenCV check on rtmp://49.233.71.82:9090/live/test returned opened=False/read=False."
+      ]
+    },
+    {
+      "id": "task-b-fatigue-stability-tuning",
+      "name": "Stabilize fatigue detection and add tuning observability",
+      "priority": 9,
+      "status": "completed",
+      "description": "Improve Task B fatigue detection with temporal yawn filtering, blink-safe sleepy detection, per-seat cooldown, EAR/MAR metrics, an offline tuning script, and frontend companion status.",
+      "required_validation": [
+        "npm.cmd run spec:validate",
+        "python -m py_compile backend/app/config.py backend/app/detectors/fatigue.py backend/app/api/seat_status.py backend/scripts/analyze_fatigue_video.py backend/tests/test_fatigue.py",
+        "DATABASE_URI=sqlite:///study_room_test.db python -m pytest tests/test_fatigue.py tests/test_alarm_center.py",
+        "npm.cmd --prefix frontend run build",
+        ".\\init.cmd"
+      ],
+      "evidence": [
+        "Created OpenSpec change fatigue-detect-stabilize with proposal, design, tasks, and fatigue-detect delta spec; strict validation passed before implementation.",
+        "Added FATIGUE_PRESET modes plus configurable FATIGUE_YAWN_WINDOW, FATIGUE_YAWN_HITS, and FATIGUE_ALERT_COOLDOWN while preserving normal defaults EAR=0.2, EAR_DURATION=2, MAR=0.6.",
+        "Updated FatigueDetector so short blinks reset without becoming sleepy, yawn requires sliding-window hits, and every result exposes EAR/MAR/closed-duration/window metrics.",
+        "Updated FatiguePlugin with per-seat and fatigue-kind cooldown and AlarmEvent.extra metrics for DingTalk/debugging.",
+        "Added GET /api/seat-status/companion for current self-study status, DingTalk webhook configured flag, and latest fatigue reminder.",
+        "Added backend/scripts/analyze_fatigue_video.py to export per-frame EAR/MAR/decision CSV from local videos without persisting alarms.",
+        "Updated SeatCompanion frontend to display current status, latest fatigue kind, EAR/MAR metrics, and a DingTalk webhook missing warning.",
+        "Validation passed: py_compile for changed backend files and script.",
+        "Validation passed with sqlite override: tests/test_fatigue.py tests/test_alarm_center.py -> 29 passed.",
+        "Validation passed: npm.cmd --prefix frontend run build.",
+        "Validation passed: npm.cmd run spec:validate and .\\init.cmd.",
+        "Archived OpenSpec change fatigue-detect-stabilize; baseline spec/fatigue-detect now validates successfully."
+      ],
+      "blockers": [
+        "Live OBS/RTMP human validation remains external-state dependent and still needs a pushed stream at rtmp://49.233.71.82:9090/live/test.",
+        "The implementation intentionally keeps Dlib for this iteration; MediaPipe or a learned fatigue classifier would require a separate model-evaluation change."
       ]
     }
   ]

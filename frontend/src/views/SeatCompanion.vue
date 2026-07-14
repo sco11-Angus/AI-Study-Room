@@ -19,12 +19,13 @@
       </div>
 
       <div v-if="weakReminder" class="weak-reminder-card">
-        <div class="weak-badge">私有提醒</div>
-        <div class="weak-title">{{ weakReminder.type === 'fatigue' ? '疲劳弱提醒' : '提醒' }}</div>
-        <div class="weak-message">{{ weakReminder.extra?.message || '请注意休息，避免过度疲劳。' }}</div>
+        <div class="weak-badge">{{ weakReminder.level >= 1 ? '钉钉提醒' : '私有提醒' }}</div>
+        <div class="weak-title">{{ fatigueKindText(weakReminder.extra?.kind) }}</div>
+        <div class="weak-message">{{ fatigueMessage(weakReminder) }}</div>
         <div class="weak-meta">{{ formatTime(weakReminder.created_at) }}</div>
       </div>
       <div v-else class="empty-state">当前没有需要你单独查看的疲劳弱提醒。</div>
+      <div v-if="!dingtalkConfigured" class="config-warning">钉钉 Webhook 未配置，疲劳告警只会本地记录，不会外发到钉钉。</div>
     </div>
   </div>
 </template>
@@ -32,12 +33,13 @@
 <script setup>
 import { onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getAlarms, getCameras, getRegions, switchSeatStatus } from '../api'
+import { getAlarms, getCameras, getRegions, getSeatCompanionStatus, switchSeatStatus } from '../api'
 
 const status = ref('studying')
 const tip = ref('已进入自习模式，疲劳弱提醒将以私有方式展示。')
 const weakReminder = ref(null)
 const seatRegionId = ref(null)
+const dingtalkConfigured = ref(true)
 let pollTimer = null
 
 // 动态解析一个 seat 类型防区，避免硬编码不存在的 region_id 导致 404
@@ -59,16 +61,24 @@ const resolveSeatRegion = () => {
 }
 
 const loadWeakReminders = () => {
-  getAlarms('pending')
-    .then((list) => {
-      const reminders = Array.isArray(list) ? list : []
-      const nextReminder = reminders
-        .filter((item) => item.level === 0 && item.type === 'fatigue')
-        .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0] || null
-      weakReminder.value = nextReminder
+  if (!seatRegionId.value) return
+  getSeatCompanionStatus(1001, seatRegionId.value)
+    .then((data) => {
+      status.value = data.status === 'resting' ? 'resting' : 'studying'
+      dingtalkConfigured.value = !!data.dingtalk_configured
+      weakReminder.value = data.latest_fatigue || null
     })
     .catch(() => {
-      weakReminder.value = null
+      getAlarms()
+        .then((list) => {
+          const reminders = Array.isArray(list) ? list : []
+          weakReminder.value = reminders
+            .filter((item) => item.type === 'fatigue')
+            .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0))[0] || null
+        })
+        .catch(() => {
+          weakReminder.value = null
+        })
     })
 }
 
@@ -82,6 +92,7 @@ const onChange = (val) => {
       tip.value = val === 'studying'
         ? '已切换为自习中，疲劳弱提醒将继续私有展示。'
         : '已切换为休息中，疲劳提醒已暂停。'
+      loadWeakReminders()
     })
     .catch(() => {
       ElMessage.error('状态切换失败')
@@ -93,9 +104,24 @@ const formatTime = (value) => {
   return new Date(value).toLocaleString()
 }
 
+const fatigueKindText = (kind) => {
+  if (kind === 'yawn') return '检测到打哈欠'
+  if (kind === 'sleepy') return '检测到闭眼疲劳'
+  return '疲劳提醒'
+}
+
+const fatigueMessage = (item) => {
+  const extra = item?.extra || {}
+  const metrics = []
+  if (extra.ear !== undefined) metrics.push(`EAR ${extra.ear}`)
+  if (extra.mar !== undefined) metrics.push(`MAR ${extra.mar}`)
+  if (extra.closed_duration !== undefined) metrics.push(`闭眼 ${extra.closed_duration}s`)
+  return metrics.length ? `请注意休息。${metrics.join('，')}` : '请注意休息，避免过度疲劳。'
+}
+
 onMounted(() => {
   resolveSeatRegion()
-  loadWeakReminders()
+  setTimeout(loadWeakReminders, 300)
   pollTimer = setInterval(loadWeakReminders, 5000)
 })
 
@@ -201,5 +227,15 @@ onUnmounted(() => {
   border-radius: 12px;
   background: #f5f7fa;
   color: #909399;
+}
+
+.config-warning {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid #f3d19e;
+  border-radius: 8px;
+  background: #fdf6ec;
+  color: #b88230;
+  font-size: 13px;
 }
 </style>

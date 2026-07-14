@@ -55,6 +55,36 @@ def _default_database_uri() -> str:
     return f"mysql+pymysql://{user}:{password}@{host}:{port}/{name}?charset=utf8mb4"
 
 
+def _fatigue_preset(name: str) -> dict[str, float | int]:
+    presets = {
+        "light": {
+            "EAR_THRESH": 0.18,
+            "EAR_DURATION": 3.0,
+            "MAR_THRESH": 0.7,
+            "FATIGUE_YAWN_WINDOW": 6,
+            "FATIGUE_YAWN_HITS": 4,
+            "FATIGUE_ALERT_COOLDOWN": 180,
+        },
+        "normal": {
+            "EAR_THRESH": 0.2,
+            "EAR_DURATION": 2.0,
+            "MAR_THRESH": 0.6,
+            "FATIGUE_YAWN_WINDOW": 5,
+            "FATIGUE_YAWN_HITS": 3,
+            "FATIGUE_ALERT_COOLDOWN": 120,
+        },
+        "exam": {
+            "EAR_THRESH": 0.22,
+            "EAR_DURATION": 1.5,
+            "MAR_THRESH": 0.55,
+            "FATIGUE_YAWN_WINDOW": 4,
+            "FATIGUE_YAWN_HITS": 2,
+            "FATIGUE_ALERT_COOLDOWN": 90,
+        },
+    }
+    return presets.get(name, presets["normal"])
+
+
 class Config:
     # 流处理与调度 (§3)
     SKIP_N = int(os.getenv("SKIP_N", 5))              # 每 N 帧推理一次
@@ -69,10 +99,16 @@ class Config:
     _stream_local_camera = os.getenv("STREAM_LOCAL_CAMERA", "").strip()
     STREAM_LOCAL_CAMERA = int(_stream_local_camera) if _stream_local_camera else None
 
+    FATIGUE_PRESET = os.getenv("FATIGUE_PRESET", "normal")
+    _FATIGUE_DEFAULTS = _fatigue_preset(FATIGUE_PRESET)
+
     # 疲劳检测 (§4.3)
-    EAR_THRESH = float(os.getenv("EAR_THRESH", 0.2))  # 闭眼阈值
-    EAR_DURATION = float(os.getenv("EAR_DURATION", 2))  # 闭眼持续(秒)
-    MAR_THRESH = float(os.getenv("MAR_THRESH", 0.6))  # 打哈欠阈值
+    EAR_THRESH = float(os.getenv("EAR_THRESH", _FATIGUE_DEFAULTS["EAR_THRESH"]))  # 闭眼阈值
+    EAR_DURATION = float(os.getenv("EAR_DURATION", _FATIGUE_DEFAULTS["EAR_DURATION"]))  # 闭眼持续(秒)
+    MAR_THRESH = float(os.getenv("MAR_THRESH", _FATIGUE_DEFAULTS["MAR_THRESH"]))  # 打哈欠阈值
+    FATIGUE_YAWN_WINDOW = int(os.getenv("FATIGUE_YAWN_WINDOW", _FATIGUE_DEFAULTS["FATIGUE_YAWN_WINDOW"]))
+    FATIGUE_YAWN_HITS = int(os.getenv("FATIGUE_YAWN_HITS", _FATIGUE_DEFAULTS["FATIGUE_YAWN_HITS"]))
+    FATIGUE_ALERT_COOLDOWN = float(os.getenv("FATIGUE_ALERT_COOLDOWN", _FATIGUE_DEFAULTS["FATIGUE_ALERT_COOLDOWN"]))
     FATIGUE_ALERT_LEVEL = int(os.getenv("FATIGUE_ALERT_LEVEL", 1))
 
     # 烟火检测 (§6.2)
@@ -106,6 +142,19 @@ class Config:
     # 音频管线 (任务书 D1)
     AUDIO_WINDOW = float(os.getenv("AUDIO_WINDOW", 1.0))  # 分析窗口(秒)
     AUDIO_SR = int(os.getenv("AUDIO_SR", 16000))          # 重采样率(单声道)
+
+    # 情感分析增强打架检测 (任务书 D2)
+    #  情绪作"闸门"而非加分项：无愤怒/恐惧时压制视觉冲突分，滤掉欢呼/嬉闹误报。
+    EMOTION_ENABLE = os.getenv("EMOTION_ENABLE", "false").lower() == "true"  # 灰度开关
+    EMOTION_DEVICE = os.getenv("EMOTION_DEVICE", "cpu")   # cpu / gpu(cuda)
+    # HSEmotion 模型名: enet_b0_8_best_vgaf(默认,8类,首次自动下载权重到 ~/.hsemotion)
+    EMOTION_MODEL_NAME = os.getenv("EMOTION_MODEL_NAME", "enet_b0_8_best_vgaf")
+    # 闸门系数: vis' = vis * (EMOTION_GATE_FLOOR + (1-FLOOR) * emo_gate)
+    #  emo_gate=0(无负面情绪) 时视觉分打 FLOOR 折; emo_gate=1 时保留全分。
+    EMOTION_GATE_FLOOR = float(os.getenv("EMOTION_GATE_FLOOR", 0.4))
+    # 音频侧: aud = W_EMO*声学情绪(尖叫/怒吼) + (1-W_EMO)*响度托底
+    AUDIO_EMO_WEIGHT = float(os.getenv("AUDIO_EMO_WEIGHT", 0.7))
+    YAMNET_MODEL_PATH = os.getenv("YAMNET_MODEL_PATH", "")  # 留空=音频情绪暂用纯声学
 
     # 告警升级 (§7.4)
     ESCALATE_TIMEOUT = int(os.getenv("ESCALATE_TIMEOUT", 180))  # 秒
@@ -149,6 +198,14 @@ class Config:
 
     # EMA 平滑系数（0~1，越大响应越快，越小越平滑）
     LIVENESS_EMA_ALPHA = float(os.getenv("LIVENESS_EMA_ALPHA", 0.3))
+
+    # 全帧静态检测（防静态照片）——默认关闭。
+    # 该方法用帧间 nmse 判"画面是否静止"，但在高稳定度/低噪声摄像头上，
+    # 真人 nmse 与照片重叠（实测真人 ~0.0002，与冻结帧同量级），会 100% 误判真人。
+    # 防照片改由 FSD（零样本AIGC）+ 眨眼(EAR) 等活体层负责。如需启用置 true。
+    FACE_STATIC_DETECT_ENABLED = os.getenv("FACE_STATIC_DETECT_ENABLED", "false").lower() == "true"
+    FACE_STATIC_NMSE_THRESHOLD = float(os.getenv("FACE_STATIC_NMSE_THRESHOLD", 0.0005))
+    FACE_STATIC_STREAK = int(os.getenv("FACE_STATIC_STREAK", 3))
 
     # 反欺骗模型 Ensemble 权重
     ANTISPOOF_WEIGHT_ONNX = float(os.getenv("ANTISPOOF_WEIGHT_ONNX", 0.5))

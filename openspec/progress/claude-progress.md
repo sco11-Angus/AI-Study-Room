@@ -1,5 +1,12 @@
 # Progress
 
+### Session 2026-07-13 Reserved Seat Live-Debug
+
+- Verified the live SQLite database `backend/local_e2e.db` contains the active binding `region_id=1 -> member_id=3` for camera 6.
+- Fixed normalized intrusion polygons to scale against each actual decoded frame, preventing an OBS 1280x720 stream from being judged against the old fixed 640x480 coordinate space.
+- Added a focused 1280x720 reserved-seat regression case; `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py tests/test_seat_reservations.py -q` passed with 14 tests.
+- Remaining acceptance evidence: restart the backend using `scripts/start-obs-cam6.ps1`, set the seat dwell time to a short test value, and capture a real `occupy` alarm for a non-reserved person.
+
 ## Session 2026-07-06
 
 - Goal: initialize the local project and push markdown documents to `sco11-Angus/AI-Study-Room`.
@@ -622,6 +629,24 @@
   - The running backend process used for the real server test was already active before this code change. Restart the backend to load the code-level recorder fixes for future alarms.
   - Full pytest remains blocked in the available local environments: WSL lacks pytest, `.venv` lacks Flask/pytest, and Anaconda lacks project dependencies such as `flask_cors`/`cv2`.
 
+## Session 2026-07-13 OpenSpec Standardization
+
+- Goal: make OpenSpec the required, reproducible workflow for every future module and cross-module change.
+- Completed:
+  - Added root tooling scripts and pinned `@fission-ai/openspec@1.4.1` so contributors use `npm run` instead of the PowerShell-policy-blocked global `openspec.ps1`.
+  - Restored `openspec/project.md` and `openspec/specs/spec.md`; capability contracts remain under `openspec/specs/<capability>/spec.md`.
+  - Added the active-change workflow to `AGENTS.md`, `README.md`, and all standard startup scripts. New work must be created in `openspec/changes/<change-id>/`, strictly validated before implementation, and archived only after evidence is recorded.
+  - Marked `openspec/proposals/` as historical reference material. `intrusion-detect-enhance` remains active and is the sole OpenSpec change for the complete seat-reservation intrusion enhancement.
+  - Expanded the six baseline capability specs so strict validation passes.
+- Validation:
+  - `npm install` completed successfully.
+  - `npm run spec:validate` passed: 7 items, 0 failures.
+  - `npm run spec:list` showed `intrusion-detect-enhance` as the active in-progress change.
+  - `npm run spec:status -- --change intrusion-detect-enhance` reported all 4 required artifacts complete.
+  - `./init.cmd` passed after running OpenSpec strict validation and the existing markdown smoke checks.
+- Remaining risk:
+  - This Windows host only exposes the WSL bash shim, so `init.sh` could not be executed locally. It mirrors the validated PowerShell gate and should be exercised on a shell-capable CI/Linux environment.
+
 ## Session 2026-07-13 Frontend Dashboard Rendering Optimization
 
 - Goal: implement the frontend-only P0 rendering optimizations documented in `直播界面卡顿-前端渲染优化方案.md`.
@@ -635,3 +660,18 @@
 - Remaining risks:
   - Chrome Performance comparison and the documented 10-minute continuous-alarm acceptance test require a live interactive browser session.
   - No commit was created because `Dashboard.vue` already contained overlapping user changes before this session; committing the file would also commit those unrelated changes.
+
+## Session 2026-07-13 Reserved Seat Runtime Fix
+
+- Goal: determine why a stranger visibly inside a bound seat did not produce an `occupy` alarm.
+- Root cause: the scheduler dispatches inference every `SKIP_N` decoded frames (normally frame indexes `0`, `5`, `10`), while seat tracking expired and rejected tracks after a raw-frame gap greater than three. Every normal next inference therefore looked stale, preventing the required second observation from ever accumulating.
+- Actions:
+  - Changed seat-track expiry and matching to count explicit missed inference passes rather than decoded-frame indexes.
+  - Kept immediate reset for an observed person leaving the seat and retained a three-inference-pass tolerance for transient detector misses.
+  - Added a regression test using the production-like `frame_idx=0 -> 5` cadence with a two-second seat dwell threshold.
+- Validation:
+  - `python -m pytest tests/test_intrusion.py tests/test_intrusion_identity.py -q` passed: `12 passed`.
+  - `python -m py_compile app/detectors/intrusion.py tests/test_intrusion_identity.py` passed.
+  - `npm.cmd run spec:validate` passed: 8 OpenSpec items, 0 failures.
+- Remaining action:
+  - Restart the currently running backend process before live verification, then keep a stranger in the bound seat for more than two seconds and verify a new `occupy` alarm appears in the dashboard.

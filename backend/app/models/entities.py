@@ -1,7 +1,7 @@
 """SQLAlchemy 数据模型 (§8.2)。"""
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -77,6 +77,27 @@ class Member(Base):
     name = Column(Text)
     feature = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SeatReservation(Base):
+    """Long-lived seat-to-member binding used by identity intrusion checks."""
+
+    __tablename__ = "seat_reservation"
+
+    id = Column(Integer, primary_key=True)
+    region_id = Column(Integer, ForeignKey("region.id", ondelete="CASCADE"), unique=True, nullable=False)
+    member_id = Column(
+        Integer,
+        ForeignKey("member.member_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index("idx_seat_reservation_member", "member_id"),
+    )
 
 
 class Guard(Base):
