@@ -38,6 +38,11 @@ def _serialize_log(record) -> dict:
 
 
 
+@bp.get("/")
+def list_logs_trailing_slash():
+    return list_logs()
+
+
 @bp.get("")
 def list_logs():
     """获取告警日志列表。

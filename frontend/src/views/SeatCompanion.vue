@@ -150,13 +150,12 @@ const loadCompanion = async () => {
   }
   if (!regionId.value || !userId.value) return
   try {
-    const data = await getSeatCompanionStatus(userId.value, regionId.value)
-    if (!dirty.value) {
-      status.value = data.status || 'idle'
-      mode.value = data.mode || 'demo'
-      memberId.value = data.member_id || null
-    }
-    runtime.value = data.runtime || { eligible: false, reason: 'not_studying' }
+      const data = await getSeatCompanionStatus(userId.value, regionId.value)
+      if (!dirty.value) {
+        status.value = data.status || 'idle'
+        memberId.value = data.member_id || null
+      }
+      runtime.value = data.runtime || { eligible: false, reason: 'not_studying' }
     reminder.value = data.latest_fatigue || null
     dingtalkConfigured.value = !!data.dingtalk_configured
     streamOnline.value = !!data.stream_online

@@ -107,6 +107,7 @@ class Guard(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(128))
     dingtalk_id = Column(String(128))
+    dingtalk_nickname = Column(String(128))
     role = Column(Enum("primary", "leader", name="guard_role"), default="primary")
     priority = Column(Integer, default=0)
 

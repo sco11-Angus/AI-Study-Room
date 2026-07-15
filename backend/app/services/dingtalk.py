@@ -319,7 +319,7 @@ class DingTalkNotifier:
         if not webhook or not target:
             return
 
-        handler_name = guard.get("name") or target
+        handler_name = guard.get("dingtalk_nickname") or guard.get("name") or target
         mention_text, at_payload = self._mention_payload(target, handler_name)
         stage_text = "\u5347\u7ea7\u544a\u8b66" if guard_stage == "escalated" else "\u5b89\u5168\u544a\u8b66"
         payload = {
@@ -369,6 +369,7 @@ class DingTalkNotifier:
                 "id": guard.id,
                 "name": guard.name or "",
                 "dingtalk_id": guard.dingtalk_id or "",
+                "dingtalk_nickname": guard.dingtalk_nickname or "",
                 "role": guard.role or role,
             }
         finally:

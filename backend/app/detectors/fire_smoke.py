@@ -44,7 +44,7 @@ class FireSmokePlugin(Detector):
         weights_path: str | None = None,
         target_classes: Iterable[str] = ("fire", "smoke"),
     ):
-        self.region_id = Config.FIRE_SMOKE_REGION_ID if region_id is None else region_id
+        self.region_id = None
         self._model = model
         self._weights_path = weights_path
         self._target_classes = {name.lower() for name in target_classes}

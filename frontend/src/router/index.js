@@ -12,6 +12,8 @@ const routes = [
   { path: '/stream', component: () => import('../views/VideoStreamViewer.vue') },
   // 告警日志
   { path: '/logs', component: () => import('../views/LogViewer.vue') },
+  // AI 日报
+  { path: '/report', component: () => import('../views/DailyReport.vue') },
   // 街道监控大屏：沙盘 12 路网格 + AI 识别
   { path: '/street', component: () => import('../views/StreetMonitor.vue') }
 ]

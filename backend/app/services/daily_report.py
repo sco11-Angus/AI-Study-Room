@@ -353,48 +353,98 @@ class DailyReportService:
     def _render_markdown(self, report: dict) -> str:
         """将已生成的日报字典渲染为 Markdown。"""
         lines = []
-        lines.append(f"# 📊 AI自习室监控日报")
+        lines.append("# 📊 AI自习室监控日报")
+        lines.append("")
+        lines.append("---")
         lines.append(f"**日期**: {report['date']}")
         lines.append(f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"**报告周期**: {report['date']} 00:00:00 ~ 23:59:59")
+        lines.append("---")
         lines.append("")
-        lines.append("## 📋 概览")
-        lines.append(f"- **告警总数**: {report['summary']['total_alarms']}")
-        lines.append(f"- **已确认**: {report['summary']['confirmed_count']}")
-        lines.append(f"- **已升级**: {report['summary']['escalated_count']}")
-        lines.append(f"- **确认率**: {report['summary']['confirmation_rate']}%")
-        lines.append(f"- **平均响应时间**: {report['summary']['avg_response_time_minutes']} 分钟")
+        lines.append("## 📋 一、监控概览")
         lines.append("")
-        lines.append("## 📈 告警类型分布")
-        lines.append("| 类型 | 数量 | 占比 |")
-        lines.append("|------|------|------|")
+        lines.append("### 1.1 核心指标")
+        lines.append("| 指标 | 数值 |")
+        lines.append("|------|------|")
+        lines.append(f"| 告警总数 | **{report['summary']['total_alarms']}** |")
+        lines.append(f"| 已确认 | {report['summary']['confirmed_count']} |")
+        lines.append(f"| 已升级 | {report['summary']['escalated_count']} |")
+        lines.append(f"| 确认率 | {report['summary']['confirmation_rate']}% |")
+        lines.append(f"| 平均响应时间 | {report['summary']['avg_response_time_minutes']} 分钟 |")
+        lines.append("")
+        lines.append("### 1.2 总体评价")
+        total = report['summary']['total_alarms']
+        if total == 0:
+            lines.append("> ✅ **运行正常**：今日无告警事件，系统运行稳定。")
+        elif total < 10:
+            lines.append("> 🟢 **运行平稳**：今日告警数量较少，整体情况良好。")
+        elif total < 30:
+            lines.append("> 🟡 **需要关注**：今日告警数量适中，请关注重点区域。")
+        else:
+            lines.append("> 🔴 **需加强监控**：今日告警数量较多，建议加强巡检力度。")
+        lines.append("")
+        lines.append("## 📈 二、告警分析")
+        lines.append("")
+        lines.append("### 2.1 告警类型分布")
+        lines.append("| 告警类型 | 数量 | 占比 |")
+        lines.append("|----------|------|------|")
         for item in report['by_type']:
             lines.append(f"| {item['label']} | {item['count']} | {item['percentage']}% |")
         lines.append("")
-        lines.append("## 🎯 告警等级分布")
-        lines.append("| 等级 | 数量 |")
-        lines.append("|------|------|")
+        lines.append("### 2.2 告警等级分布")
+        lines.append("| 告警等级 | 数量 |")
+        lines.append("|----------|------|")
         for item in report['by_level']:
             lines.append(f"| {item['label']} | {item['count']} |")
         lines.append("")
-        lines.append("## 🏆 告警热点")
-        lines.append("### 防区排行")
-        lines.append("| 防区 | 告警数 |")
-        lines.append("|------|--------|")
-        for item in report['top_regions']:
-            lines.append(f"| {item['name']} | {item['count']} |")
+        lines.append("## 🏆 三、告警热点")
         lines.append("")
-        lines.append("### 摄像头排行")
-        lines.append("| 摄像头 | 告警数 |")
-        lines.append("|--------|--------|")
-        for item in report['top_cameras']:
-            lines.append(f"| {item['name']} | {item['count']} |")
+        lines.append("### 3.1 防区告警排行")
+        if report['top_regions']:
+            lines.append("| 防区名称 | 告警数 |")
+            lines.append("|----------|--------|")
+            for item in report['top_regions']:
+                name = item['name'] if item['name'] and item['name'] != 'None' else f"区域{item['id']}"
+                lines.append(f"| {name} | {item['count']} |")
+        else:
+            lines.append("> 暂无防区数据")
         lines.append("")
-        lines.append("## 💡 改进建议")
-        for rec in report['recommendations']:
-            lines.append(f"- {rec}")
+        lines.append("### 3.2 摄像头告警排行")
+        if report['top_cameras']:
+            lines.append("| 摄像头名称 | 告警数 |")
+            lines.append("|------------|--------|")
+            for item in report['top_cameras']:
+                lines.append(f"| {item['name']} | {item['count']} |")
+        else:
+            lines.append("> 暂无摄像头数据")
+        lines.append("")
+        lines.append("## 💡 四、AI 智能分析建议")
+        lines.append("")
+        if report['recommendations']:
+            for idx, rec in enumerate(report['recommendations'], 1):
+                lines.append(f"{idx}. {rec}")
+        else:
+            lines.append("> 暂无分析建议")
+        lines.append("")
+        lines.append("## 📋 五、告警详情")
+        lines.append("")
+        if report['alarm_details']:
+            lines.append("| ID | 类型 | 摄像头 | 区域 | 描述 | 等级 | 状态 | 时间 |")
+            lines.append("|----|------|--------|------|------|------|------|------|")
+            for alarm in report['alarm_details'][:10]:
+                region_name = alarm.get('region_id') if alarm.get('region_id') else '-'
+                created_at = alarm.get('created_at', '')[:19] if alarm.get('created_at') else '-'
+                level_label = {'0': '弱', '1': '中', '2': '高'}.get(str(alarm.get('level')), '-')
+                status_label = {'pending': '待处理', 'notified': '已通知', 'confirmed': '已确认', 'escalated': '已升级'}.get(alarm.get('status'), alarm.get('status', '-'))
+                lines.append(f"| {alarm.get('id')} | {alarm.get('type_label')} | {alarm.get('camera_id')} | {region_name} | {alarm.get('message', '')[:20]}... | {level_label} | {status_label} | {created_at} |")
+            if len(report['alarm_details']) > 10:
+                lines.append(f"| ... | ... | ... | ... | ...（共 {len(report['alarm_details'])} 条，仅显示前10条）| ... | ... | ... |")
+        else:
+            lines.append("> 今日无告警详情")
         lines.append("")
         lines.append("---")
         lines.append("*Generated by AI Study Room Monitoring System*")
+        lines.append("*Report ID: AUTO-GEN-" + report['date'].replace('-', '') + "*")
         
         return "\n".join(lines)
 
